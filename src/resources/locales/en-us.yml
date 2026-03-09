@@ -1,0 +1,60 @@
+_version: 1
+startup.language.prompt: Choose the language to use
+startup.language.options.zh_hans: Simplified Chinese
+startup.language.options.zh_hant: Traditional Chinese
+startup.language.options.en_us: English (US)
+startup.language.options.ja_jp: Japanese
+startup.safety.title: Before continuing
+startup.safety.root_required: This installer needs root privileges to deploy Ret2Shell.
+startup.safety.clean_server: Use a clean server when possible for the safest installation path.
+startup.safety.conflict_risk: It may install Kubernetes and other critical components that can conflict with existing services and create risk.
+startup.safety.user_config: Your preferences will still be stored in %{path}.
+startup.safety.continue_prompt: Continue with installation?
+startup.safety.cancelled: Installation cancelled.
+startup.privilege.request: Requesting root privileges for upcoming deployment steps...
+startup.privilege.already_root: Root privileges are already active for deployment.
+startup.privilege.acquired: Root privileges are ready for deployment via %{backend}.
+install.entry.title: Installer runtime is ready
+install.entry.language: interface language
+install.entry.config_path: config file
+install.entry.privilege_backend: privilege backend
+install.entry.resume_hint: Answers are saved to %{path} immediately, so you can resume later.
+install.entry.next_steps: Mock prompts are removed; proceed with the real deployment workflow next.
+install.node_role.prompt: Is this install target a primary node or a worker node?
+install.node_role.options.control_plane: Primary node (control plane)
+install.node_role.options.worker: Worker node
+install.node_role.saved: Saved target role as %{role}.
+install.plan.title: Installation plan
+install.plan.node_role: target role
+install.plan.phase: recorded phase
+install.plan.steps: Planned atomic steps
+install.review.confirm_prompt: Please review the plan above and confirm installation.
+install.review.already_confirmed: Installation has already been confirmed; resuming the recorded plan.
+install.review.cancelled: Installation stays in review mode until you confirm it.
+install.execution.title: Installation phase initialized
+install.execution.progress_saved: The installation journal has been saved and can be resumed later.
+install.execution.resume_ready: Resuming from the previously recorded installation journal.
+install.execution.noop_notice: Real deployment executors are not wired yet; only the step journal is prepared in this phase.
+install.progress.title: Recorded installation progress
+install.progress.status.pending: pending
+install.progress.status.in_progress: in progress
+install.progress.status.completed: completed
+install.progress.status.failed: failed
+install.phase.questionnaire: questionnaire
+install.phase.review: review
+install.phase.installing: installing
+install.phase.completed: completed
+install.steps.preflight: Validate the target host and deployment prerequisites
+install.steps.preflight_detail: Inspect the operating system, privileges, networking, and required runtime conditions before making changes.
+install.steps.cluster.control_plane: Bootstrap the Kubernetes control plane
+install.steps.cluster.control_plane_detail: Initialize the primary cluster services and establish the control plane foundations.
+install.steps.cluster.worker: Join this node to the Kubernetes cluster
+install.steps.cluster.worker_detail: Enroll the node into the existing cluster using the recorded join parameters.
+install.steps.platform.control_plane: Deploy core Ret2Shell platform services
+install.steps.platform.control_plane_detail: Install the central Ret2Shell services that must live on the primary node.
+install.steps.platform.worker: Configure worker-side Ret2Shell services
+install.steps.platform.worker_detail: Install only the worker-side components required for this node to serve the cluster.
+install.errors.empty_value: value cannot be empty
+shared.yes: yes
+shared.no: no
+shared.none: none

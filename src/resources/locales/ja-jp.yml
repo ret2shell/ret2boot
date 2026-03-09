@@ -1,0 +1,60 @@
+_version: 1
+startup.language.prompt: 使用する言語を選択してください
+startup.language.options.zh_hans: 簡体字中国語
+startup.language.options.zh_hant: 繁体字中国語
+startup.language.options.en_us: 英語（米国）
+startup.language.options.ja_jp: 日本語
+startup.safety.title: 続行前の注意
+startup.safety.root_required: このインストーラーは Ret2Shell のデプロイに root 権限が必要です。
+startup.safety.clean_server: できるだけクリーンなサーバーで実行することを推奨します。
+startup.safety.conflict_risk: Kubernetes などの重要なコンポーネントを導入するため、既存サービスと競合してリスクを生む可能性があります。
+startup.safety.user_config: 設定は引き続き %{path} に保存されます。
+startup.safety.continue_prompt: インストールを続行しますか？
+startup.safety.cancelled: インストールを中止しました。
+startup.privilege.request: これ以降のデプロイ手順のために root 権限を要求しています...
+startup.privilege.already_root: デプロイに必要な root 権限はすでに有効です。
+startup.privilege.acquired: "%{backend} 経由でデプロイ用の root 権限を取得しました。"
+install.entry.title: インストーラーの実行環境は準備できています
+install.entry.language: 表示言語
+install.entry.config_path: 設定ファイル
+install.entry.privilege_backend: 権限昇格バックエンド
+install.entry.resume_hint: 各ステップの回答は %{path} にすぐ保存されるため、中断後も再開できます。
+install.entry.next_steps: これまでの mock 質問は削除されました。ここから実際のデプロイフロー実装に進みます。
+install.node_role.prompt: このインストール対象は主ノードですか、それともワーカーノードですか？
+install.node_role.options.control_plane: 主ノード（コントロールプレーン）
+install.node_role.options.worker: ワーカーノード
+install.node_role.saved: "%{role} として対象ロールを保存しました。"
+install.plan.title: インストール計画
+install.plan.node_role: 対象ロール
+install.plan.phase: 記録済みフェーズ
+install.plan.steps: 予定されている原子的ステップ
+install.review.confirm_prompt: 上の計画を確認し、インストールを開始してよいか確定してください。
+install.review.already_confirmed: インストール計画はすでに確認済みです。記録された計画から再開します。
+install.review.cancelled: インストールは確認待ちの状態のまま維持されます。
+install.execution.title: インストールフェーズを初期化しました
+install.execution.progress_saved: インストールジャーナルを保存しました。中断後も再開できます。
+install.execution.resume_ready: 以前に保存されたインストールジャーナルから再開します。
+install.execution.noop_notice: 実際のデプロイ実行器はまだ接続されておらず、この段階ではステップジャーナルのみ準備されます。
+install.progress.title: 記録済みのインストール進捗
+install.progress.status.pending: 未着手
+install.progress.status.in_progress: 実行中
+install.progress.status.completed: 完了
+install.progress.status.failed: 失敗
+install.phase.questionnaire: 質問フェーズ
+install.phase.review: 確認フェーズ
+install.phase.installing: インストールフェーズ
+install.phase.completed: 完了
+install.steps.preflight: 対象ホストとデプロイ前提条件を検証する
+install.steps.preflight_detail: 実際に変更を加える前に、OS、権限、ネットワーク、必要な実行条件を確認します。
+install.steps.cluster.control_plane: Kubernetes コントロールプレーンを構築する
+install.steps.cluster.control_plane_detail: 主クラスタサービスを初期化し、コントロールプレーンの基盤を構築します。
+install.steps.cluster.worker: このノードを Kubernetes クラスターへ参加させる
+install.steps.cluster.worker_detail: 記録済みの参加パラメーターを使って、このノードを既存クラスターへ登録します。
+install.steps.platform.control_plane: Ret2Shell の中核サービスを展開する
+install.steps.platform.control_plane_detail: 主ノード上で動作すべき Ret2Shell 中核サービスを導入します。
+install.steps.platform.worker: ワーカーノード側の Ret2Shell サービスを設定する
+install.steps.platform.worker_detail: このノードがクラスターに参加するために必要なワーカー側サービスのみ導入します。
+install.errors.empty_value: 値を空にできません
+shared.yes: はい
+shared.no: いいえ
+shared.none: なし

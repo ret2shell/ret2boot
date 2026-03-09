@@ -1,0 +1,60 @@
+_version: 1
+startup.language.prompt: 请选择界面语言
+startup.language.options.zh_hans: 简体中文
+startup.language.options.zh_hant: 繁体中文
+startup.language.options.en_us: 英语（美国）
+startup.language.options.ja_jp: 日语
+startup.safety.title: 继续之前请注意
+startup.safety.root_required: 此安装器需要 root 权限才能部署 Ret2Shell。
+startup.safety.clean_server: 最好在干净的服务器环境中执行安装，以降低风险。
+startup.safety.conflict_risk: 安装器可能会部署 Kubernetes 等关键组件，可能与现有服务冲突并带来风险。
+startup.safety.user_config: 你的偏好设置仍会保存到 %{path}。
+startup.safety.continue_prompt: 是否继续安装？
+startup.safety.cancelled: 已取消安装。
+startup.privilege.request: 正在为后续部署步骤申请 root 权限...
+startup.privilege.already_root: 当前已经具备 root 权限，可继续部署。
+startup.privilege.acquired: 已通过 %{backend} 获取后续部署所需的 root 权限。
+install.entry.title: 安装器运行环境已就绪
+install.entry.language: 界面语言
+install.entry.config_path: 配置文件
+install.entry.privilege_backend: 提权后端
+install.entry.resume_hint: 每一步的答案都会立即保存到 %{path}，中断后可继续恢复。
+install.entry.next_steps: 之前的 mock 询问已移除，接下来进入真实部署流程开发。
+install.node_role.prompt: 当前安装目标属于主节点还是从节点？
+install.node_role.options.control_plane: 主节点（控制平面）
+install.node_role.options.worker: 从节点
+install.node_role.saved: 已将当前目标角色保存为：%{role}。
+install.plan.title: 安装计划
+install.plan.node_role: 目标角色
+install.plan.phase: 当前记录阶段
+install.plan.steps: 计划中的原子步骤
+install.review.confirm_prompt: 请复核以上安装计划，并确认是否开始安装。
+install.review.already_confirmed: 安装计划此前已确认，将基于已记录的计划继续。
+install.review.cancelled: 当前安装保持在复核阶段，待你确认后再继续。
+install.execution.title: 已进入安装阶段
+install.execution.progress_saved: 安装步骤日志已保存，后续中断后可继续恢复。
+install.execution.resume_ready: 将从之前记录的安装步骤日志继续。
+install.execution.noop_notice: 真实部署执行器尚未接入，目前阶段只初始化步骤日志与恢复框架。
+install.progress.title: 已记录的安装进度
+install.progress.status.pending: 待执行
+install.progress.status.in_progress: 执行中
+install.progress.status.completed: 已完成
+install.progress.status.failed: 已失败
+install.phase.questionnaire: 问询阶段
+install.phase.review: 复核阶段
+install.phase.installing: 安装阶段
+install.phase.completed: 已完成
+install.steps.preflight: 校验目标主机与部署前置条件
+install.steps.preflight_detail: 在真正修改系统之前，检查操作系统、权限、网络和所需运行条件是否满足。
+install.steps.cluster.control_plane: 引导 Kubernetes 控制平面
+install.steps.cluster.control_plane_detail: 初始化主集群服务，并建立控制平面的基础能力。
+install.steps.cluster.worker: 将当前节点加入 Kubernetes 集群
+install.steps.cluster.worker_detail: 使用已记录的加入参数，把当前节点注册进现有集群。
+install.steps.platform.control_plane: 部署 Ret2Shell 核心平台服务
+install.steps.platform.control_plane_detail: 安装必须运行在主节点上的 Ret2Shell 核心服务。
+install.steps.platform.worker: 配置从节点侧的 Ret2Shell 服务
+install.steps.platform.worker_detail: 仅安装当前从节点为集群提供能力所需的服务组件。
+install.errors.empty_value: 不能为空
+shared.yes: 是
+shared.no: 否
+shared.none: 无
