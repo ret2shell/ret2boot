@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf};
+use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -90,6 +90,7 @@ pub struct InstallStepProgress {
   pub status: InstallStepStatus,
   pub attempts: u32,
   pub last_error: Option<String>,
+  pub metadata: BTreeMap<String, String>,
 }
 
 impl Default for InstallStepProgress {
@@ -105,6 +106,7 @@ impl InstallStepProgress {
       status: InstallStepStatus::Pending,
       attempts: 0,
       last_error: None,
+      metadata: BTreeMap::new(),
     }
   }
 }
@@ -114,6 +116,7 @@ impl InstallStepProgress {
 pub enum InstallStepId {
   PreflightValidation,
   ClusterBootstrap,
+  HelmCli,
   PlatformDeployment,
 }
 
@@ -122,6 +125,7 @@ impl InstallStepId {
     match self {
       Self::PreflightValidation => "preflight-validation",
       Self::ClusterBootstrap => "cluster-bootstrap",
+      Self::HelmCli => "helm-cli",
       Self::PlatformDeployment => "platform-deployment",
     }
   }
@@ -413,6 +417,17 @@ impl Ret2BootConfig {
       .map(|step| step.status)
   }
 
+  pub fn install_step_metadata(&self, step_id: InstallStepId, key: &str) -> Option<&str> {
+    self
+      .install
+      .execution
+      .steps
+      .iter()
+      .find(|step| step.id == step_id)
+      .and_then(|step| step.metadata.get(key))
+      .map(String::as_str)
+  }
+
   pub fn mark_install_step_started(&mut self, step_id: InstallStepId) -> bool {
     let step = self.ensure_install_step(step_id);
     let previous_status = step.status;
@@ -456,11 +471,36 @@ impl Ret2BootConfig {
     let step = self.ensure_install_step(step_id);
     let previous_status = step.status;
     let previous_error = step.last_error.clone();
+    let metadata_was_empty = step.metadata.is_empty();
 
     step.status = InstallStepStatus::Pending;
     step.last_error = None;
+    step.metadata.clear();
 
-    step.status != previous_status || step.last_error != previous_error
+    step.status != previous_status || step.last_error != previous_error || !metadata_was_empty
+  }
+
+  pub fn set_install_step_metadata(
+    &mut self, step_id: InstallStepId, key: impl Into<String>, value: impl Into<String>,
+  ) -> bool {
+    let step = self.ensure_install_step(step_id);
+    let key = key.into();
+    let value = value.into();
+
+    if step.metadata.get(&key) == Some(&value) {
+      return false;
+    }
+
+    step.metadata.insert(key, value);
+    true
+  }
+
+  pub fn remove_install_step_metadata(&mut self, step_id: InstallStepId, key: &str) -> bool {
+    self
+      .ensure_install_step(step_id)
+      .metadata
+      .remove(key)
+      .is_some()
   }
 
   fn invalidate_install_pipeline(&mut self) {

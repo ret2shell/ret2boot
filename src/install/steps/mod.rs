@@ -32,6 +32,9 @@ const K3S_CONFIG_DEST: &str = "/etc/rancher/k3s/config.yaml";
 const K3S_KUBELET_CONFIG_DEST: &str = "/etc/rancher/k3s/kubelet.config";
 const RKE2_CONFIG_DEST: &str = "/etc/rancher/rke2/config.yaml";
 const RKE2_KUBELET_CONFIG_DEST: &str = "/etc/rancher/rke2/kubelet.conf";
+const HELM_INSTALL_SCRIPT_URL: &str =
+  "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3";
+const HELM_BINARY_DEST: &str = "/usr/local/bin/helm";
 const PREFLIGHT_MIN_DISK_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 const PREFLIGHT_WARN_DISK_FREE_BYTES: u64 = 20 * 1024 * 1024 * 1024;
 const PREFLIGHT_MIN_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -534,6 +537,26 @@ impl<'a> StepExecutionContext<'a> {
   ) -> Result<()> {
     self.runtime.run_privileged_command(program, args, envs)
   }
+
+  pub fn persist_change<F>(&mut self, field: &'static str, value: &str, update: F) -> Result<bool>
+  where
+    F: FnOnce(&mut Ret2BootConfig) -> bool, {
+    let changed = update(self.config);
+
+    if changed {
+      self.config.save()?;
+    }
+
+    debug!(
+      config_path = %self.config_path,
+      field,
+      value,
+      changed,
+      "persisted step execution state"
+    );
+
+    Ok(changed)
+  }
 }
 
 #[allow(dead_code)]
@@ -577,6 +600,7 @@ pub fn registry() -> Vec<Box<dyn AtomicInstallStep>> {
   vec![
     Box::new(PreflightValidationStep),
     Box::new(ClusterBootstrapStep),
+    Box::new(HelmCliStep),
   ]
 }
 
@@ -864,6 +888,131 @@ impl AtomicInstallStep for ClusterBootstrapStep {
       KubernetesDistribution::K3s => rollback_k3s(ctx, &spec),
       KubernetesDistribution::Rke2 => rollback_rke2(ctx),
     }
+  }
+}
+
+struct HelmCliStep;
+
+impl AtomicInstallStep for HelmCliStep {
+  fn id(&self) -> InstallStepId {
+    InstallStepId::HelmCli
+  }
+
+  fn collect(&self, _ctx: &mut StepQuestionContext<'_>) -> Result<()> {
+    println!();
+    println!("{}", ui::note(t!("install.helm.notice")));
+
+    if let Some(path) = find_command_path("helm") {
+      println!(
+        "{}",
+        ui::note(t!(
+          "install.helm.reuse_notice",
+          path = path.display().to_string()
+        ))
+      );
+    }
+
+    Ok(())
+  }
+
+  fn describe(&self, _ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
+    let mut details = vec![t!("install.steps.helm.detail").to_string()];
+
+    if let Some(path) = find_command_path("helm") {
+      details.push(
+        t!(
+          "install.steps.helm.reuse",
+          path = path.display().to_string()
+        )
+        .to_string(),
+      );
+    } else {
+      details.push(t!("install.steps.helm.install_path", path = HELM_BINARY_DEST).to_string());
+    }
+
+    Ok(InstallStepPlan {
+      id: self.id(),
+      title: t!("install.steps.helm.title").to_string(),
+      details,
+    })
+  }
+
+  fn install(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    if let Some(path) = find_command_path("helm") {
+      ctx.persist_change(
+        "install.execution.helm.owned_by_ret2boot",
+        "false",
+        |config| {
+          let changed = config.set_install_step_metadata(self.id(), "owned_by_ret2boot", "false");
+          let changed =
+            config.set_install_step_metadata(self.id(), "binary_path", path.display().to_string())
+              || changed;
+          config.remove_install_step_metadata(self.id(), "install_source") || changed
+        },
+      )?;
+
+      info!(
+        step = self.id().as_config_value(),
+        path = %path.display(),
+        "reusing existing helm binary"
+      );
+      return Ok(());
+    }
+
+    let script_path = stage_remote_script(HELM_INSTALL_SCRIPT_URL, "helm-install")?;
+    let envs = vec![
+      ("USE_SUDO".to_string(), "false".to_string()),
+      ("HELM_INSTALL_DIR".to_string(), "/usr/local/bin".to_string()),
+    ];
+
+    let install_result =
+      ctx.run_privileged_command("sh", &[script_path.display().to_string()], &envs);
+    let _ = fs::remove_file(&script_path);
+    install_result?;
+
+    ctx.persist_change(
+      "install.execution.helm.owned_by_ret2boot",
+      "true",
+      |config| {
+        let changed = config.set_install_step_metadata(self.id(), "owned_by_ret2boot", "true");
+        let changed =
+          config.set_install_step_metadata(self.id(), "binary_path", HELM_BINARY_DEST) || changed;
+        config.set_install_step_metadata(self.id(), "install_source", HELM_INSTALL_SCRIPT_URL)
+          || changed
+      },
+    )?;
+
+    Ok(())
+  }
+
+  fn uninstall(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    let owned = ctx
+      .config()
+      .install_step_metadata(self.id(), "owned_by_ret2boot")
+      .is_some_and(|value| value == "true");
+
+    if !owned {
+      return Ok(());
+    }
+
+    let binary_path = ctx
+      .config()
+      .install_step_metadata(self.id(), "binary_path")
+      .unwrap_or(HELM_BINARY_DEST)
+      .to_string();
+
+    ctx.run_privileged_command("rm", &["-f".to_string(), binary_path.clone()], &[])?;
+    ctx.persist_change(
+      "install.execution.helm.owned_by_ret2boot",
+      "false",
+      |config| {
+        let changed = config.remove_install_step_metadata(self.id(), "owned_by_ret2boot");
+        let changed = config.remove_install_step_metadata(self.id(), "binary_path") || changed;
+        config.remove_install_step_metadata(self.id(), "install_source") || changed
+      },
+    )?;
+
+    Ok(())
   }
 }
 
@@ -1543,8 +1692,16 @@ fn file_contains(path: &str, needle: &str) -> bool {
 }
 
 fn command_exists(binary: &str) -> bool {
-  env::var_os("PATH")
-    .is_some_and(|paths| env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
+  find_command_path(binary).is_some()
+}
+
+fn find_command_path(binary: &str) -> Option<PathBuf> {
+  env::var_os("PATH").and_then(|paths| {
+    env::split_paths(&paths).find_map(|dir| {
+      let candidate = dir.join(binary);
+      candidate.is_file().then_some(candidate)
+    })
+  })
 }
 
 fn preflight_status_tag(status: &PreflightStatus) -> String {

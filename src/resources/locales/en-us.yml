@@ -97,6 +97,8 @@ install.kubernetes.worker.server_url.prompt: Enter the primary node URL for the 
 install.kubernetes.worker.server_url_hint.k3s: For k3s workers, this is usually an https URL on port 6443.
 install.kubernetes.worker.server_url_hint.rke2: For rke2 workers, this is usually an https URL on port 9345.
 install.kubernetes.worker.token.prompt: Enter the cluster join token
+install.helm.notice: Helm has no questionnaire options. It will be installed automatically as a later deployment dependency.
+install.helm.reuse_notice: "An existing helm binary was detected at %{path}; this step will reuse it instead of replacing it."
 install.plan.title: Installation plan
 install.plan.node_role: target role
 install.plan.phase: recorded phase
@@ -107,7 +109,7 @@ install.review.cancelled: Installation stays in review mode until you confirm it
 install.execution.title: Installation phase initialized
 install.execution.progress_saved: The installation journal has been saved and can be resumed later.
 install.execution.resume_ready: Resuming from the previously recorded installation journal.
-install.execution.noop_notice: Only the first Kubernetes bootstrap step is wired right now; later steps will be added incrementally.
+install.execution.noop_notice: The Kubernetes bootstrap and Helm steps are wired right now; later steps will be added incrementally.
 install.execution.step_running: "Running step: %{step}"
 install.execution.step_done: "Completed step: %{step}"
 install.execution.step_failed: "Step failed: %{step} (%{error})"
@@ -138,6 +140,10 @@ install.steps.cluster.node_cidr_mask: "Per-node pod CIDR mask: /%{mask}"
 install.steps.cluster.max_pods: "Per-node max pods: %{max_pods}"
 install.steps.cluster.worker_server: "Primary node URL: %{server}"
 install.steps.cluster.worker_token_saved: Join token is saved in the installer config.
+install.steps.helm.title: Install Helm CLI
+install.steps.helm.detail: Install Helm as the package manager used by later Ret2Shell deployment steps.
+install.steps.helm.reuse: "Reuse the existing helm binary at %{path}."
+install.steps.helm.install_path: "Install helm into %{path}."
 install.steps.platform.control_plane: Deploy core Ret2Shell platform services
 install.steps.platform.control_plane_detail: Install the central Ret2Shell services that must live on the primary node.
 install.steps.platform.worker: Configure worker-side Ret2Shell services
