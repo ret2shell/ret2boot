@@ -26,6 +26,36 @@ install.entry.config_path: 配置文件
 install.entry.privilege_backend: 提权后端
 install.entry.resume_hint: 每一步的答案都会立即保存到 %{path}，中断后可继续恢复。
 install.entry.next_steps: 之前的 mock 询问已移除，接下来进入真实部署流程开发。
+install.preflight.title: 安装前检查
+install.preflight.checks.downloader: 下载工具
+install.preflight.checks.systemd: systemd
+install.preflight.checks.github: github 连通性
+install.preflight.checks.k3s_sources: k3s 安装源连通性
+install.preflight.checks.rke2_sources: rke2 安装源连通性
+install.preflight.checks.cgroup_memory: cgroup memory 控制器
+install.preflight.checks.overlay: overlay 文件系统支持
+install.preflight.checks.br_netfilter: br_netfilter 支持
+install.preflight.details.downloader_available: "可用：%{available}"
+install.preflight.details.downloader_missing: 缺少 curl 和 wget
+install.preflight.details.systemd_ready: systemd 正在运行，且 systemctl 可用
+install.preflight.details.systemd_missing: 当前主机未启用 systemd，无法继续安装
+install.preflight.details.github_reachable: 当前可以访问 github
+install.preflight.details.github_unreachable: 当前无法访问 github，启动更新检查可能失败
+install.preflight.details.sources_all_reachable: "可访问的端点：%{reachable}"
+install.preflight.details.sources_partial: "可访问：%{reachable}；不可访问：%{unreachable}"
+install.preflight.details.sources_missing: "所有检查过的端点都不可访问：%{unreachable}"
+install.preflight.details.sources_unknown: 没有检查到任何端点
+install.preflight.details.cgroup_memory_ready: 当前主机提供 memory cgroup 控制器
+install.preflight.details.cgroup_memory_missing: 当前主机缺少 memory cgroup 控制器
+install.preflight.details.kernel_ready: 当前内核环境已提供该能力
+install.preflight.details.kernel_loadable: 当前尚未启用，但内核报告可以加载该能力
+install.preflight.details.kernel_missing: 当前内核环境缺少该能力
+install.preflight.status.ok: 通过
+install.preflight.status.warning: 警告
+install.preflight.status.failed: 失败
+install.preflight.summary.passed: 安装前检查通过，当前主机可以进入问询阶段。
+install.preflight.summary.warning: 安装前检查已通过，但存在警告，请在继续前确认当前主机状态。
+install.preflight.summary.failed: 安装前检查发现阻断问题，请先修复后再继续。
 install.node_role.prompt: 当前安装目标属于主节点还是从节点？
 install.node_role.options.control_plane: 主节点（控制平面）
 install.node_role.options.worker: 从节点

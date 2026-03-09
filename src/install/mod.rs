@@ -7,7 +7,10 @@ use tracing::{debug, info};
 
 use self::{
   collectors::{Collector, ConfirmCollector, SingleSelectCollector},
-  steps::{InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext},
+  steps::{
+    InstallStepPlan, StepExecutionContext, StepPlanContext, StepPreflightContext,
+    StepQuestionContext,
+  },
 };
 use crate::{
   config::{InstallExecutionPhase, InstallStepStatus, InstallTargetRole, Ret2BootConfig},
@@ -27,6 +30,7 @@ pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
 
   let mut flow = InstallFlow::new(config, runtime)?;
   flow.greet();
+  flow.run_preflight()?;
   flow.collect_questionnaire()?;
   flow.enter_review_phase()?;
 
@@ -53,6 +57,7 @@ struct InstallFlow<'a> {
   config: &'a mut Ret2BootConfig,
   runtime: &'a RuntimeState,
   config_path: String,
+  validated_steps: Vec<crate::config::InstallStepId>,
 }
 
 impl<'a> InstallFlow<'a> {
@@ -61,6 +66,7 @@ impl<'a> InstallFlow<'a> {
       config,
       runtime,
       config_path: Ret2BootConfig::path_display()?,
+      validated_steps: Vec::new(),
     })
   }
 
@@ -140,6 +146,22 @@ impl<'a> InstallFlow<'a> {
     Ok(())
   }
 
+  fn run_preflight(&mut self) -> Result<()> {
+    for step in steps::registry() {
+      let validated = {
+        let mut preflight_context =
+          StepPreflightContext::new(self.config, self.runtime, &self.config_path);
+        step.preflight(&mut preflight_context)?
+      };
+
+      if validated {
+        self.validated_steps.push(step.id());
+      }
+    }
+
+    Ok(())
+  }
+
   fn enter_review_phase(&mut self) -> Result<()> {
     if self.config.install.review.confirmed {
       return Ok(());
@@ -192,10 +214,14 @@ impl<'a> InstallFlow<'a> {
     println!("{}", ui::note(t!("install.plan.steps")));
 
     for (index, step) in plan.steps.iter().enumerate() {
-      let status = self
-        .config
-        .install_step_status(step.id)
-        .unwrap_or(InstallStepStatus::Pending);
+      let status = if self.validated_steps.contains(&step.id) {
+        InstallStepStatus::Completed
+      } else {
+        self
+          .config
+          .install_step_status(step.id)
+          .unwrap_or(InstallStepStatus::Pending)
+      };
 
       println!(
         "  {}. {} {}",
@@ -252,6 +278,14 @@ impl<'a> InstallFlow<'a> {
       InstallExecutionPhase::Installing.as_config_value(),
       |config| config.set_install_phase(InstallExecutionPhase::Installing),
     )?;
+
+    for step_id in self.validated_steps.clone() {
+      self.persist_change(
+        "install.execution.step",
+        step_id.as_config_value(),
+        |config| config.mark_install_step_completed(step_id),
+      )?;
+    }
 
     telemetry::init()?;
 

@@ -26,6 +26,36 @@ install.entry.config_path: 設定ファイル
 install.entry.privilege_backend: 権限昇格バックエンド
 install.entry.resume_hint: 各ステップの回答は %{path} にすぐ保存されるため、中断後も再開できます。
 install.entry.next_steps: これまでの mock 質問は削除されました。ここから実際のデプロイフロー実装に進みます。
+install.preflight.title: 事前チェック
+install.preflight.checks.downloader: ダウンローダー
+install.preflight.checks.systemd: systemd
+install.preflight.checks.github: github 接続性
+install.preflight.checks.k3s_sources: k3s インストールソース接続性
+install.preflight.checks.rke2_sources: rke2 インストールソース接続性
+install.preflight.checks.cgroup_memory: cgroup memory コントローラー
+install.preflight.checks.overlay: overlay ファイルシステム対応
+install.preflight.checks.br_netfilter: br_netfilter 対応
+install.preflight.details.downloader_available: "利用可能: %{available}"
+install.preflight.details.downloader_missing: curl と wget が見つかりません
+install.preflight.details.systemd_ready: systemd が稼働しており、systemctl が利用可能です
+install.preflight.details.systemd_missing: このホストでは systemd が有効ではないため、インストールを続行できません
+install.preflight.details.github_reachable: github に接続できます
+install.preflight.details.github_unreachable: github に接続できないため、起動時更新確認が失敗する可能性があります
+install.preflight.details.sources_all_reachable: "到達可能なエンドポイント: %{reachable}"
+install.preflight.details.sources_partial: "到達可能: %{reachable}；到達不可: %{unreachable}"
+install.preflight.details.sources_missing: "確認したすべてのエンドポイントに到達できません: %{unreachable}"
+install.preflight.details.sources_unknown: 確認対象のエンドポイントがありません
+install.preflight.details.cgroup_memory_ready: memory cgroup コントローラーを利用できます
+install.preflight.details.cgroup_memory_missing: このホストには memory cgroup コントローラーがありません
+install.preflight.details.kernel_ready: 現在のカーネル環境で利用可能です
+install.preflight.details.kernel_loadable: まだ有効ではありませんが、カーネルはロード可能と判断しています
+install.preflight.details.kernel_missing: 現在のカーネル環境には存在しません
+install.preflight.status.ok: ok
+install.preflight.status.warning: warn
+install.preflight.status.failed: fail
+install.preflight.summary.passed: 事前チェックに合格しました。このホストは質問フェーズに進めます。
+install.preflight.summary.warning: 事前チェックは通過しましたが警告があります。続行前に現在のホスト状態を確認してください。
+install.preflight.summary.failed: 事前チェックで続行を妨げる問題が見つかりました。修正してから再試行してください。
 install.node_role.prompt: このインストール対象は主ノードですか、それともワーカーノードですか？
 install.node_role.options.control_plane: 主ノード（コントロールプレーン）
 install.node_role.options.worker: ワーカーノード

@@ -26,6 +26,36 @@ install.entry.config_path: 設定檔
 install.entry.privilege_backend: 提權後端
 install.entry.resume_hint: 每一步的答案都會立即儲存到 %{path}，中斷後可繼續恢復。
 install.entry.next_steps: 先前的 mock 詢問已移除，接下來進入真實部署流程開發。
+install.preflight.title: 安裝前檢查
+install.preflight.checks.downloader: 下載工具
+install.preflight.checks.systemd: systemd
+install.preflight.checks.github: github 連通性
+install.preflight.checks.k3s_sources: k3s 安裝來源連通性
+install.preflight.checks.rke2_sources: rke2 安裝來源連通性
+install.preflight.checks.cgroup_memory: cgroup memory 控制器
+install.preflight.checks.overlay: overlay 檔案系統支援
+install.preflight.checks.br_netfilter: br_netfilter 支援
+install.preflight.details.downloader_available: "可用：%{available}"
+install.preflight.details.downloader_missing: 缺少 curl 和 wget
+install.preflight.details.systemd_ready: systemd 正在執行，且 systemctl 可用
+install.preflight.details.systemd_missing: 目前主機未啟用 systemd，無法繼續安裝
+install.preflight.details.github_reachable: 目前可以存取 github
+install.preflight.details.github_unreachable: 目前無法存取 github，啟動更新檢查可能失敗
+install.preflight.details.sources_all_reachable: "可存取的端點：%{reachable}"
+install.preflight.details.sources_partial: "可存取：%{reachable}；不可存取：%{unreachable}"
+install.preflight.details.sources_missing: "所有檢查過的端點都不可存取：%{unreachable}"
+install.preflight.details.sources_unknown: 沒有檢查到任何端點
+install.preflight.details.cgroup_memory_ready: 目前主機提供 memory cgroup 控制器
+install.preflight.details.cgroup_memory_missing: 目前主機缺少 memory cgroup 控制器
+install.preflight.details.kernel_ready: 目前核心環境已提供該能力
+install.preflight.details.kernel_loadable: 目前尚未啟用，但核心回報可以載入該能力
+install.preflight.details.kernel_missing: 目前核心環境缺少該能力
+install.preflight.status.ok: 通過
+install.preflight.status.warning: 警告
+install.preflight.status.failed: 失敗
+install.preflight.summary.passed: 安裝前檢查通過，目前主機可以進入問詢階段。
+install.preflight.summary.warning: 安裝前檢查已通過，但存在警告，請在繼續前確認目前主機狀態。
+install.preflight.summary.failed: 安裝前檢查發現阻斷問題，請先修復後再繼續。
 install.node_role.prompt: 目前安裝目標屬於主節點還是從節點？
 install.node_role.options.control_plane: 主節點（控制平面）
 install.node_role.options.worker: 從節點

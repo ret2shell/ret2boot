@@ -1,6 +1,7 @@
 use std::{
   env, fs,
   path::{Path, PathBuf},
+  process::Command,
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -26,6 +27,122 @@ const K3S_CONFIG_DEST: &str = "/etc/rancher/k3s/config.yaml";
 const K3S_KUBELET_CONFIG_DEST: &str = "/etc/rancher/k3s/kubelet.config";
 const RKE2_CONFIG_DEST: &str = "/etc/rancher/rke2/config.yaml";
 const RKE2_KUBELET_CONFIG_DEST: &str = "/etc/rancher/rke2/kubelet.conf";
+
+enum PreflightStatus {
+  Passed,
+  Warning,
+  Failed,
+}
+
+struct PreflightCheck {
+  label: String,
+  detail: String,
+  status: PreflightStatus,
+}
+
+struct PreflightReport {
+  checks: Vec<PreflightCheck>,
+}
+
+impl PreflightReport {
+  fn collect() -> Result<Self> {
+    let client = Client::builder()
+      .https_only(true)
+      .timeout(Duration::from_secs(5))
+      .build()
+      .context("failed to build preflight HTTP client")?;
+
+    let github = probe_endpoint(&client, "https://github.com");
+    let k3s_official = probe_endpoint(&client, "https://get.k3s.io");
+    let k3s_mirror = probe_endpoint(
+      &client,
+      "https://rancher-mirror.rancher.cn/k3s/k3s-install.sh",
+    );
+    let rke2_official = probe_endpoint(&client, "https://get.rke2.io");
+    let rke2_mirror = probe_endpoint(&client, "https://rancher-mirror.rancher.cn/rke2/install.sh");
+
+    let mut checks = Vec::new();
+    checks.push(check_downloader());
+    checks.push(check_systemd());
+    checks.push(check_github_connectivity(github));
+    checks.push(check_source_connectivity(
+      t!("install.preflight.checks.k3s_sources").to_string(),
+      &[
+        endpoint_reachability("get.k3s.io", k3s_official),
+        endpoint_reachability("rancher-mirror.rancher.cn/k3s", k3s_mirror),
+      ],
+    ));
+    checks.push(check_source_connectivity(
+      t!("install.preflight.checks.rke2_sources").to_string(),
+      &[
+        endpoint_reachability("get.rke2.io", rke2_official),
+        endpoint_reachability("rancher-mirror.rancher.cn/rke2", rke2_mirror),
+      ],
+    ));
+    checks.push(check_cgroup_memory());
+    checks.push(check_kernel_feature(
+      t!("install.preflight.checks.overlay").to_string(),
+      kernel_feature_state_overlay(),
+    ));
+    checks.push(check_kernel_feature(
+      t!("install.preflight.checks.br_netfilter").to_string(),
+      kernel_feature_state_br_netfilter(),
+    ));
+
+    Ok(Self { checks })
+  }
+
+  fn has_failures(&self) -> bool {
+    self
+      .checks
+      .iter()
+      .any(|check| matches!(check.status, PreflightStatus::Failed))
+  }
+
+  fn has_warnings(&self) -> bool {
+    self
+      .checks
+      .iter()
+      .any(|check| matches!(check.status, PreflightStatus::Warning))
+  }
+
+  fn print(&self) {
+    println!();
+    println!("{}", ui::section(t!("install.preflight.title")));
+
+    for check in &self.checks {
+      println!(
+        "{} {} - {}",
+        preflight_status_tag(&check.status),
+        check.label,
+        check.detail
+      );
+    }
+
+    println!();
+    println!(
+      "{}",
+      if self.has_failures() {
+        ui::warning(t!("install.preflight.summary.failed"))
+      } else if self.has_warnings() {
+        ui::note(t!("install.preflight.summary.warning"))
+      } else {
+        ui::success(t!("install.preflight.summary.passed"))
+      }
+    );
+  }
+}
+
+struct EndpointReachability<'a> {
+  label: &'a str,
+  reachable: bool,
+}
+
+enum KernelFeatureState {
+  Ready,
+  Loadable,
+  Missing,
+}
 
 pub struct InstallStepPlan {
   pub id: InstallStepId,
@@ -100,6 +217,35 @@ pub struct StepQuestionContext<'a> {
   config: &'a mut Ret2BootConfig,
   runtime: &'a RuntimeState,
   config_path: &'a str,
+}
+
+pub struct StepPreflightContext<'a> {
+  config: &'a Ret2BootConfig,
+  runtime: &'a RuntimeState,
+  config_path: &'a str,
+}
+
+#[allow(dead_code)]
+impl<'a> StepPreflightContext<'a> {
+  pub fn new(config: &'a Ret2BootConfig, runtime: &'a RuntimeState, config_path: &'a str) -> Self {
+    Self {
+      config,
+      runtime,
+      config_path,
+    }
+  }
+
+  pub fn config(&self) -> &Ret2BootConfig {
+    self.config
+  }
+
+  pub fn runtime(&self) -> &RuntimeState {
+    self.runtime
+  }
+
+  pub fn config_path(&self) -> &str {
+    self.config_path
+  }
 }
 
 #[allow(dead_code)]
@@ -200,6 +346,10 @@ impl<'a> StepExecutionContext<'a> {
 pub trait AtomicInstallStep {
   fn id(&self) -> InstallStepId;
 
+  fn preflight(&self, _ctx: &mut StepPreflightContext<'_>) -> Result<bool> {
+    Ok(false)
+  }
+
   fn should_include(&self, _ctx: &StepPlanContext<'_>) -> bool {
     true
   }
@@ -230,7 +380,45 @@ pub trait AtomicInstallStep {
 }
 
 pub fn registry() -> Vec<Box<dyn AtomicInstallStep>> {
-  vec![Box::new(ClusterBootstrapStep)]
+  vec![
+    Box::new(PreflightValidationStep),
+    Box::new(ClusterBootstrapStep),
+  ]
+}
+
+struct PreflightValidationStep;
+
+impl AtomicInstallStep for PreflightValidationStep {
+  fn id(&self) -> InstallStepId {
+    InstallStepId::PreflightValidation
+  }
+
+  fn preflight(&self, _ctx: &mut StepPreflightContext<'_>) -> Result<bool> {
+    let report = PreflightReport::collect()?;
+    report.print();
+
+    if report.has_failures() {
+      bail!(t!("install.preflight.summary.failed").to_string())
+    }
+
+    Ok(true)
+  }
+
+  fn describe(&self, _ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
+    Ok(InstallStepPlan {
+      id: self.id(),
+      title: t!("install.steps.preflight").to_string(),
+      details: vec![t!("install.steps.preflight_detail").to_string()],
+    })
+  }
+
+  fn install(&self, _ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    Ok(())
+  }
+
+  fn uninstall(&self, _ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    Ok(())
+  }
 }
 
 struct ClusterBootstrapStep;
@@ -612,6 +800,263 @@ fn rollback_rke2(ctx: &StepExecutionContext<'_>) -> Result<()> {
   }
 
   cleanup_rke2_configs(ctx)
+}
+
+fn check_downloader() -> PreflightCheck {
+  let available = ["curl", "wget"]
+    .into_iter()
+    .filter(|binary| command_exists(binary))
+    .collect::<Vec<_>>();
+
+  if available.is_empty() {
+    return PreflightCheck {
+      label: t!("install.preflight.checks.downloader").to_string(),
+      detail: t!("install.preflight.details.downloader_missing").to_string(),
+      status: PreflightStatus::Failed,
+    };
+  }
+
+  PreflightCheck {
+    label: t!("install.preflight.checks.downloader").to_string(),
+    detail: t!(
+      "install.preflight.details.downloader_available",
+      available = available.join(", ")
+    )
+    .to_string(),
+    status: PreflightStatus::Passed,
+  }
+}
+
+fn check_systemd() -> PreflightCheck {
+  let active = Path::new("/run/systemd/system").is_dir() && command_exists("systemctl");
+
+  PreflightCheck {
+    label: t!("install.preflight.checks.systemd").to_string(),
+    detail: if active {
+      t!("install.preflight.details.systemd_ready").to_string()
+    } else {
+      t!("install.preflight.details.systemd_missing").to_string()
+    },
+    status: if active {
+      PreflightStatus::Passed
+    } else {
+      PreflightStatus::Failed
+    },
+  }
+}
+
+fn check_github_connectivity(reachable: bool) -> PreflightCheck {
+  PreflightCheck {
+    label: t!("install.preflight.checks.github").to_string(),
+    detail: if reachable {
+      t!("install.preflight.details.github_reachable").to_string()
+    } else {
+      t!("install.preflight.details.github_unreachable").to_string()
+    },
+    status: if reachable {
+      PreflightStatus::Passed
+    } else {
+      PreflightStatus::Warning
+    },
+  }
+}
+
+fn check_source_connectivity(
+  label: String, endpoints: &[EndpointReachability<'_>],
+) -> PreflightCheck {
+  let reachable = endpoints
+    .iter()
+    .filter(|endpoint| endpoint.reachable)
+    .map(|endpoint| endpoint.label)
+    .collect::<Vec<_>>();
+  let unreachable = endpoints
+    .iter()
+    .filter(|endpoint| !endpoint.reachable)
+    .map(|endpoint| endpoint.label)
+    .collect::<Vec<_>>();
+
+  match (reachable.is_empty(), unreachable.is_empty()) {
+    (false, true) => PreflightCheck {
+      label,
+      detail: t!(
+        "install.preflight.details.sources_all_reachable",
+        reachable = reachable.join(", ")
+      )
+      .to_string(),
+      status: PreflightStatus::Passed,
+    },
+    (false, false) => PreflightCheck {
+      label,
+      detail: t!(
+        "install.preflight.details.sources_partial",
+        reachable = reachable.join(", "),
+        unreachable = unreachable.join(", ")
+      )
+      .to_string(),
+      status: PreflightStatus::Warning,
+    },
+    (true, false) => PreflightCheck {
+      label,
+      detail: t!(
+        "install.preflight.details.sources_missing",
+        unreachable = unreachable.join(", ")
+      )
+      .to_string(),
+      status: PreflightStatus::Failed,
+    },
+    (true, true) => PreflightCheck {
+      label,
+      detail: t!("install.preflight.details.sources_unknown").to_string(),
+      status: PreflightStatus::Failed,
+    },
+  }
+}
+
+fn check_cgroup_memory() -> PreflightCheck {
+  let available = cgroup_memory_available();
+
+  PreflightCheck {
+    label: t!("install.preflight.checks.cgroup_memory").to_string(),
+    detail: if available {
+      t!("install.preflight.details.cgroup_memory_ready").to_string()
+    } else {
+      t!("install.preflight.details.cgroup_memory_missing").to_string()
+    },
+    status: if available {
+      PreflightStatus::Passed
+    } else {
+      PreflightStatus::Failed
+    },
+  }
+}
+
+fn check_kernel_feature(label: String, state: KernelFeatureState) -> PreflightCheck {
+  let (detail, status) = match state {
+    KernelFeatureState::Ready => (
+      t!("install.preflight.details.kernel_ready").to_string(),
+      PreflightStatus::Passed,
+    ),
+    KernelFeatureState::Loadable => (
+      t!("install.preflight.details.kernel_loadable").to_string(),
+      PreflightStatus::Warning,
+    ),
+    KernelFeatureState::Missing => (
+      t!("install.preflight.details.kernel_missing").to_string(),
+      PreflightStatus::Failed,
+    ),
+  };
+
+  PreflightCheck {
+    label,
+    detail,
+    status,
+  }
+}
+
+fn probe_endpoint(client: &Client, url: &str) -> bool {
+  client
+    .get(url)
+    .header(
+      "User-Agent",
+      format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
+    )
+    .send()
+    .and_then(|response| response.error_for_status())
+    .is_ok()
+}
+
+fn endpoint_reachability(label: &'static str, reachable: bool) -> EndpointReachability<'static> {
+  EndpointReachability { label, reachable }
+}
+
+fn cgroup_memory_available() -> bool {
+  if let Ok(controllers) = fs::read_to_string("/sys/fs/cgroup/cgroup.controllers")
+    && controllers
+      .split_whitespace()
+      .any(|controller| controller == "memory")
+  {
+    return true;
+  }
+
+  fs::read_to_string("/proc/cgroups")
+    .ok()
+    .map(|contents| {
+      contents.lines().any(|line| {
+        let columns = line.split_whitespace().collect::<Vec<_>>();
+        columns.len() >= 4 && columns[0] == "memory" && columns[3] == "1"
+      })
+    })
+    .unwrap_or(false)
+}
+
+fn kernel_feature_state_overlay() -> KernelFeatureState {
+  kernel_feature_state(
+    "/sys/module/overlay",
+    "/proc/filesystems",
+    "overlay",
+    "overlay",
+  )
+}
+
+fn kernel_feature_state_br_netfilter() -> KernelFeatureState {
+  kernel_feature_state(
+    "/sys/module/br_netfilter",
+    "/proc/sys/net/bridge/bridge-nf-call-iptables",
+    "",
+    "br_netfilter",
+  )
+}
+
+fn kernel_feature_state(
+  module_path: &str, marker_path: &str, marker_text: &str, module_name: &str,
+) -> KernelFeatureState {
+  if Path::new(module_path).exists()
+    || (Path::new(marker_path).is_file()
+      && (marker_text.is_empty() || file_contains(marker_path, marker_text)))
+  {
+    return KernelFeatureState::Ready;
+  }
+
+  if modprobe_can_load(module_name) {
+    return KernelFeatureState::Loadable;
+  }
+
+  KernelFeatureState::Missing
+}
+
+fn modprobe_can_load(module_name: &str) -> bool {
+  command_exists("modprobe")
+    && Command::new("modprobe")
+      .args(["-n", "-q", module_name])
+      .status()
+      .map(|status| status.success())
+      .unwrap_or(false)
+}
+
+fn file_contains(path: &str, needle: &str) -> bool {
+  fs::read_to_string(path)
+    .map(|contents| contents.contains(needle))
+    .unwrap_or(false)
+}
+
+fn command_exists(binary: &str) -> bool {
+  env::var_os("PATH")
+    .is_some_and(|paths| env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
+}
+
+fn preflight_status_tag(status: &PreflightStatus) -> String {
+  match status {
+    PreflightStatus::Passed => {
+      ui::status_tag(t!("install.preflight.status.ok"), ui::BadgeTone::Success)
+    }
+    PreflightStatus::Warning => ui::status_tag(
+      t!("install.preflight.status.warning"),
+      ui::BadgeTone::Pending,
+    ),
+    PreflightStatus::Failed => {
+      ui::status_tag(t!("install.preflight.status.failed"), ui::BadgeTone::Danger)
+    }
+  }
 }
 
 fn stage_remote_script(url: &str, prefix: &str) -> Result<PathBuf> {

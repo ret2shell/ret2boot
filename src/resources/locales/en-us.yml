@@ -26,6 +26,36 @@ install.entry.config_path: config file
 install.entry.privilege_backend: privilege backend
 install.entry.resume_hint: Answers are saved to %{path} immediately, so you can resume later.
 install.entry.next_steps: Mock prompts are removed; proceed with the real deployment workflow next.
+install.preflight.title: Preflight checks
+install.preflight.checks.downloader: downloader
+install.preflight.checks.systemd: systemd
+install.preflight.checks.github: github connectivity
+install.preflight.checks.k3s_sources: k3s source reachability
+install.preflight.checks.rke2_sources: rke2 source reachability
+install.preflight.checks.cgroup_memory: cgroup memory controller
+install.preflight.checks.overlay: overlay filesystem support
+install.preflight.checks.br_netfilter: br_netfilter support
+install.preflight.details.downloader_available: "available: %{available}"
+install.preflight.details.downloader_missing: missing curl and wget
+install.preflight.details.systemd_ready: systemd is running and systemctl is available
+install.preflight.details.systemd_missing: systemd is required but not active on this host
+install.preflight.details.github_reachable: github is reachable
+install.preflight.details.github_unreachable: github is unreachable right now; startup updates may fail
+install.preflight.details.sources_all_reachable: "reachable endpoints: %{reachable}"
+install.preflight.details.sources_partial: "reachable: %{reachable}; unreachable: %{unreachable}"
+install.preflight.details.sources_missing: "all checked endpoints are unreachable: %{unreachable}"
+install.preflight.details.sources_unknown: no endpoints were checked
+install.preflight.details.cgroup_memory_ready: memory cgroup controller is available
+install.preflight.details.cgroup_memory_missing: memory cgroup controller is missing from the current host
+install.preflight.details.kernel_ready: available in the current kernel environment
+install.preflight.details.kernel_loadable: not active yet, but the kernel reports that it can be loaded
+install.preflight.details.kernel_missing: missing from the current kernel environment
+install.preflight.status.ok: ok
+install.preflight.status.warning: warn
+install.preflight.status.failed: fail
+install.preflight.summary.passed: Preflight passed. The host is ready for the questionnaire.
+install.preflight.summary.warning: Preflight passed with warnings. Review the current host state before continuing.
+install.preflight.summary.failed: Preflight found blocking issues. Fix them before continuing.
 install.node_role.prompt: Is this install target a primary node or a worker node?
 install.node_role.options.control_plane: Primary node (control plane)
 install.node_role.options.worker: Worker node
