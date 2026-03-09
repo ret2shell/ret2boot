@@ -79,6 +79,9 @@ install.steps.cluster.worker: 将当前节点加入 Kubernetes 集群
 install.steps.cluster.worker_detail: 使用已记录的加入参数，把当前节点注册进现有集群。
 install.steps.cluster.selected_distribution: "Kubernetes 发行版：%{distribution}"
 install.steps.cluster.selected_source: "安装源：%{source}"
+install.steps.cluster.pod_cidr: "集群 Pod CIDR：%{cidr}"
+install.steps.cluster.node_cidr_mask: "单节点 Pod CIDR 掩码：/%{mask}"
+install.steps.cluster.max_pods: "单节点最大 Pod 数：%{max_pods}"
 install.steps.cluster.worker_server: "主节点 URL：%{server}"
 install.steps.cluster.worker_token_saved: 集群加入 token 已保存到安装器配置中。
 install.steps.platform.control_plane: 部署 Ret2Shell 核心平台服务

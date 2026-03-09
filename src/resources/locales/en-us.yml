@@ -79,6 +79,9 @@ install.steps.cluster.worker: Join this node to the Kubernetes cluster
 install.steps.cluster.worker_detail: Enroll the node into the existing cluster using the recorded join parameters.
 install.steps.cluster.selected_distribution: "Kubernetes distribution: %{distribution}"
 install.steps.cluster.selected_source: "Installation source: %{source}"
+install.steps.cluster.pod_cidr: "Cluster pod CIDR: %{cidr}"
+install.steps.cluster.node_cidr_mask: "Per-node pod CIDR mask: /%{mask}"
+install.steps.cluster.max_pods: "Per-node max pods: %{max_pods}"
 install.steps.cluster.worker_server: "Primary node URL: %{server}"
 install.steps.cluster.worker_token_saved: Join token is saved in the installer config.
 install.steps.platform.control_plane: Deploy core Ret2Shell platform services

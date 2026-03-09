@@ -19,6 +19,14 @@ use crate::{
   ui,
 };
 
+const CLUSTER_CIDR: &str = "10.42.0.0/16";
+const NODE_CIDR_MASK_SIZE: u8 = 20;
+const NODE_MAX_PODS: u16 = 3072;
+const K3S_CONFIG_DEST: &str = "/etc/rancher/k3s/config.yaml";
+const K3S_KUBELET_CONFIG_DEST: &str = "/etc/rancher/k3s/kubelet.config";
+const RKE2_CONFIG_DEST: &str = "/etc/rancher/rke2/config.yaml";
+const RKE2_KUBELET_CONFIG_DEST: &str = "/etc/rancher/rke2/kubelet.conf";
+
 pub struct InstallStepPlan {
   pub id: InstallStepId,
   pub title: String,
@@ -375,6 +383,13 @@ impl AtomicInstallStep for ClusterBootstrapStep {
         source = kubernetes_source_label(spec.distribution, spec.source)
       )
       .to_string(),
+      t!("install.steps.cluster.pod_cidr", cidr = CLUSTER_CIDR).to_string(),
+      t!(
+        "install.steps.cluster.node_cidr_mask",
+        mask = NODE_CIDR_MASK_SIZE
+      )
+      .to_string(),
+      t!("install.steps.cluster.max_pods", max_pods = NODE_MAX_PODS).to_string(),
     ];
 
     if let Some(server_url) = spec.worker_server_url.as_deref() {
@@ -419,6 +434,15 @@ impl AtomicInstallStep for ClusterBootstrapStep {
     match spec.distribution {
       KubernetesDistribution::K3s => uninstall_k3s(ctx, &spec),
       KubernetesDistribution::Rke2 => uninstall_rke2(ctx),
+    }
+  }
+
+  fn rollback(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    let spec = ClusterInstallSpec::from_plan_context(&ctx.as_plan_context())?;
+
+    match spec.distribution {
+      KubernetesDistribution::K3s => rollback_k3s(ctx, &spec),
+      KubernetesDistribution::Rke2 => rollback_rke2(ctx),
     }
   }
 }
@@ -466,6 +490,10 @@ impl ClusterInstallSpec {
 }
 
 fn install_k3s(ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec) -> Result<()> {
+  let staged = stage_k3s_config(spec)?;
+  install_staged_file(ctx, &staged.config, K3S_CONFIG_DEST)?;
+  install_staged_file(ctx, &staged.kubelet_config, K3S_KUBELET_CONFIG_DEST)?;
+
   let script_path = stage_remote_script(k3s_script_url(spec.source), "k3s-install")?;
 
   let mut envs = vec![(
@@ -480,22 +508,9 @@ fn install_k3s(ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec) -> Res
     envs.push(("INSTALL_K3S_MIRROR".to_string(), "cn".to_string()));
   }
 
-  if spec.role == InstallTargetRole::Worker {
-    envs.push((
-      "K3S_URL".to_string(),
-      spec
-        .worker_server_url
-        .clone()
-        .expect("worker server URL exists"),
-    ));
-    envs.push((
-      "K3S_TOKEN".to_string(),
-      spec.worker_token.clone().expect("worker token exists"),
-    ));
-  }
-
   let result = ctx.run_privileged_command("sh", &[script_path.display().to_string()], &envs);
   let _ = fs::remove_file(&script_path);
+  staged.cleanup();
   result
 }
 
@@ -510,28 +525,16 @@ fn uninstall_k3s(ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec) -> R
   ])
   .ok_or_else(|| anyhow!("unable to locate `{script_name}` for cleanup"))?;
 
-  ctx.run_privileged_command(&uninstall_script.display().to_string(), &[], &[])
+  ctx.run_privileged_command(&uninstall_script.display().to_string(), &[], &[])?;
+  cleanup_k3s_configs(ctx)
 }
 
 fn install_rke2(ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec) -> Result<()> {
-  let script_path = stage_remote_script(rke2_script_url(spec.source), "rke2-install")?;
+  let staged = stage_rke2_config(spec)?;
+  install_staged_file(ctx, &staged.config, RKE2_CONFIG_DEST)?;
+  install_staged_file(ctx, &staged.kubelet_config, RKE2_KUBELET_CONFIG_DEST)?;
 
-  if spec.role == InstallTargetRole::Worker {
-    let config_path = stage_worker_join_config(spec)?;
-    let copy_result = ctx.run_privileged_command(
-      "install",
-      &[
-        "-D".to_string(),
-        "-m".to_string(),
-        "600".to_string(),
-        config_path.display().to_string(),
-        "/etc/rancher/rke2/config.yaml".to_string(),
-      ],
-      &[],
-    );
-    let _ = fs::remove_file(&config_path);
-    copy_result?;
-  }
+  let script_path = stage_remote_script(rke2_script_url(spec.source), "rke2-install")?;
 
   let mut envs = vec![
     ("INSTALL_RKE2_METHOD".to_string(), "tar".to_string()),
@@ -551,6 +554,7 @@ fn install_rke2(ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec) -> Re
   let install_result =
     ctx.run_privileged_command("sh", &[script_path.display().to_string()], &envs);
   let _ = fs::remove_file(&script_path);
+  staged.cleanup();
   install_result?;
 
   let service_name = match spec.role {
@@ -577,7 +581,37 @@ fn uninstall_rke2(ctx: &StepExecutionContext<'_>) -> Result<()> {
   ])
   .ok_or_else(|| anyhow!("unable to locate `rke2-uninstall.sh` for cleanup"))?;
 
-  ctx.run_privileged_command(&uninstall_script.display().to_string(), &[], &[])
+  ctx.run_privileged_command(&uninstall_script.display().to_string(), &[], &[])?;
+  cleanup_rke2_configs(ctx)
+}
+
+fn rollback_k3s(ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec) -> Result<()> {
+  if let Some(script_name) = match spec.role {
+    InstallTargetRole::ControlPlane => find_existing_path(&[
+      PathBuf::from("/usr/local/bin/k3s-uninstall.sh"),
+      PathBuf::from("/opt/bin/k3s-uninstall.sh"),
+    ]),
+    InstallTargetRole::Worker => find_existing_path(&[
+      PathBuf::from("/usr/local/bin/k3s-agent-uninstall.sh"),
+      PathBuf::from("/opt/bin/k3s-agent-uninstall.sh"),
+    ]),
+  } {
+    let _ = ctx.run_privileged_command(&script_name.display().to_string(), &[], &[]);
+  }
+
+  cleanup_k3s_configs(ctx)
+}
+
+fn rollback_rke2(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  if let Some(script_name) = find_existing_path(&[
+    PathBuf::from("/usr/local/bin/rke2-uninstall.sh"),
+    PathBuf::from("/opt/rke2/bin/rke2-uninstall.sh"),
+    PathBuf::from("/usr/bin/rke2-uninstall.sh"),
+  ]) {
+    let _ = ctx.run_privileged_command(&script_name.display().to_string(), &[], &[]);
+  }
+
+  cleanup_rke2_configs(ctx)
 }
 
 fn stage_remote_script(url: &str, prefix: &str) -> Result<PathBuf> {
@@ -601,19 +635,158 @@ fn stage_remote_script(url: &str, prefix: &str) -> Result<PathBuf> {
   Ok(path)
 }
 
-fn stage_worker_join_config(spec: &ClusterInstallSpec) -> Result<PathBuf> {
-  let server_url = spec
-    .worker_server_url
-    .as_deref()
-    .ok_or_else(|| anyhow!("worker server URL is required for worker installation"))?;
-  let token = spec
-    .worker_token
-    .as_deref()
-    .ok_or_else(|| anyhow!("worker token is required for worker installation"))?;
-  let path = unique_temp_path("rke2-agent-config", "yaml");
-  let contents = format!("server: {server_url}\ntoken: {token}\n");
-  fs::write(&path, contents).with_context(|| format!("failed to write `{}`", path.display()))?;
-  Ok(path)
+fn stage_k3s_config(spec: &ClusterInstallSpec) -> Result<StagedClusterConfig> {
+  let config = unique_temp_path("k3s-config", "yaml");
+  let kubelet_config = unique_temp_path("k3s-kubelet", "yaml");
+
+  fs::write(&config, render_k3s_config(spec))
+    .with_context(|| format!("failed to write `{}`", config.display()))?;
+  fs::write(&kubelet_config, render_kubelet_config())
+    .with_context(|| format!("failed to write `{}`", kubelet_config.display()))?;
+
+  Ok(StagedClusterConfig {
+    config,
+    kubelet_config,
+  })
+}
+
+fn stage_rke2_config(spec: &ClusterInstallSpec) -> Result<StagedClusterConfig> {
+  let config = unique_temp_path("rke2-config", "yaml");
+  let kubelet_config = unique_temp_path("rke2-kubelet", "yaml");
+
+  fs::write(&config, render_rke2_config(spec))
+    .with_context(|| format!("failed to write `{}`", config.display()))?;
+  fs::write(&kubelet_config, render_kubelet_config())
+    .with_context(|| format!("failed to write `{}`", kubelet_config.display()))?;
+
+  Ok(StagedClusterConfig {
+    config,
+    kubelet_config,
+  })
+}
+
+fn install_staged_file(ctx: &StepExecutionContext<'_>, source: &Path, dest: &str) -> Result<()> {
+  ctx.run_privileged_command(
+    "install",
+    &[
+      "-D".to_string(),
+      "-m".to_string(),
+      "600".to_string(),
+      source.display().to_string(),
+      dest.to_string(),
+    ],
+    &[],
+  )
+}
+
+fn cleanup_k3s_configs(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  ctx.run_privileged_command(
+    "rm",
+    &[
+      "-f".to_string(),
+      K3S_CONFIG_DEST.to_string(),
+      K3S_KUBELET_CONFIG_DEST.to_string(),
+    ],
+    &[],
+  )?;
+  let _ = ctx.run_privileged_command("rmdir", &["/etc/rancher/k3s".to_string()], &[]);
+  Ok(())
+}
+
+fn cleanup_rke2_configs(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  ctx.run_privileged_command(
+    "rm",
+    &[
+      "-f".to_string(),
+      RKE2_CONFIG_DEST.to_string(),
+      RKE2_KUBELET_CONFIG_DEST.to_string(),
+    ],
+    &[],
+  )?;
+  let _ = ctx.run_privileged_command("rmdir", &["/etc/rancher/rke2".to_string()], &[]);
+  Ok(())
+}
+
+fn render_k3s_config(spec: &ClusterInstallSpec) -> String {
+  let mut lines = Vec::new();
+
+  if spec.role == InstallTargetRole::ControlPlane {
+    lines.push(format!("cluster-cidr: {CLUSTER_CIDR}"));
+    lines.push("kube-controller-manager-arg:".to_string());
+    lines.push(format!("  - node-cidr-mask-size={NODE_CIDR_MASK_SIZE}"));
+  } else {
+    lines.push(format!(
+      "server: {}",
+      yaml_quote(
+        spec
+          .worker_server_url
+          .as_deref()
+          .expect("worker URL exists")
+      )
+    ));
+    lines.push(format!(
+      "token: {}",
+      yaml_quote(spec.worker_token.as_deref().expect("worker token exists"))
+    ));
+  }
+
+  lines.push("kubelet-arg:".to_string());
+  lines.push(format!("  - config={K3S_KUBELET_CONFIG_DEST}"));
+  lines.push(String::new());
+
+  lines.join("\n")
+}
+
+fn render_rke2_config(spec: &ClusterInstallSpec) -> String {
+  let mut lines = Vec::new();
+
+  if spec.role == InstallTargetRole::ControlPlane {
+    lines.push(format!("cluster-cidr: {CLUSTER_CIDR}"));
+    lines.push("kube-controller-manager-arg:".to_string());
+    lines.push(format!("  - node-cidr-mask-size={NODE_CIDR_MASK_SIZE}"));
+  } else {
+    lines.push(format!(
+      "server: {}",
+      yaml_quote(
+        spec
+          .worker_server_url
+          .as_deref()
+          .expect("worker URL exists")
+      )
+    ));
+    lines.push(format!(
+      "token: {}",
+      yaml_quote(spec.worker_token.as_deref().expect("worker token exists"))
+    ));
+  }
+
+  lines.push("kubelet-arg:".to_string());
+  lines.push(format!("  - config={RKE2_KUBELET_CONFIG_DEST}"));
+  lines.push(String::new());
+
+  lines.join("\n")
+}
+
+fn render_kubelet_config() -> String {
+  format!(
+    "apiVersion: kubelet.config.k8s.io/v1beta1\nkind: KubeletConfiguration\nmaxPods: {NODE_MAX_PODS}\n"
+  )
+}
+
+fn yaml_quote(value: &str) -> String {
+  format!("'{}'", value.replace('\'', "''"))
+}
+
+struct StagedClusterConfig {
+  config: PathBuf,
+  kubelet_config: PathBuf,
+}
+
+impl StagedClusterConfig {
+  fn cleanup(&self) {
+    let _ = fs::remove_file(&self.config);
+    let _ = fs::remove_file(&self.kubelet_config);
+  }
 }
 
 fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
