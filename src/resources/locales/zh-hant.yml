@@ -84,6 +84,46 @@ install.node_role.prompt: 目前安裝目標屬於主節點還是從節點？
 install.node_role.options.control_plane: 主節點（控制平面）
 install.node_role.options.worker: 從節點
 install.node_role.saved: 已將目前目標角色儲存為：%{role}。
+install.platform.resources_intro: Ret2Shell 平台引導資源
+install.platform.namespaces: "將建立的命名空間：%{platform}、%{challenge}"
+install.platform.service_account: "共用 ServiceAccount：%{namespace} 中的 %{name}"
+install.platform.rbac: "共用 RBAC：ClusterRole %{role}，ClusterRoleBinding %{binding}"
+install.platform.configmaps: 後續會準備 ret2shell-config、ret2shell-blocked 等共用 ConfigMap。
+install.platform.storage_notice: 平台服務的儲存必須使用 local-path，其他本地服務可以改用其他儲存後端。
+install.platform.remaining_disk.prompt: 目前伺服器還能為 Ret2Shell 提供多少可用磁碟空間？（GiB）
+install.platform.requested_disk.prompt: 你希望 Ret2Shell 總共劃分多少磁碟空間？（GiB）
+install.platform.services_intro: 計畫部署的 Ret2Shell 服務
+install.platform.service_heading: "設定服務：%{service}"
+install.platform.service_release: "Helm Release：%{namespace} 命名空間中的 %{release}"
+install.platform.service_platform_fixed: 核心平台服務必須本地部署，並且固定使用 local-path 儲存。
+install.platform.service_deployment.prompt: 這個服務希望如何部署？
+install.platform.service_storage.prompt: 這個本地服務希望使用哪一種儲存後端？
+install.platform.service_storage_class.prompt: 請輸入這個服務要使用的 StorageClass 名稱
+install.platform.disk_budget_too_small: 目前選擇的 local-path 本地服務數量，已經超過你預留的總磁碟預算下限。
+install.platform.disk_plan_intro: 請檢查並調整使用 local-path 的本地服務磁碟劃分
+install.platform.service_disk.prompt: "%{service} 的磁碟劃分（GiB）"
+install.platform.disk_plan_overflow: "目前本地磁碟劃分合計 %{assigned} GiB，已超過預留的 %{budget} GiB，請調整後再試。"
+install.platform.disk_plan_unused: "本地磁碟劃分完成後，仍有 %{unused} GiB 預算未使用。"
+install.platform.input.invalid_integer: 請輸入一個以 GiB 為單位的整數。
+install.platform.input.too_small: "這個值至少要為 %{minimum} GiB。"
+install.platform.input.too_large: "這個值最多只能為 %{maximum} GiB。"
+install.platform.deployment.local: 本地部署
+install.platform.deployment.external: 外部提供
+install.platform.deployment.disabled: 不部署
+install.platform.storage.local_path: local-path
+install.platform.storage.custom_storage_class: 自訂 StorageClass
+install.platform.services.platform: 平台
+install.platform.services.database: 資料庫
+install.platform.services.cache: 快取
+install.platform.services.queue: 佇列
+install.platform.services.registry: 映像倉庫
+install.platform.services.logs: 日誌
+install.platform.service_desc.platform: Ret2Shell 的主 API、排程器與 challenge 編排服務。
+install.platform.service_desc.database: 用於平台核心資料儲存的 PostgreSQL。
+install.platform.service_desc.cache: 用於熱狀態快取的 Valkey。
+install.platform.service_desc.queue: 用於內部事件投遞的 NATS 與 JetStream。
+install.platform.service_desc.registry: 用於 challenge 映像分發的 OCI Registry，也可以替換成外部映像倉庫。
+install.platform.service_desc.logs: 可選的 VictoriaLogs 日誌與觀測元件。
 install.exposure.prompt: 目前叢集希望使用哪一種應用出口模式？
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx
@@ -121,7 +161,7 @@ install.review.cancelled: 目前安裝維持在複核階段，待你確認後再
 install.execution.title: 已進入安裝階段
 install.execution.progress_saved: 安裝步驟日誌已儲存，後續中斷後可繼續恢復。
 install.execution.resume_ready: 將從先前記錄的安裝步驟日誌繼續。
-install.execution.noop_notice: 目前已接入 Kubernetes 引導、Helm 與應用出口步驟，後續步驟會繼續逐步接入。
+install.execution.noop_notice: 目前已接入 Kubernetes 引導、Helm、應用出口與平台規劃步驟，後續部署步驟會繼續擴展。
 install.execution.step_running: "正在執行步驟：%{step}"
 install.execution.step_done: "步驟已完成：%{step}"
 install.execution.step_failed: "步驟執行失敗：%{step}（%{error}）"
@@ -166,6 +206,12 @@ install.steps.gateway.port_reservation: Ret2Boot 會先將叢集閘道從 80 與
 install.steps.gateway.nginx_reuse: "重用目前主機上已存在的 nginx 二進位：%{path}。"
 install.steps.gateway.nginx_service_reuse: 重用目前主機上已經存在的 nginx 服務。
 install.steps.gateway.nginx_install: 透過目前偵測到的系統套件管理器安裝 nginx。
+install.steps.platform_plan.title: 準備 Ret2Shell 平台部署規劃
+install.steps.platform_plan.namespaces: "將建立的命名空間：%{platform}、%{challenge}"
+install.steps.platform_plan.service_account: "共用 ServiceAccount：%{namespace} 中的 %{name}"
+install.steps.platform_plan.rbac: "共用 RBAC 物件：ClusterRole %{role}，ClusterRoleBinding %{binding}"
+install.steps.platform_plan.disk_budget: "磁碟預算：已劃分 %{allocated} GiB / 計畫 %{requested} GiB（目前實體可用 %{remaining} GiB）"
+install.steps.platform_plan.unallocated_disk: "尚未使用的磁碟預算：%{remaining} GiB"
 install.steps.platform.control_plane: 部署 Ret2Shell 核心平台服務
 install.steps.platform.control_plane_detail: 安裝必須運行在主節點上的 Ret2Shell 核心服務。
 install.steps.platform.worker: 設定從節點側的 Ret2Shell 服務

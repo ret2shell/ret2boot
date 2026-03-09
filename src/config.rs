@@ -32,6 +32,7 @@ pub struct InstallConfig {
 pub struct InstallQuestionnaire {
   pub node_role: Option<InstallTargetRole>,
   pub kubernetes: KubernetesQuestionnaire,
+  pub platform: PlatformQuestionnaire,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -48,6 +49,23 @@ pub struct KubernetesQuestionnaire {
 pub struct WorkerJoinConfig {
   pub server_url: Option<String>,
   pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformQuestionnaire {
+  pub remaining_disk_gib: Option<u32>,
+  pub requested_disk_gib: Option<u32>,
+  pub services: BTreeMap<PlatformServiceId, PlatformServiceConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformServiceConfig {
+  pub deployment: Option<PlatformServiceDeploymentMode>,
+  pub storage_mode: Option<PlatformStorageMode>,
+  pub storage_class_name: Option<String>,
+  pub local_disk_gib: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -237,6 +255,64 @@ impl ApplicationExposureMode {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformServiceId {
+  Platform,
+  Database,
+  Cache,
+  Queue,
+  Registry,
+  Logs,
+}
+
+impl PlatformServiceId {
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::Platform => "platform",
+      Self::Database => "database",
+      Self::Cache => "cache",
+      Self::Queue => "queue",
+      Self::Registry => "registry",
+      Self::Logs => "logs",
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformServiceDeploymentMode {
+  Local,
+  External,
+  Disabled,
+}
+
+impl PlatformServiceDeploymentMode {
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::Local => "local",
+      Self::External => "external",
+      Self::Disabled => "disabled",
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformStorageMode {
+  LocalPath,
+  CustomStorageClass,
+}
+
+impl PlatformStorageMode {
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::LocalPath => "local-path",
+      Self::CustomStorageClass => "custom-storage-class",
+    }
+  }
+}
+
 impl Ret2BootConfig {
   pub fn load() -> Result<Self> {
     let path = Self::path()?;
@@ -400,6 +476,125 @@ impl Ret2BootConfig {
     true
   }
 
+  pub fn platform_service_config(
+    &self, service: PlatformServiceId,
+  ) -> Option<&PlatformServiceConfig> {
+    self.install.questionnaire.platform.services.get(&service)
+  }
+
+  pub fn set_platform_remaining_disk_gib(&mut self, value: u32) -> bool {
+    if self.install.questionnaire.platform.remaining_disk_gib == Some(value) {
+      return false;
+    }
+
+    self.install.questionnaire.platform.remaining_disk_gib = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_requested_disk_gib(&mut self, value: u32) -> bool {
+    if self.install.questionnaire.platform.requested_disk_gib == Some(value) {
+      return false;
+    }
+
+    self.install.questionnaire.platform.requested_disk_gib = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_service_deployment(
+    &mut self, service: PlatformServiceId, value: PlatformServiceDeploymentMode,
+  ) -> bool {
+    let service_config = self.ensure_platform_service_config(service);
+
+    if service_config.deployment == Some(value) {
+      return false;
+    }
+
+    service_config.deployment = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_service_storage_mode(
+    &mut self, service: PlatformServiceId, value: PlatformStorageMode,
+  ) -> bool {
+    let service_config = self.ensure_platform_service_config(service);
+
+    if service_config.storage_mode == Some(value) {
+      return false;
+    }
+
+    service_config.storage_mode = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_service_storage_class_name(
+    &mut self, service: PlatformServiceId, value: impl Into<String>,
+  ) -> bool {
+    let value = value.into();
+    let service_config = self.ensure_platform_service_config(service);
+
+    if service_config.storage_class_name.as_deref() == Some(value.as_str()) {
+      return false;
+    }
+
+    service_config.storage_class_name = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn clear_platform_service_storage_class_name(&mut self, service: PlatformServiceId) -> bool {
+    let service_config = self.ensure_platform_service_config(service);
+    let had_value = service_config.storage_class_name.is_some();
+    service_config.storage_class_name = None;
+
+    if had_value {
+      self.invalidate_install_pipeline();
+    }
+
+    had_value
+  }
+
+  pub fn set_platform_service_local_disk_gib(
+    &mut self, service: PlatformServiceId, value: u32,
+  ) -> bool {
+    let service_config = self.ensure_platform_service_config(service);
+
+    if service_config.local_disk_gib == Some(value) {
+      return false;
+    }
+
+    service_config.local_disk_gib = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn clear_platform_service_storage_mode(&mut self, service: PlatformServiceId) -> bool {
+    let service_config = self.ensure_platform_service_config(service);
+    let had_value = service_config.storage_mode.is_some();
+    service_config.storage_mode = None;
+
+    if had_value {
+      self.invalidate_install_pipeline();
+    }
+
+    had_value
+  }
+
+  pub fn clear_platform_service_local_disk_gib(&mut self, service: PlatformServiceId) -> bool {
+    let service_config = self.ensure_platform_service_config(service);
+    let had_value = service_config.local_disk_gib.is_some();
+    service_config.local_disk_gib = None;
+
+    if had_value {
+      self.invalidate_install_pipeline();
+    }
+
+    had_value
+  }
+
   pub fn set_install_review_confirmed(&mut self, confirmed: bool) -> bool {
     if self.install.review.confirmed == confirmed {
       return false;
@@ -545,6 +740,18 @@ impl Ret2BootConfig {
   fn invalidate_install_pipeline(&mut self) {
     self.install.review.confirmed = false;
     self.install.execution = InstallExecution::default();
+  }
+
+  fn ensure_platform_service_config(
+    &mut self, service: PlatformServiceId,
+  ) -> &mut PlatformServiceConfig {
+    self
+      .install
+      .questionnaire
+      .platform
+      .services
+      .entry(service)
+      .or_default()
   }
 
   fn ensure_install_step(&mut self, step_id: InstallStepId) -> &mut InstallStepProgress {

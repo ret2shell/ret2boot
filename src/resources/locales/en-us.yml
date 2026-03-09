@@ -84,6 +84,46 @@ install.node_role.prompt: Is this install target a primary node or a worker node
 install.node_role.options.control_plane: Primary node (control plane)
 install.node_role.options.worker: Worker node
 install.node_role.saved: Saved target role as %{role}.
+install.platform.resources_intro: Ret2Shell platform bootstrap resources
+install.platform.namespaces: "Namespaces: %{platform}, %{challenge}"
+install.platform.service_account: "Service account: %{name} in %{namespace}"
+install.platform.rbac: "Cluster RBAC: role %{role}, binding %{binding}"
+install.platform.configmaps: Shared configmaps such as ret2shell-config and ret2shell-blocked will be prepared later.
+install.platform.storage_notice: Platform storage must use the local-path storage class. Other local services may use a different storage backend.
+install.platform.remaining_disk.prompt: How much disk space remains available for Ret2Shell on this server? (GiB)
+install.platform.requested_disk.prompt: How much total disk space should Ret2Shell reserve? (GiB)
+install.platform.services_intro: Planned Ret2Shell services
+install.platform.service_heading: "Configure service: %{service}"
+install.platform.service_release: "Release: %{release} in namespace %{namespace}"
+install.platform.service_platform_fixed: The core platform service is always deployed locally and always uses local-path storage.
+install.platform.service_deployment.prompt: How should this service be deployed?
+install.platform.service_storage.prompt: Which storage backend should this local service use?
+install.platform.service_storage_class.prompt: Enter the storage class name for this service
+install.platform.disk_budget_too_small: The selected local-path services need a larger disk budget than the current total reservation.
+install.platform.disk_plan_intro: Review and adjust the local-path disk allocations for locally stored services
+install.platform.service_disk.prompt: "Disk allocation for %{service} (GiB)"
+install.platform.disk_plan_overflow: "The assigned local disks total %{assigned} GiB, which exceeds the reserved %{budget} GiB. Adjust the values and try again."
+install.platform.disk_plan_unused: "Unused disk budget after local allocations: %{unused} GiB"
+install.platform.input.invalid_integer: Please enter a whole number in GiB.
+install.platform.input.too_small: "The value must be at least %{minimum} GiB."
+install.platform.input.too_large: "The value must be at most %{maximum} GiB."
+install.platform.deployment.local: local
+install.platform.deployment.external: external
+install.platform.deployment.disabled: disabled
+install.platform.storage.local_path: local-path
+install.platform.storage.custom_storage_class: custom storage class
+install.platform.services.platform: platform
+install.platform.services.database: database
+install.platform.services.cache: cache
+install.platform.services.queue: queue
+install.platform.services.registry: registry
+install.platform.services.logs: logs
+install.platform.service_desc.platform: The main Ret2Shell API, scheduler, and challenge orchestration service.
+install.platform.service_desc.database: PostgreSQL storage for platform data.
+install.platform.service_desc.cache: Valkey cache for hot platform state.
+install.platform.service_desc.queue: NATS queue and JetStream storage for internal event delivery.
+install.platform.service_desc.registry: OCI registry for challenge images. This can be replaced by an external registry.
+install.platform.service_desc.logs: Optional VictoriaLogs stack for centralized logs and observability.
 install.exposure.prompt: Which application exposure mode should this cluster use?
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort plus external nginx
@@ -121,7 +161,7 @@ install.review.cancelled: Installation stays in review mode until you confirm it
 install.execution.title: Installation phase initialized
 install.execution.progress_saved: The installation journal has been saved and can be resumed later.
 install.execution.resume_ready: Resuming from the previously recorded installation journal.
-install.execution.noop_notice: The Kubernetes bootstrap, Helm, and application gateway steps are wired right now; later steps will be added incrementally.
+install.execution.noop_notice: Kubernetes bootstrap, Helm, application gateway, and platform planning are wired right now; later deployment steps will keep expanding.
 install.execution.step_running: "Running step: %{step}"
 install.execution.step_done: "Completed step: %{step}"
 install.execution.step_failed: "Step failed: %{step} (%{error})"
@@ -166,6 +206,12 @@ install.steps.gateway.port_reservation: Ret2Boot will move the cluster gateway a
 install.steps.gateway.nginx_reuse: "Reuse the existing nginx binary at %{path}."
 install.steps.gateway.nginx_service_reuse: Reuse the existing nginx service that is already present on this host.
 install.steps.gateway.nginx_install: Install nginx through the detected system package manager.
+install.steps.platform_plan.title: Prepare the Ret2Shell platform layout
+install.steps.platform_plan.namespaces: "Namespaces to create: %{platform}, %{challenge}"
+install.steps.platform_plan.service_account: "Shared service account: %{name} in %{namespace}"
+install.steps.platform_plan.rbac: "Shared RBAC objects: role %{role}, binding %{binding}"
+install.steps.platform_plan.disk_budget: "Disk budget: %{allocated} GiB allocated out of %{requested} GiB requested (%{remaining} GiB physically available)"
+install.steps.platform_plan.unallocated_disk: "Unallocated disk budget: %{remaining} GiB"
 install.steps.platform.control_plane: Deploy core Ret2Shell platform services
 install.steps.platform.control_plane_detail: Install the central Ret2Shell services that must live on the primary node.
 install.steps.platform.worker: Configure worker-side Ret2Shell services
