@@ -71,6 +71,7 @@ install.preflight.details.kernel_ready: 目前核心環境已提供該能力
 install.preflight.details.kernel_loadable: 目前尚未啟用，但核心回報可以載入該能力
 install.preflight.details.kernel_missing: 目前核心環境缺少該能力
 install.preflight.status.ok: 通過
+install.preflight.status.running: 檢查中
 install.preflight.status.warning: 警告
 install.preflight.status.failed: 失敗
 install.preflight.summary.passed: 安裝前檢查通過，目前主機可以進入問詢階段。

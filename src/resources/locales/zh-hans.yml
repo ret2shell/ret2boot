@@ -71,6 +71,7 @@ install.preflight.details.kernel_ready: 当前内核环境已提供该能力
 install.preflight.details.kernel_loadable: 当前尚未启用，但内核报告可以加载该能力
 install.preflight.details.kernel_missing: 当前内核环境缺少该能力
 install.preflight.status.ok: 通过
+install.preflight.status.running: 检查中
 install.preflight.status.warning: 警告
 install.preflight.status.failed: 失败
 install.preflight.summary.passed: 安装前检查通过，当前主机可以进入问询阶段。

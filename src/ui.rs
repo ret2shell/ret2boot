@@ -1,7 +1,7 @@
 use std::{
   env,
   fmt::Display,
-  io::{self, IsTerminal},
+  io::{self, IsTerminal, Write},
 };
 
 pub enum BadgeTone {
@@ -51,6 +51,28 @@ pub fn status_tag(label: impl AsRef<str>, tone: BadgeTone) -> String {
   format!("[{}]", paint(label.as_ref(), code))
 }
 
+pub fn transient_line(message: impl AsRef<str>) {
+  let mut stdout = io::stdout();
+
+  if terminal_effects_enabled() {
+    let _ = write!(stdout, "\r\x1b[2K{}", message.as_ref());
+    let _ = stdout.flush();
+  } else {
+    let _ = writeln!(stdout, "{}", message.as_ref());
+  }
+}
+
+pub fn transient_line_done(message: impl AsRef<str>) {
+  let mut stdout = io::stdout();
+
+  if terminal_effects_enabled() {
+    let _ = writeln!(stdout, "\r\x1b[2K{}", message.as_ref());
+    let _ = stdout.flush();
+  } else {
+    let _ = writeln!(stdout, "{}", message.as_ref());
+  }
+}
+
 fn paint(text: &str, code: &str) -> String {
   if colors_enabled() {
     format!("\x1b[{code}m{text}\x1b[0m")
@@ -60,6 +82,10 @@ fn paint(text: &str, code: &str) -> String {
 }
 
 fn colors_enabled() -> bool {
+  terminal_effects_enabled()
+}
+
+fn terminal_effects_enabled() -> bool {
   io::stdout().is_terminal()
     && env::var_os("NO_COLOR").is_none()
     && env::var("TERM")

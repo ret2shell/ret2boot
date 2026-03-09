@@ -198,73 +198,113 @@ impl PreflightReport {
       .build()
       .context("failed to build preflight HTTP client")?;
 
-    let public_network = probe_public_network(&client);
-    let github = probe_endpoint(&client, "https://github.com");
-    let k3s_official = probe_endpoint(&client, "https://get.k3s.io");
-    let k3s_mirror = probe_endpoint(
-      &client,
-      "https://rancher-mirror.rancher.cn/k3s/k3s-install.sh",
-    );
-    let rke2_official = probe_endpoint(&client, "https://get.rke2.io");
-    let rke2_mirror = probe_endpoint(&client, "https://rancher-mirror.rancher.cn/rke2/install.sh");
+    println!();
+    println!("{}", ui::section(t!("install.preflight.title")));
 
-    let mut state = PreflightState {
-      public_network,
-      ..PreflightState::default()
-    };
-    state.set_source_reachability(
-      KubernetesDistribution::K3s,
-      KubernetesInstallSource::Official,
-      k3s_official,
-    );
-    state.set_source_reachability(
-      KubernetesDistribution::K3s,
-      KubernetesInstallSource::ChinaMirror,
-      k3s_mirror,
-    );
-    state.set_source_reachability(
-      KubernetesDistribution::Rke2,
-      KubernetesInstallSource::Official,
-      rke2_official,
-    );
-    state.set_source_reachability(
-      KubernetesDistribution::Rke2,
-      KubernetesInstallSource::ChinaMirror,
-      rke2_mirror,
-    );
+    let mut state = PreflightState::default();
 
     let mut checks = Vec::new();
-    checks.push(check_downloader());
-    checks.push(check_systemd());
-    checks.push(check_public_network(&state.public_network));
-    checks.push(check_github_connectivity(github));
-    checks.push(check_source_connectivity(
-      t!("install.preflight.checks.k3s_sources").to_string(),
-      &[
-        endpoint_reachability("get.k3s.io", k3s_official),
-        endpoint_reachability("rancher-mirror.rancher.cn/k3s", k3s_mirror),
-      ],
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.downloader").to_string(),
+      check_downloader,
     ));
-    checks.push(check_source_connectivity(
-      t!("install.preflight.checks.rke2_sources").to_string(),
-      &[
-        endpoint_reachability("get.rke2.io", rke2_official),
-        endpoint_reachability("rancher-mirror.rancher.cn/rke2", rke2_mirror),
-      ],
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.systemd").to_string(),
+      check_systemd,
     ));
-    checks.push(check_disk_capacity());
-    checks.push(check_memory_capacity());
-    checks.push(check_port_state());
-    checks.push(check_sysctl_state());
-    checks.push(check_cgroup_memory());
-    checks.push(check_kernel_feature(
-      t!("install.preflight.checks.overlay").to_string(),
-      kernel_feature_state_overlay(),
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.public_network").to_string(),
+      || {
+        state.public_network = probe_public_network(&client);
+        check_public_network(&state.public_network)
+      },
     ));
-    checks.push(check_kernel_feature(
-      t!("install.preflight.checks.br_netfilter").to_string(),
-      kernel_feature_state_br_netfilter(),
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.github").to_string(),
+      || check_github_connectivity(probe_endpoint(&client, "https://github.com")),
     ));
+
+    let k3s_label = t!("install.preflight.checks.k3s_sources").to_string();
+    checks.push(run_preflight_check(k3s_label.clone(), || {
+      let official = probe_endpoint(&client, "https://get.k3s.io");
+      let mirror = probe_endpoint(
+        &client,
+        "https://rancher-mirror.rancher.cn/k3s/k3s-install.sh",
+      );
+      state.set_source_reachability(
+        KubernetesDistribution::K3s,
+        KubernetesInstallSource::Official,
+        official,
+      );
+      state.set_source_reachability(
+        KubernetesDistribution::K3s,
+        KubernetesInstallSource::ChinaMirror,
+        mirror,
+      );
+
+      check_source_connectivity(
+        k3s_label,
+        &[
+          endpoint_reachability("get.k3s.io", official),
+          endpoint_reachability("rancher-mirror.rancher.cn/k3s", mirror),
+        ],
+      )
+    }));
+
+    let rke2_label = t!("install.preflight.checks.rke2_sources").to_string();
+    checks.push(run_preflight_check(rke2_label.clone(), || {
+      let official = probe_endpoint(&client, "https://get.rke2.io");
+      let mirror = probe_endpoint(&client, "https://rancher-mirror.rancher.cn/rke2/install.sh");
+      state.set_source_reachability(
+        KubernetesDistribution::Rke2,
+        KubernetesInstallSource::Official,
+        official,
+      );
+      state.set_source_reachability(
+        KubernetesDistribution::Rke2,
+        KubernetesInstallSource::ChinaMirror,
+        mirror,
+      );
+
+      check_source_connectivity(
+        rke2_label,
+        &[
+          endpoint_reachability("get.rke2.io", official),
+          endpoint_reachability("rancher-mirror.rancher.cn/rke2", mirror),
+        ],
+      )
+    }));
+
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.disk").to_string(),
+      check_disk_capacity,
+    ));
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.memory").to_string(),
+      check_memory_capacity,
+    ));
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.ports").to_string(),
+      check_port_state,
+    ));
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.sysctl").to_string(),
+      check_sysctl_state,
+    ));
+    checks.push(run_preflight_check(
+      t!("install.preflight.checks.cgroup_memory").to_string(),
+      check_cgroup_memory,
+    ));
+
+    let overlay_label = t!("install.preflight.checks.overlay").to_string();
+    checks.push(run_preflight_check(overlay_label.clone(), || {
+      check_kernel_feature(overlay_label, kernel_feature_state_overlay())
+    }));
+
+    let br_netfilter_label = t!("install.preflight.checks.br_netfilter").to_string();
+    checks.push(run_preflight_check(br_netfilter_label.clone(), || {
+      check_kernel_feature(br_netfilter_label, kernel_feature_state_br_netfilter())
+    }));
 
     Ok((Self { checks }, state))
   }
@@ -284,18 +324,6 @@ impl PreflightReport {
   }
 
   fn print(&self) {
-    println!();
-    println!("{}", ui::section(t!("install.preflight.title")));
-
-    for check in &self.checks {
-      println!(
-        "{} {} - {}",
-        preflight_status_tag(&check.status),
-        check.label,
-        check.detail
-      );
-    }
-
     println!();
     println!(
       "{}",
@@ -1717,6 +1745,35 @@ fn preflight_status_tag(status: &PreflightStatus) -> String {
       ui::status_tag(t!("install.preflight.status.failed"), ui::BadgeTone::Danger)
     }
   }
+}
+
+fn preflight_pending_line(label: &str) -> String {
+  format!(
+    "{} {}",
+    ui::status_tag(
+      t!("install.preflight.status.running"),
+      ui::BadgeTone::Active
+    ),
+    label
+  )
+}
+
+fn preflight_result_line(check: &PreflightCheck) -> String {
+  format!(
+    "{} {} - {}",
+    preflight_status_tag(&check.status),
+    check.label,
+    check.detail
+  )
+}
+
+fn run_preflight_check<F>(label: String, run: F) -> PreflightCheck
+where
+  F: FnOnce() -> PreflightCheck, {
+  ui::transient_line(preflight_pending_line(&label));
+  let check = run();
+  ui::transient_line_done(preflight_result_line(&check));
+  check
 }
 
 fn stage_remote_script(url: &str, prefix: &str) -> Result<PathBuf> {

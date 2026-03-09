@@ -71,6 +71,7 @@ install.preflight.details.kernel_ready: available in the current kernel environm
 install.preflight.details.kernel_loadable: not active yet, but the kernel reports that it can be loaded
 install.preflight.details.kernel_missing: missing from the current kernel environment
 install.preflight.status.ok: ok
+install.preflight.status.running: checking
 install.preflight.status.warning: warn
 install.preflight.status.failed: fail
 install.preflight.summary.passed: Preflight passed. The host is ready for the questionnaire.
