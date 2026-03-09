@@ -31,6 +31,22 @@ pub struct InstallConfig {
 #[serde(default)]
 pub struct InstallQuestionnaire {
   pub node_role: Option<InstallTargetRole>,
+  pub kubernetes: KubernetesQuestionnaire,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KubernetesQuestionnaire {
+  pub distribution: Option<KubernetesDistribution>,
+  pub source: Option<KubernetesInstallSource>,
+  pub worker_join: WorkerJoinConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkerJoinConfig {
+  pub server_url: Option<String>,
+  pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -146,6 +162,56 @@ impl InstallTargetRole {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KubernetesDistribution {
+  K3s,
+  Rke2,
+}
+
+impl KubernetesDistribution {
+  pub const ALL: [Self; 2] = [Self::K3s, Self::Rke2];
+
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::K3s => "k3s",
+      Self::Rke2 => "rke2",
+    }
+  }
+
+  pub fn default_index(self) -> usize {
+    match self {
+      Self::K3s => 0,
+      Self::Rke2 => 1,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KubernetesInstallSource {
+  Official,
+  ChinaMirror,
+}
+
+impl KubernetesInstallSource {
+  pub const ALL: [Self; 2] = [Self::Official, Self::ChinaMirror];
+
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::Official => "official",
+      Self::ChinaMirror => "china-mirror",
+    }
+  }
+
+  pub fn default_index(self) -> usize {
+    match self {
+      Self::Official => 0,
+      Self::ChinaMirror => 1,
+    }
+  }
+}
+
 impl Ret2BootConfig {
   pub fn load() -> Result<Self> {
     let path = Self::path()?;
@@ -232,6 +298,72 @@ impl Ret2BootConfig {
     true
   }
 
+  pub fn set_install_kubernetes_distribution(
+    &mut self, distribution: KubernetesDistribution,
+  ) -> bool {
+    if self.install.questionnaire.kubernetes.distribution == Some(distribution) {
+      return false;
+    }
+
+    self.install.questionnaire.kubernetes.distribution = Some(distribution);
+    self.invalidate_install_pipeline();
+
+    true
+  }
+
+  pub fn set_install_kubernetes_source(&mut self, source: KubernetesInstallSource) -> bool {
+    if self.install.questionnaire.kubernetes.source == Some(source) {
+      return false;
+    }
+
+    self.install.questionnaire.kubernetes.source = Some(source);
+    self.invalidate_install_pipeline();
+
+    true
+  }
+
+  pub fn set_install_worker_server_url(&mut self, server_url: impl Into<String>) -> bool {
+    let server_url = server_url.into();
+
+    if self
+      .install
+      .questionnaire
+      .kubernetes
+      .worker_join
+      .server_url
+      .as_deref()
+      == Some(server_url.as_str())
+    {
+      return false;
+    }
+
+    self.install.questionnaire.kubernetes.worker_join.server_url = Some(server_url);
+    self.invalidate_install_pipeline();
+
+    true
+  }
+
+  pub fn set_install_worker_token(&mut self, token: impl Into<String>) -> bool {
+    let token = token.into();
+
+    if self
+      .install
+      .questionnaire
+      .kubernetes
+      .worker_join
+      .token
+      .as_deref()
+      == Some(token.as_str())
+    {
+      return false;
+    }
+
+    self.install.questionnaire.kubernetes.worker_join.token = Some(token);
+    self.invalidate_install_pipeline();
+
+    true
+  }
+
   pub fn set_install_review_confirmed(&mut self, confirmed: bool) -> bool {
     if self.install.review.confirmed == confirmed {
       return false;
@@ -288,9 +420,83 @@ impl Ret2BootConfig {
       .map(|step| step.status)
   }
 
+  pub fn mark_install_step_started(&mut self, step_id: InstallStepId) -> bool {
+    let step = self.ensure_install_step(step_id);
+    let previous_status = step.status;
+    let previous_attempts = step.attempts;
+    let previous_error = step.last_error.clone();
+
+    step.status = InstallStepStatus::InProgress;
+    step.attempts += 1;
+    step.last_error = None;
+
+    step.status != previous_status
+      || step.attempts != previous_attempts
+      || step.last_error != previous_error
+  }
+
+  pub fn mark_install_step_completed(&mut self, step_id: InstallStepId) -> bool {
+    let step = self.ensure_install_step(step_id);
+    let previous_status = step.status;
+    let previous_error = step.last_error.clone();
+
+    step.status = InstallStepStatus::Completed;
+    step.last_error = None;
+
+    step.status != previous_status || step.last_error != previous_error
+  }
+
+  pub fn mark_install_step_failed(
+    &mut self, step_id: InstallStepId, error: impl Into<String>,
+  ) -> bool {
+    let step = self.ensure_install_step(step_id);
+    let previous_status = step.status;
+    let previous_error = step.last_error.clone();
+
+    step.status = InstallStepStatus::Failed;
+    step.last_error = Some(error.into());
+
+    step.status != previous_status || step.last_error != previous_error
+  }
+
+  pub fn reset_install_step(&mut self, step_id: InstallStepId) -> bool {
+    let step = self.ensure_install_step(step_id);
+    let previous_status = step.status;
+    let previous_error = step.last_error.clone();
+
+    step.status = InstallStepStatus::Pending;
+    step.last_error = None;
+
+    step.status != previous_status || step.last_error != previous_error
+  }
+
   fn invalidate_install_pipeline(&mut self) {
     self.install.review.confirmed = false;
     self.install.execution = InstallExecution::default();
+  }
+
+  fn ensure_install_step(&mut self, step_id: InstallStepId) -> &mut InstallStepProgress {
+    if let Some(index) = self
+      .install
+      .execution
+      .steps
+      .iter()
+      .position(|step| step.id == step_id)
+    {
+      return &mut self.install.execution.steps[index];
+    }
+
+    self
+      .install
+      .execution
+      .steps
+      .push(InstallStepProgress::pending(step_id));
+    self
+      .install
+      .execution
+      .steps
+      .last_mut()
+      .expect("step exists")
   }
 }
 

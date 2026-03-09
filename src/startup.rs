@@ -18,6 +18,14 @@ pub struct RuntimeState {
   _privilege_session: PrivilegeSession,
 }
 
+impl RuntimeState {
+  pub fn run_privileged_command(
+    &self, program: &str, args: &[String], envs: &[(String, String)],
+  ) -> Result<()> {
+    self._privilege_session.run_command(program, args, envs)
+  }
+}
+
 pub fn initialize(config: &mut Ret2BootConfig) -> Result<Option<RuntimeState>> {
   let config_path = Ret2BootConfig::path_display()?;
   let terminal_charset = TerminalCharset::detect();

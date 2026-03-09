@@ -62,6 +62,51 @@ impl PrivilegeSession {
   pub fn is_root_user() -> bool {
     unsafe { libc::geteuid() == 0 }
   }
+
+  pub fn run_command(
+    &self, program: &str, args: &[String], envs: &[(String, String)],
+  ) -> Result<()> {
+    let mut command = self.command_for(program, args, envs);
+    let status = command.status().with_context(|| {
+      format!(
+        "failed to execute privileged command `{}` via {}",
+        program,
+        self.backend_name()
+      )
+    })?;
+
+    if status.success() {
+      return Ok(());
+    }
+
+    bail!(
+      "privileged command `{}` via {} exited with status {:?}",
+      program,
+      self.backend_name(),
+      status.code()
+    )
+  }
+
+  fn command_for(&self, program: &str, args: &[String], envs: &[(String, String)]) -> Command {
+    match self.kind {
+      PrivilegeKind::Root => {
+        let mut command = Command::new(program);
+        command.args(args);
+        command.envs(envs.iter().map(|(key, value)| (key, value)));
+        command
+      }
+      PrivilegeKind::Sudo { .. } => env_wrapped_command("sudo", program, args, envs),
+      PrivilegeKind::Doas => env_wrapped_command("doas", program, args, envs),
+      PrivilegeKind::Su => {
+        let mut command = Command::new("su");
+        command
+          .arg("root")
+          .arg("-c")
+          .arg(shell_command(program, args, envs));
+        command
+      }
+    }
+  }
 }
 
 impl Drop for SudoKeepalive {
@@ -175,4 +220,34 @@ fn refresh_sudo_credentials() -> bool {
       false
     }
   }
+}
+
+fn env_wrapped_command(
+  launcher: &str, program: &str, args: &[String], envs: &[(String, String)],
+) -> Command {
+  let mut command = Command::new(launcher);
+  command.arg("env");
+
+  for (key, value) in envs {
+    command.arg(format!("{key}={value}"));
+  }
+
+  command.arg(program);
+  command.args(args);
+  command
+}
+
+fn shell_command(program: &str, args: &[String], envs: &[(String, String)]) -> String {
+  let mut parts: Vec<String> = envs
+    .iter()
+    .map(|(key, value)| format!("{}={}", key, shell_quote(value)))
+    .collect();
+
+  parts.push(shell_quote(program));
+  parts.extend(args.iter().map(|arg| shell_quote(arg)));
+  parts.join(" ")
+}
+
+fn shell_quote(value: &str) -> String {
+  format!("'{}'", value.replace('\'', "'\"'\"'"))
 }

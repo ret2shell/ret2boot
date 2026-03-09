@@ -7,7 +7,7 @@ use tracing::{debug, info};
 
 use self::{
   collectors::{Collector, ConfirmCollector, SingleSelectCollector},
-  steps::{InstallStepPlan, StepPlanContext, StepQuestionContext},
+  steps::{InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext},
 };
 use crate::{
   config::{InstallExecutionPhase, InstallStepStatus, InstallTargetRole, Ret2BootConfig},
@@ -38,6 +38,7 @@ pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
   }
 
   flow.prepare_installation(&plan)?;
+  flow.execute_installation(&plan)?;
   flow.print_progress(&plan);
 
   Ok(())
@@ -277,6 +278,178 @@ impl<'a> InstallFlow<'a> {
     Ok(())
   }
 
+  fn execute_installation(&mut self, plan: &InstallPlan) -> Result<()> {
+    let registry = steps::registry();
+    let mut completed_step_ids = Vec::new();
+
+    for step in registry
+      .into_iter()
+      .filter(|step| plan.steps.iter().any(|planned| planned.id == step.id()))
+    {
+      let step_id = step.id();
+      let step_title = plan
+        .steps
+        .iter()
+        .find(|planned| planned.id == step_id)
+        .map(|planned| planned.title.clone())
+        .unwrap_or_else(|| step_id.as_config_value().to_string());
+
+      if self.config.install_step_status(step_id) == Some(InstallStepStatus::Completed) {
+        println!(
+          "{}",
+          ui::note(t!("install.execution.step_skipped", step = step_title))
+        );
+        completed_step_ids.push(step_id);
+        continue;
+      }
+
+      println!();
+      println!(
+        "{}",
+        ui::section(t!("install.execution.step_running", step = step_title))
+      );
+
+      self.persist_change(
+        "install.execution.step",
+        step_id.as_config_value(),
+        |config| config.mark_install_step_started(step_id),
+      )?;
+
+      let result = {
+        let mut execution_context =
+          StepExecutionContext::new(self.config, self.runtime, &self.config_path);
+        step.install(&mut execution_context)
+      };
+
+      match result {
+        Ok(()) => {
+          self.persist_change(
+            "install.execution.step",
+            step_id.as_config_value(),
+            |config| config.mark_install_step_completed(step_id),
+          )?;
+          completed_step_ids.push(step_id);
+          println!(
+            "{}",
+            ui::success(t!("install.execution.step_done", step = step_title))
+          );
+        }
+        Err(error) => {
+          let error_text = error.to_string();
+
+          self.persist_change("install.execution.step", &error_text, |config| {
+            config.mark_install_step_failed(step_id, error_text.clone())
+          })?;
+
+          println!(
+            "{}",
+            ui::warning(t!(
+              "install.execution.step_failed",
+              step = step_title,
+              error = error_text.as_str()
+            ))
+          );
+
+          self.rollback_failed_installation(&completed_step_ids, step_id)?;
+
+          return Err(error);
+        }
+      }
+    }
+
+    self.persist_change(
+      "install.execution.phase",
+      InstallExecutionPhase::Completed.as_config_value(),
+      |config| config.set_install_phase(InstallExecutionPhase::Completed),
+    )?;
+
+    println!();
+    println!("{}", ui::success(t!("install.execution.completed")));
+
+    Ok(())
+  }
+
+  fn rollback_failed_installation(
+    &mut self, completed_step_ids: &[crate::config::InstallStepId],
+    failed_step_id: crate::config::InstallStepId,
+  ) -> Result<()> {
+    println!();
+    println!("{}", ui::warning(t!("install.execution.rollback_started")));
+
+    let registry = steps::registry();
+    let mut failed_step_rollback_error = None;
+
+    if let Some(step) = registry.iter().find(|step| step.id() == failed_step_id) {
+      let mut execution_context =
+        StepExecutionContext::new(self.config, self.runtime, &self.config_path);
+      if let Err(error) = step.rollback(&mut execution_context) {
+        let error_text = error.to_string();
+        self.persist_change("install.execution.rollback", &error_text, |config| {
+          config.mark_install_step_failed(failed_step_id, error_text.clone())
+        })?;
+        failed_step_rollback_error = Some(error_text);
+      } else {
+        self.persist_change(
+          "install.execution.rollback",
+          failed_step_id.as_config_value(),
+          |config| config.reset_install_step(failed_step_id),
+        )?;
+      }
+    }
+
+    for step_id in completed_step_ids.iter().rev().copied() {
+      let Some(step) = registry.iter().find(|step| step.id() == step_id) else {
+        continue;
+      };
+
+      let step_title = plan_step_title(step_id);
+      println!(
+        "{}",
+        ui::note(t!("install.execution.rollback_step", step = step_title))
+      );
+
+      let rollback_result = {
+        let mut execution_context =
+          StepExecutionContext::new(self.config, self.runtime, &self.config_path);
+        step.rollback(&mut execution_context)
+      };
+
+      match rollback_result {
+        Ok(()) => {
+          self.persist_change(
+            "install.execution.rollback",
+            step_id.as_config_value(),
+            |config| config.reset_install_step(step_id),
+          )?;
+        }
+        Err(error) => {
+          let error_text = error.to_string();
+          self.persist_change("install.execution.rollback", &error_text, |config| {
+            config.mark_install_step_failed(step_id, error_text.clone())
+          })?;
+
+          return Err(anyhow!(
+            "rollback failed for `{}` after installation error: {}",
+            step_title,
+            error_text
+          ));
+        }
+      }
+    }
+
+    if let Some(error_text) = failed_step_rollback_error {
+      return Err(anyhow!(
+        "rollback failed for `{}` after installation error: {}",
+        plan_step_title(failed_step_id),
+        error_text
+      ));
+    }
+
+    println!("{}", ui::success(t!("install.execution.rollback_done")));
+
+    Ok(())
+  }
+
   fn print_progress(&self, plan: &InstallPlan) {
     println!();
     println!("{}", ui::section(t!("install.progress.title")));
@@ -351,4 +524,8 @@ fn step_status_tag(status: InstallStepStatus) -> String {
   };
 
   ui::status_tag(step_status_label(status), tone)
+}
+
+fn plan_step_title(step_id: crate::config::InstallStepId) -> String {
+  step_id.as_config_value().to_string()
 }

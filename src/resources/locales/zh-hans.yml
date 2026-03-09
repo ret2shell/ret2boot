@@ -30,6 +30,19 @@ install.node_role.prompt: 当前安装目标属于主节点还是从节点？
 install.node_role.options.control_plane: 主节点（控制平面）
 install.node_role.options.worker: 从节点
 install.node_role.saved: 已将当前目标角色保存为：%{role}。
+install.kubernetes.worker_hint: 从节点必须使用和主节点完全一致的 Kubernetes 发行版。
+install.kubernetes.distribution.prompt: 你想使用哪一种 Kubernetes 发行版？
+install.kubernetes.distribution.options.k3s: k3s
+install.kubernetes.distribution.options.rke2: rke2
+install.kubernetes.source.prompt: 你想为当前发行版使用哪一个安装源？
+install.kubernetes.source.k3s.official: k3s.io 官方安装源
+install.kubernetes.source.k3s.china_mirror: 面向中国大陆的 rancher.cn 安装源
+install.kubernetes.source.rke2.official: get.rke2.io 官方安装源
+install.kubernetes.source.rke2.china_mirror: 面向中国大陆的 rancher.cn 安装源
+install.kubernetes.worker.server_url.prompt: 请输入从节点连接主节点时使用的 URL
+install.kubernetes.worker.server_url_hint.k3s: 对于 k3s 从节点，这通常是指向 6443 端口的 https 地址。
+install.kubernetes.worker.server_url_hint.rke2: 对于 rke2 从节点，这通常是指向 9345 端口的 https 地址。
+install.kubernetes.worker.token.prompt: 请输入集群加入 token
 install.plan.title: 安装计划
 install.plan.node_role: 目标角色
 install.plan.phase: 当前记录阶段
@@ -40,7 +53,15 @@ install.review.cancelled: 当前安装保持在复核阶段，待你确认后再
 install.execution.title: 已进入安装阶段
 install.execution.progress_saved: 安装步骤日志已保存，后续中断后可继续恢复。
 install.execution.resume_ready: 将从之前记录的安装步骤日志继续。
-install.execution.noop_notice: 真实部署执行器尚未接入，目前阶段只初始化步骤日志与恢复框架。
+install.execution.noop_notice: 当前只接入了第一步 Kubernetes 引导流程，后续步骤会继续逐步接入。
+install.execution.step_running: "正在执行步骤：%{step}"
+install.execution.step_done: "步骤已完成：%{step}"
+install.execution.step_failed: "步骤执行失败：%{step}（%{error}）"
+install.execution.step_skipped: "跳过已完成步骤：%{step}"
+install.execution.rollback_started: 将按相反顺序回退已经完成的安装步骤。
+install.execution.rollback_step: "正在回退步骤：%{step}"
+install.execution.rollback_done: 回退完成。
+install.execution.completed: 安装步骤已全部成功完成。
 install.progress.title: 已记录的安装进度
 install.progress.status.pending: 待执行
 install.progress.status.in_progress: 执行中
@@ -56,6 +77,10 @@ install.steps.cluster.control_plane: 引导 Kubernetes 控制平面
 install.steps.cluster.control_plane_detail: 初始化主集群服务，并建立控制平面的基础能力。
 install.steps.cluster.worker: 将当前节点加入 Kubernetes 集群
 install.steps.cluster.worker_detail: 使用已记录的加入参数，把当前节点注册进现有集群。
+install.steps.cluster.selected_distribution: "Kubernetes 发行版：%{distribution}"
+install.steps.cluster.selected_source: "安装源：%{source}"
+install.steps.cluster.worker_server: "主节点 URL：%{server}"
+install.steps.cluster.worker_token_saved: 集群加入 token 已保存到安装器配置中。
 install.steps.platform.control_plane: 部署 Ret2Shell 核心平台服务
 install.steps.platform.control_plane_detail: 安装必须运行在主节点上的 Ret2Shell 核心服务。
 install.steps.platform.worker: 配置从节点侧的 Ret2Shell 服务
