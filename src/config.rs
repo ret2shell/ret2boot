@@ -39,6 +39,7 @@ pub struct InstallQuestionnaire {
 pub struct KubernetesQuestionnaire {
   pub distribution: Option<KubernetesDistribution>,
   pub source: Option<KubernetesInstallSource>,
+  pub application_exposure: Option<ApplicationExposureMode>,
   pub worker_join: WorkerJoinConfig,
 }
 
@@ -117,6 +118,7 @@ pub enum InstallStepId {
   PreflightValidation,
   ClusterBootstrap,
   HelmCli,
+  ApplicationGateway,
   PlatformDeployment,
 }
 
@@ -126,6 +128,7 @@ impl InstallStepId {
       Self::PreflightValidation => "preflight-validation",
       Self::ClusterBootstrap => "cluster-bootstrap",
       Self::HelmCli => "helm-cli",
+      Self::ApplicationGateway => "application-gateway",
       Self::PlatformDeployment => "platform-deployment",
     }
   }
@@ -205,6 +208,31 @@ impl KubernetesInstallSource {
     match self {
       Self::Official => "official",
       Self::ChinaMirror => "china-mirror",
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApplicationExposureMode {
+  Ingress,
+  NodePortExternalNginx,
+}
+
+impl ApplicationExposureMode {
+  pub const ALL: [Self; 2] = [Self::Ingress, Self::NodePortExternalNginx];
+
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::Ingress => "ingress",
+      Self::NodePortExternalNginx => "nodeport-external-nginx",
+    }
+  }
+
+  pub fn default_index(self) -> usize {
+    match self {
+      Self::Ingress => 0,
+      Self::NodePortExternalNginx => 1,
     }
   }
 }
@@ -314,6 +342,17 @@ impl Ret2BootConfig {
     }
 
     self.install.questionnaire.kubernetes.source = Some(source);
+    self.invalidate_install_pipeline();
+
+    true
+  }
+
+  pub fn set_install_application_exposure(&mut self, exposure: ApplicationExposureMode) -> bool {
+    if self.install.questionnaire.kubernetes.application_exposure == Some(exposure) {
+      return false;
+    }
+
+    self.install.questionnaire.kubernetes.application_exposure = Some(exposure);
     self.invalidate_install_pipeline();
 
     true

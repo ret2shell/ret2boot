@@ -29,6 +29,7 @@ install.entry.next_steps: 先前的 mock 詢問已移除，接下來進入真實
 install.preflight.title: 安裝前檢查
 install.preflight.checks.downloader: 下載工具
 install.preflight.checks.systemd: systemd
+install.preflight.checks.package_manager: 系統套件管理器
 install.preflight.checks.public_network: 公網出口
 install.preflight.checks.github: github 連通性
 install.preflight.checks.k3s_sources: k3s 安裝來源連通性
@@ -44,6 +45,8 @@ install.preflight.details.downloader_available: "可用：%{available}"
 install.preflight.details.downloader_missing: 缺少 curl 和 wget
 install.preflight.details.systemd_ready: systemd 正在執行，且 systemctl 可用
 install.preflight.details.systemd_missing: 目前主機未啟用 systemd，無法繼續安裝
+install.preflight.details.package_manager_ready: "受支援的系統套件管理器：%{package_manager}"
+install.preflight.details.package_manager_missing: 目前主機沒有偵測到受支援的系統套件管理器
 install.preflight.details.public_network_detected: "公網出口：%{public_network}"
 install.preflight.details.public_network_unknown: 無法判定目前公網出口 IP 與屬地
 install.preflight.details.github_reachable: 目前可以存取 github
@@ -81,6 +84,14 @@ install.node_role.prompt: 目前安裝目標屬於主節點還是從節點？
 install.node_role.options.control_plane: 主節點（控制平面）
 install.node_role.options.worker: 從節點
 install.node_role.saved: 已將目前目標角色儲存為：%{role}。
+install.exposure.prompt: 目前叢集希望使用哪一種應用出口模式？
+install.exposure.options.ingress: Kubernetes ingress
+install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx
+install.exposure.ingress_notice: 已記錄 ingress 需求，後續 Helm chart 的 values 會依此模式修正。
+install.exposure.nodeport_notice: 已記錄 NodePort + 外置 nginx 模式。Ret2Boot 會將 80 與 443 留給系統 nginx 使用。
+install.exposure.package_manager_notice: "如果目前主機還沒有 nginx，Ret2Boot 會透過 %{package_manager} 自動安裝。"
+install.exposure.nginx_reuse_notice: "偵測到目前主機已存在 nginx 二進位：%{path}，如果可用會直接重用。"
+install.exposure.nginx_service_reuse_notice: 偵測到目前主機已經存在 nginx 服務，這一步會盡量直接重用它。
 install.kubernetes.worker_hint: 從節點必須使用與主節點完全一致的 Kubernetes 發行版。
 install.kubernetes.distribution.prompt: 你想使用哪一種 Kubernetes 發行版？
 install.kubernetes.distribution.options.k3s: k3s
@@ -110,7 +121,7 @@ install.review.cancelled: 目前安裝維持在複核階段，待你確認後再
 install.execution.title: 已進入安裝階段
 install.execution.progress_saved: 安裝步驟日誌已儲存，後續中斷後可繼續恢復。
 install.execution.resume_ready: 將從先前記錄的安裝步驟日誌繼續。
-install.execution.noop_notice: 目前已接入 Kubernetes 引導與 Helm 安裝步驟，後續步驟會繼續逐步接入。
+install.execution.noop_notice: 目前已接入 Kubernetes 引導、Helm 與應用出口步驟，後續步驟會繼續逐步接入。
 install.execution.step_running: "正在執行步驟：%{step}"
 install.execution.step_done: "步驟已完成：%{step}"
 install.execution.step_failed: "步驟執行失敗：%{step}（%{error}）"
@@ -139,12 +150,22 @@ install.steps.cluster.selected_source: "安裝來源：%{source}"
 install.steps.cluster.pod_cidr: "叢集 Pod CIDR：%{cidr}"
 install.steps.cluster.node_cidr_mask: "單節點 Pod CIDR 遮罩：/%{mask}"
 install.steps.cluster.max_pods: "單節點最大 Pod 數：%{max_pods}"
+install.steps.cluster.application_exposure: "應用出口模式：%{exposure}"
+install.steps.cluster.gateway_ports_shifted: 叢集閘道預設占用的 80 與 443 會遷移到空閒高位連接埠，以便系統 nginx 接管它們。
 install.steps.cluster.worker_server: "主節點 URL：%{server}"
 install.steps.cluster.worker_token_saved: 叢集加入 token 已儲存到安裝器設定中。
 install.steps.helm.title: 安裝 Helm CLI
 install.steps.helm.detail: 安裝 Helm，供後續 Ret2Shell 部署步驟作為套件管理工具使用。
 install.steps.helm.reuse: "重用目前主機上已存在的 helm 二進位：%{path}。"
 install.steps.helm.install_path: "將 helm 安裝到 %{path}。"
+install.steps.gateway.title: 設定應用出口閘道
+install.steps.gateway.selected_mode: "已選擇的應用出口：%{exposure}"
+install.steps.gateway.ingress_detail: 記錄 ingress 需求，供後續 Helm values 開啟 ingress 模式時使用。
+install.steps.gateway.nodeport_detail: 安裝或重用系統 nginx，並讓它接管目前主機的 80 與 443 連接埠。
+install.steps.gateway.port_reservation: Ret2Boot 會先將叢集閘道從 80 與 443 遷移走，再交給系統 nginx 使用。
+install.steps.gateway.nginx_reuse: "重用目前主機上已存在的 nginx 二進位：%{path}。"
+install.steps.gateway.nginx_service_reuse: 重用目前主機上已經存在的 nginx 服務。
+install.steps.gateway.nginx_install: 透過目前偵測到的系統套件管理器安裝 nginx。
 install.steps.platform.control_plane: 部署 Ret2Shell 核心平台服務
 install.steps.platform.control_plane_detail: 安裝必須運行在主節點上的 Ret2Shell 核心服務。
 install.steps.platform.worker: 設定從節點側的 Ret2Shell 服務

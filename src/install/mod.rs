@@ -360,8 +360,12 @@ impl<'a> InstallFlow<'a> {
       )?;
 
       let result = {
-        let mut execution_context =
-          StepExecutionContext::new(self.config, self.runtime, &self.config_path);
+        let mut execution_context = StepExecutionContext::new(
+          self.config,
+          self.runtime,
+          &self.config_path,
+          &self.preflight_state,
+        );
         step.install(&mut execution_context)
       };
 
@@ -424,8 +428,12 @@ impl<'a> InstallFlow<'a> {
     let mut failed_step_rollback_error = None;
 
     if let Some(step) = registry.iter().find(|step| step.id() == failed_step_id) {
-      let mut execution_context =
-        StepExecutionContext::new(self.config, self.runtime, &self.config_path);
+      let mut execution_context = StepExecutionContext::new(
+        self.config,
+        self.runtime,
+        &self.config_path,
+        &self.preflight_state,
+      );
       if let Err(error) = step.rollback(&mut execution_context) {
         let error_text = error.to_string();
         self.persist_change("install.execution.rollback", &error_text, |config| {
@@ -453,8 +461,12 @@ impl<'a> InstallFlow<'a> {
       );
 
       let rollback_result = {
-        let mut execution_context =
-          StepExecutionContext::new(self.config, self.runtime, &self.config_path);
+        let mut execution_context = StepExecutionContext::new(
+          self.config,
+          self.runtime,
+          &self.config_path,
+          &self.preflight_state,
+        );
         step.rollback(&mut execution_context)
       };
 

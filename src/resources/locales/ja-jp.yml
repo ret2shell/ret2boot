@@ -29,6 +29,7 @@ install.entry.next_steps: これまでの mock 質問は削除されました。
 install.preflight.title: 事前チェック
 install.preflight.checks.downloader: ダウンローダー
 install.preflight.checks.systemd: systemd
+install.preflight.checks.package_manager: パッケージマネージャー
 install.preflight.checks.public_network: パブリックネットワーク
 install.preflight.checks.github: github 接続性
 install.preflight.checks.k3s_sources: k3s インストールソース接続性
@@ -44,6 +45,8 @@ install.preflight.details.downloader_available: "利用可能: %{available}"
 install.preflight.details.downloader_missing: curl と wget が見つかりません
 install.preflight.details.systemd_ready: systemd が稼働しており、systemctl が利用可能です
 install.preflight.details.systemd_missing: このホストでは systemd が有効ではないため、インストールを続行できません
+install.preflight.details.package_manager_ready: "対応しているパッケージマネージャー: %{package_manager}"
+install.preflight.details.package_manager_missing: このホストでは対応しているパッケージマネージャーを検出できませんでした
 install.preflight.details.public_network_detected: "パブリック送信元: %{public_network}"
 install.preflight.details.public_network_unknown: 現在のパブリック送信元 IP と地域を判定できませんでした
 install.preflight.details.github_reachable: github に接続できます
@@ -81,6 +84,14 @@ install.node_role.prompt: このインストール対象は主ノードですか
 install.node_role.options.control_plane: 主ノード（コントロールプレーン）
 install.node_role.options.worker: ワーカーノード
 install.node_role.saved: "%{role} として対象ロールを保存しました。"
+install.exposure.prompt: このクラスターではどのアプリケーション出口モードを使いますか？
+install.exposure.options.ingress: Kubernetes ingress
+install.exposure.options.nodeport_external_nginx: NodePort と外部 nginx
+install.exposure.ingress_notice: Ingress 要件を記録しました。後続の Helm chart values はこのモードに合わせて調整されます。
+install.exposure.nodeport_notice: NodePort と外部 nginx モードを記録しました。Ret2Boot はポート 80 と 443 をシステム nginx 用に確保します。
+install.exposure.package_manager_notice: "このホストに nginx がない場合、Ret2Boot は %{package_manager} で自動インストールします。"
+install.exposure.nginx_reuse_notice: "このホストでは nginx バイナリが %{path} に見つかったため、利用可能ならそのまま再利用します。"
+install.exposure.nginx_service_reuse_notice: このホストでは nginx サービスがすでに存在するため、利用可能ならそのまま再利用します。
 install.kubernetes.worker_hint: ワーカーノードでは、主ノードと同じ Kubernetes ディストリビューションを使う必要があります。
 install.kubernetes.distribution.prompt: 使用したい Kubernetes ディストリビューションを選択してください。
 install.kubernetes.distribution.options.k3s: k3s
@@ -110,7 +121,7 @@ install.review.cancelled: インストールは確認待ちの状態のまま維
 install.execution.title: インストールフェーズを初期化しました
 install.execution.progress_saved: インストールジャーナルを保存しました。中断後も再開できます。
 install.execution.resume_ready: 以前に保存されたインストールジャーナルから再開します。
-install.execution.noop_notice: 現在は Kubernetes ブートストラップと Helm インストール手順まで実装されており、以降の手順は順次追加されます。
+install.execution.noop_notice: 現在は Kubernetes ブートストラップ、Helm、およびアプリケーション出口の手順まで実装されており、以降の手順は順次追加されます。
 install.execution.step_running: "%{step} を実行しています"
 install.execution.step_done: "%{step} が完了しました"
 install.execution.step_failed: "%{step} が失敗しました（%{error}）"
@@ -139,12 +150,22 @@ install.steps.cluster.selected_source: "インストールソース: %{source}"
 install.steps.cluster.pod_cidr: "クラスター Pod CIDR: %{cidr}"
 install.steps.cluster.node_cidr_mask: "ノードごとの Pod CIDR マスク: /%{mask}"
 install.steps.cluster.max_pods: "ノードごとの最大 Pod 数: %{max_pods}"
+install.steps.cluster.application_exposure: "アプリケーション出口モード: %{exposure}"
+install.steps.cluster.gateway_ports_shifted: システム nginx が 80 と 443 を使えるよう、クラスターゲートウェイの既定ポートは空いている高位ポートへ移動されます。
 install.steps.cluster.worker_server: "主ノード URL: %{server}"
 install.steps.cluster.worker_token_saved: クラスター参加トークンはインストーラー設定に保存されています。
 install.steps.helm.title: Helm CLI をインストールする
 install.steps.helm.detail: 後続の Ret2Shell デプロイ手順で使うパッケージマネージャーとして Helm を導入します。
 install.steps.helm.reuse: "既存の helm バイナリ %{path} を再利用します。"
 install.steps.helm.install_path: "helm を %{path} にインストールします。"
+install.steps.gateway.title: アプリケーション出口を設定する
+install.steps.gateway.selected_mode: "選択されたアプリケーション出口: %{exposure}"
+install.steps.gateway.ingress_detail: 後続の Helm values で ingress ベースの公開を有効にできるよう、この要件を記録します。
+install.steps.gateway.nodeport_detail: システム nginx を導入または再利用し、このホストの 80 と 443 を受け持たせます。
+install.steps.gateway.port_reservation: Ret2Boot はまずクラスターゲートウェイを 80 と 443 から退避させ、その後システム nginx に引き渡します。
+install.steps.gateway.nginx_reuse: "既存の nginx バイナリ %{path} を再利用します。"
+install.steps.gateway.nginx_service_reuse: このホストですでに存在する nginx サービスを再利用します。
+install.steps.gateway.nginx_install: 検出したシステムパッケージマネージャーで nginx をインストールします。
 install.steps.platform.control_plane: Ret2Shell の中核サービスを展開する
 install.steps.platform.control_plane_detail: 主ノード上で動作すべき Ret2Shell 中核サービスを導入します。
 install.steps.platform.worker: ワーカーノード側の Ret2Shell サービスを設定する

@@ -29,6 +29,7 @@ install.entry.next_steps: Mock prompts are removed; proceed with the real deploy
 install.preflight.title: Preflight checks
 install.preflight.checks.downloader: downloader
 install.preflight.checks.systemd: systemd
+install.preflight.checks.package_manager: package manager
 install.preflight.checks.public_network: public network
 install.preflight.checks.github: github connectivity
 install.preflight.checks.k3s_sources: k3s source reachability
@@ -44,6 +45,8 @@ install.preflight.details.downloader_available: "available: %{available}"
 install.preflight.details.downloader_missing: missing curl and wget
 install.preflight.details.systemd_ready: systemd is running and systemctl is available
 install.preflight.details.systemd_missing: systemd is required but not active on this host
+install.preflight.details.package_manager_ready: "supported package manager: %{package_manager}"
+install.preflight.details.package_manager_missing: no supported package manager was detected on this host
 install.preflight.details.public_network_detected: "public egress: %{public_network}"
 install.preflight.details.public_network_unknown: unable to determine the current public egress IP and region
 install.preflight.details.github_reachable: github is reachable
@@ -81,6 +84,14 @@ install.node_role.prompt: Is this install target a primary node or a worker node
 install.node_role.options.control_plane: Primary node (control plane)
 install.node_role.options.worker: Worker node
 install.node_role.saved: Saved target role as %{role}.
+install.exposure.prompt: Which application exposure mode should this cluster use?
+install.exposure.options.ingress: Kubernetes ingress
+install.exposure.options.nodeport_external_nginx: NodePort plus external nginx
+install.exposure.ingress_notice: Ingress mode is recorded. Later Helm chart values will be adjusted to match it.
+install.exposure.nodeport_notice: NodePort plus external nginx mode is recorded. Ret2Boot will reserve ports 80 and 443 for the system nginx.
+install.exposure.package_manager_notice: "Nginx will be installed through %{package_manager} if it is not already present."
+install.exposure.nginx_reuse_notice: "An existing nginx binary was detected at %{path}; this step will reuse it if possible."
+install.exposure.nginx_service_reuse_notice: An existing nginx service was detected on this host; this step will reuse it if possible.
 install.kubernetes.worker_hint: Worker nodes must use the same Kubernetes distribution as the primary node.
 install.kubernetes.distribution.prompt: Which Kubernetes distribution do you want to use?
 install.kubernetes.distribution.options.k3s: k3s
@@ -110,7 +121,7 @@ install.review.cancelled: Installation stays in review mode until you confirm it
 install.execution.title: Installation phase initialized
 install.execution.progress_saved: The installation journal has been saved and can be resumed later.
 install.execution.resume_ready: Resuming from the previously recorded installation journal.
-install.execution.noop_notice: The Kubernetes bootstrap and Helm steps are wired right now; later steps will be added incrementally.
+install.execution.noop_notice: The Kubernetes bootstrap, Helm, and application gateway steps are wired right now; later steps will be added incrementally.
 install.execution.step_running: "Running step: %{step}"
 install.execution.step_done: "Completed step: %{step}"
 install.execution.step_failed: "Step failed: %{step} (%{error})"
@@ -139,12 +150,22 @@ install.steps.cluster.selected_source: "Installation source: %{source}"
 install.steps.cluster.pod_cidr: "Cluster pod CIDR: %{cidr}"
 install.steps.cluster.node_cidr_mask: "Per-node pod CIDR mask: /%{mask}"
 install.steps.cluster.max_pods: "Per-node max pods: %{max_pods}"
+install.steps.cluster.application_exposure: "Application exposure mode: %{exposure}"
+install.steps.cluster.gateway_ports_shifted: Cluster gateway host ports 80 and 443 will be moved to free high ports for the system nginx.
 install.steps.cluster.worker_server: "Primary node URL: %{server}"
 install.steps.cluster.worker_token_saved: Join token is saved in the installer config.
 install.steps.helm.title: Install Helm CLI
 install.steps.helm.detail: Install Helm as the package manager used by later Ret2Shell deployment steps.
 install.steps.helm.reuse: "Reuse the existing helm binary at %{path}."
 install.steps.helm.install_path: "Install helm into %{path}."
+install.steps.gateway.title: Configure the application gateway
+install.steps.gateway.selected_mode: "Selected application exposure: %{exposure}"
+install.steps.gateway.ingress_detail: Record the ingress requirement so later Helm values can enable ingress-based exposure.
+install.steps.gateway.nodeport_detail: Install or reuse the system nginx and prepare it to front the cluster on ports 80 and 443.
+install.steps.gateway.port_reservation: Ret2Boot will move the cluster gateway away from ports 80 and 443 before nginx takes them over.
+install.steps.gateway.nginx_reuse: "Reuse the existing nginx binary at %{path}."
+install.steps.gateway.nginx_service_reuse: Reuse the existing nginx service that is already present on this host.
+install.steps.gateway.nginx_install: Install nginx through the detected system package manager.
 install.steps.platform.control_plane: Deploy core Ret2Shell platform services
 install.steps.platform.control_plane_detail: Install the central Ret2Shell services that must live on the primary node.
 install.steps.platform.worker: Configure worker-side Ret2Shell services
