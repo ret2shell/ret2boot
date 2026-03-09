@@ -14,6 +14,12 @@ startup.safety.cancelled: 已取消安装。
 startup.privilege.request: 正在为后续部署步骤申请 root 权限...
 startup.privilege.already_root: 当前已经具备 root 权限，可继续部署。
 startup.privilege.acquired: 已通过 %{backend} 获取后续部署所需的 root 权限。
+startup.update.downloaded: "已从 %{source} 下载最新安装包 %{version} 到 %{path}，当前会话仍继续使用现有程序。"
+startup.update.cached: "已复用 %{source} 的缓存更新包 %{version}：%{path}。"
+startup.update.no_asset: "%{source} 上存在新版本 %{version}，但当前机器没有可用的兼容安装包。"
+startup.update.download_failed: "%{source} 上存在新版本 %{version}，但自动下载失败，请稍后重试。"
+startup.update.release_page: "发布页面：%{release_url}"
+startup.update.unreachable: "只有在联网且能够访问 %{repository}（%{source}）时，安装器才能正常使用。"
 install.entry.title: 安装器运行环境已就绪
 install.entry.language: 界面语言
 install.entry.config_path: 配置文件

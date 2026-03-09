@@ -20,13 +20,6 @@ pub fn banner_startup(product: &str, version: &str) -> String {
   )
 }
 
-pub fn divider(label: impl AsRef<str>) -> String {
-  format!(
-    "----------------------------- {} -----------------------------",
-    paint(label.as_ref(), "1;36")
-  )
-}
-
 pub fn section(message: impl AsRef<str>) -> String {
   format!("{} {}", paint("==>", "1;36"), paint(message.as_ref(), "1"))
 }

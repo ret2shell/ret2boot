@@ -8,8 +8,10 @@ anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive"] }
 dialoguer = "0.12.0"
 libc = "0.2.183"
+reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "json", "rustls"] }
 rust-embed = "8.11.0"
 rust-i18n = "3.1.5"
+semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.0.6"
 tracing = "0.1.44"

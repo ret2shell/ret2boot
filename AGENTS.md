@@ -4,6 +4,7 @@
 
 - Read `src/main.rs` first to understand the runtime order: CLI parse -> telemetry -> config load -> startup checks -> installer workflow.
 - Read `src/startup.rs` next for locale selection, safety confirmation, and privilege acquisition.
+- Read `src/update.rs` when changing startup connectivity or self-update behavior. Release-source integration starts there.
 - Read `src/config.rs` before changing installer behavior. All questionnaire answers, review state, and execution progress are persisted there for resume support.
 - Read `src/install/mod.rs` for the high-level flow: questionnaire -> plan review -> installation phase journal.
 - Read `src/install/steps/mod.rs` before adding or changing any atomic installation step. This is the step registry and the trait contract for collect/describe/install/uninstall/rollback.
@@ -15,6 +16,7 @@
 - `src/main.rs`: application entrypoint.
 - `src/cli.rs`: clap CLI definition.
 - `src/startup.rs`: terminal capability checks, locale selection, safety prompts, and privilege session setup.
+- `src/update.rs`: release-source abstraction, GitHub release checks, and downloaded update staging.
 - `src/config.rs`: persisted installer config, questionnaire answers, review status, and execution journal.
 - `src/install/mod.rs`: installer orchestration and plan/review/progress output.
 - `src/install/collectors/`: reusable terminal question helpers.

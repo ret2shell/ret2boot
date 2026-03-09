@@ -14,6 +14,12 @@ startup.safety.cancelled: インストールを中止しました。
 startup.privilege.request: これ以降のデプロイ手順のために root 権限を要求しています...
 startup.privilege.already_root: デプロイに必要な root 権限はすでに有効です。
 startup.privilege.acquired: "%{backend} 経由でデプロイ用の root 権限を取得しました。"
+startup.update.downloaded: "%{source} からインストーラー %{version} を %{path} にダウンロードしました。このセッションは現在のバイナリのまま続行します。"
+startup.update.cached: "%{source} のキャッシュ済みインストーラー %{version} を再利用します: %{path}。"
+startup.update.no_asset: "%{source} で新しいリリース %{version} が見つかりましたが、このマシン向けの互換アセットがありません。"
+startup.update.download_failed: "%{source} で新しいリリース %{version} が見つかりましたが、自動ダウンロードに失敗しました。"
+startup.update.release_page: "リリースページ: %{release_url}"
+startup.update.unreachable: "%{source} 経由で %{repository} に到達できるオンライン状態でないと、このインストーラーは正常に動作できません。"
 install.entry.title: インストーラーの実行環境は準備できています
 install.entry.language: 表示言語
 install.entry.config_path: 設定ファイル

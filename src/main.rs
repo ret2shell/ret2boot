@@ -8,19 +8,17 @@ mod startup;
 mod telemetry;
 mod terminal;
 mod ui;
+mod update;
 
 rust_i18n::i18n!("src/resources/locales", fallback = "en-us");
 
 use anyhow::Result;
 use clap::Parser;
-use tracing::debug;
 
 use crate::{cli::Cli, config::Ret2BootConfig};
 
 fn main() -> Result<()> {
   let _cli = Cli::parse();
-
-  telemetry::init()?;
 
   let config_path = Ret2BootConfig::path_display()?;
   let mut config = Ret2BootConfig::load()?;
@@ -28,14 +26,7 @@ fn main() -> Result<()> {
     return Ok(());
   };
 
-  debug!(
-      config_path = %config_path,
-      locale = %runtime.locale,
-      terminal_charset = runtime.terminal_charset.as_config_value(),
-      privilege_backend = runtime.privilege_backend,
-      supported_locales = ?l10n::supported_locales(),
-      "initialized application runtime"
-  );
+  let _ = config_path;
 
   install::run(&mut config, &runtime)
 }

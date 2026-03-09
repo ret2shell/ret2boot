@@ -13,6 +13,7 @@ use crate::{
   config::{InstallExecutionPhase, InstallStepStatus, InstallTargetRole, Ret2BootConfig},
   l10n,
   startup::RuntimeState,
+  telemetry,
   ui::{self, BadgeTone},
 };
 
@@ -67,10 +68,6 @@ impl<'a> InstallFlow<'a> {
     println!(
       "{}",
       ui::banner_startup("Ret 2 Boot", env!("CARGO_PKG_VERSION"))
-    );
-    println!(
-      "{}",
-      ui::divider(t!("banner.installer_log_starts_here").to_uppercase())
     );
     println!("{}", ui::section(t!("install.entry.title")));
     println!(
@@ -254,6 +251,16 @@ impl<'a> InstallFlow<'a> {
       InstallExecutionPhase::Installing.as_config_value(),
       |config| config.set_install_phase(InstallExecutionPhase::Installing),
     )?;
+
+    telemetry::init()?;
+
+    info!(
+      locale = %l10n::current_locale(),
+      privilege_backend = self.runtime.privilege_backend,
+      config_path = %self.config_path,
+      step_count = plan.steps.len(),
+      "installation phase logging activated"
+    );
 
     println!();
     println!("{}", ui::section(t!("install.execution.title")));

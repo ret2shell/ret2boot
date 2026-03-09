@@ -14,6 +14,12 @@ startup.safety.cancelled: Installation cancelled.
 startup.privilege.request: Requesting root privileges for upcoming deployment steps...
 startup.privilege.already_root: Root privileges are already active for deployment.
 startup.privilege.acquired: Root privileges are ready for deployment via %{backend}.
+startup.update.downloaded: "Downloaded installer release %{version} from %{source} to %{path}. This session still continues with the current binary."
+startup.update.cached: "Reusing cached installer release %{version} from %{source} at %{path}."
+startup.update.no_asset: "Release %{version} is available from %{source}, but no compatible asset was found for this machine."
+startup.update.download_failed: "Release %{version} is available from %{source}, but the automatic download failed."
+startup.update.release_page: "release page: %{release_url}"
+startup.update.unreachable: "This installer only works normally when it is online and can reach %{repository} via %{source}."
 install.entry.title: Installer runtime is ready
 install.entry.language: interface language
 install.entry.config_path: config file

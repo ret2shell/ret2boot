@@ -9,11 +9,11 @@ use crate::{
   privilege::PrivilegeSession,
   terminal::TerminalCharset,
   ui,
+  update::{self, UpdateCheckResult},
 };
 
 pub struct RuntimeState {
   pub locale: String,
-  pub terminal_charset: TerminalCharset,
   pub privilege_backend: &'static str,
   _privilege_session: PrivilegeSession,
 }
@@ -44,6 +44,8 @@ pub fn initialize(config: &mut Ret2BootConfig) -> Result<Option<RuntimeState>> {
   if needs_save {
     config.save()?;
   }
+
+  handle_update_check(update::check_for_updates());
 
   print_safety_notice(&config_path);
 
@@ -89,7 +91,6 @@ pub fn initialize(config: &mut Ret2BootConfig) -> Result<Option<RuntimeState>> {
 
   Ok(Some(RuntimeState {
     locale,
-    terminal_charset,
     privilege_backend,
     _privilege_session: privilege_session,
   }))
@@ -181,4 +182,94 @@ fn print_safety_notice(config_path: &str) {
     "{}",
     ui::note(t!("startup.safety.user_config", path = config_path))
   );
+}
+
+fn handle_update_check(report: UpdateCheckResult) {
+  match report {
+    UpdateCheckResult::UpToDate | UpdateCheckResult::NoPublishedRelease => {}
+    UpdateCheckResult::Downloaded {
+      source,
+      version,
+      path,
+      reused,
+    } => {
+      println!();
+
+      let message = if reused {
+        ui::note(t!(
+          "startup.update.cached",
+          source = source.as_str(),
+          version = version.as_str(),
+          path = path.display().to_string()
+        ))
+      } else {
+        ui::success(t!(
+          "startup.update.downloaded",
+          source = source.as_str(),
+          version = version.as_str(),
+          path = path.display().to_string()
+        ))
+      };
+
+      println!("{message}");
+    }
+    UpdateCheckResult::UpdateAvailableNoAsset {
+      source,
+      version,
+      release_url,
+    } => {
+      println!();
+      println!(
+        "{}",
+        ui::warning(t!(
+          "startup.update.no_asset",
+          source = source.as_str(),
+          version = version.as_str()
+        ))
+      );
+      println!(
+        "{}",
+        ui::note(t!(
+          "startup.update.release_page",
+          release_url = release_url.as_str()
+        ))
+      );
+    }
+    UpdateCheckResult::DownloadFailed {
+      source,
+      version,
+      release_url,
+    } => {
+      println!();
+      println!(
+        "{}",
+        ui::warning(t!(
+          "startup.update.download_failed",
+          source = source.as_str(),
+          version = version.as_str()
+        ))
+      );
+      println!(
+        "{}",
+        ui::note(t!(
+          "startup.update.release_page",
+          release_url = release_url.as_str()
+        ))
+      );
+    }
+    UpdateCheckResult::Unavailable {
+      source,
+      repository_url,
+    } => {
+      println!();
+      println!(
+        "{}",
+        ui::warning(t!(
+          "startup.update.unreachable",
+          source = source.as_str(),
+          repository = repository_url.as_str()
+        ))
+      );
+    }
+  }
 }

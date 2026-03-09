@@ -19,10 +19,6 @@ pub fn current_locale() -> String {
   rust_i18n::locale().to_string()
 }
 
-pub fn supported_locales() -> &'static [&'static str] {
-  &SUPPORTED_LOCALES
-}
-
 pub fn system_locale() -> Option<String> {
   ["LC_ALL", "LC_MESSAGES", "LC_CTYPE", "LANG"]
     .into_iter()

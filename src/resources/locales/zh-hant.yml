@@ -14,6 +14,12 @@ startup.safety.cancelled: 已取消安裝。
 startup.privilege.request: 正在為後續部署步驟申請 root 權限...
 startup.privilege.already_root: 目前已具備 root 權限，可繼續部署。
 startup.privilege.acquired: 已透過 %{backend} 取得後續部署所需的 root 權限。
+startup.update.downloaded: "已從 %{source} 下載最新安裝包 %{version} 到 %{path}，目前工作階段仍會繼續使用現有程式。"
+startup.update.cached: "已重用 %{source} 的快取更新包 %{version}：%{path}。"
+startup.update.no_asset: "%{source} 上有新版本 %{version}，但目前機器沒有可用的相容安裝包。"
+startup.update.download_failed: "%{source} 上有新版本 %{version}，但自動下載失敗，請稍後再試。"
+startup.update.release_page: "發布頁面：%{release_url}"
+startup.update.unreachable: "只有在連網且能夠存取 %{repository}（%{source}）時，安裝器才能正常使用。"
 install.entry.title: 安裝器執行環境已就緒
 install.entry.language: 介面語言
 install.entry.config_path: 設定檔
