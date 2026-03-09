@@ -203,13 +203,6 @@ impl KubernetesInstallSource {
       Self::ChinaMirror => "china-mirror",
     }
   }
-
-  pub fn default_index(self) -> usize {
-    match self {
-      Self::Official => 0,
-      Self::ChinaMirror => 1,
-    }
-  }
 }
 
 impl Ret2BootConfig {

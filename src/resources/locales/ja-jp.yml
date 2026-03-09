@@ -29,9 +29,14 @@ install.entry.next_steps: これまでの mock 質問は削除されました。
 install.preflight.title: 事前チェック
 install.preflight.checks.downloader: ダウンローダー
 install.preflight.checks.systemd: systemd
+install.preflight.checks.public_network: パブリックネットワーク
 install.preflight.checks.github: github 接続性
 install.preflight.checks.k3s_sources: k3s インストールソース接続性
 install.preflight.checks.rke2_sources: rke2 インストールソース接続性
+install.preflight.checks.disk: ディスク容量
+install.preflight.checks.memory: メモリー容量
+install.preflight.checks.ports: ポート空き状況
+install.preflight.checks.sysctl: sysctl 状態
 install.preflight.checks.cgroup_memory: cgroup memory コントローラー
 install.preflight.checks.overlay: overlay ファイルシステム対応
 install.preflight.checks.br_netfilter: br_netfilter 対応
@@ -39,12 +44,27 @@ install.preflight.details.downloader_available: "利用可能: %{available}"
 install.preflight.details.downloader_missing: curl と wget が見つかりません
 install.preflight.details.systemd_ready: systemd が稼働しており、systemctl が利用可能です
 install.preflight.details.systemd_missing: このホストでは systemd が有効ではないため、インストールを続行できません
+install.preflight.details.public_network_detected: "パブリック送信元: %{public_network}"
+install.preflight.details.public_network_unknown: 現在のパブリック送信元 IP と地域を判定できませんでした
 install.preflight.details.github_reachable: github に接続できます
 install.preflight.details.github_unreachable: github に接続できないため、起動時更新確認が失敗する可能性があります
 install.preflight.details.sources_all_reachable: "到達可能なエンドポイント: %{reachable}"
 install.preflight.details.sources_partial: "到達可能: %{reachable}；到達不可: %{unreachable}"
 install.preflight.details.sources_missing: "確認したすべてのエンドポイントに到達できません: %{unreachable}"
 install.preflight.details.sources_unknown: 確認対象のエンドポイントがありません
+install.preflight.details.disk_ready: "/var/lib の空き容量は %{free} です"
+install.preflight.details.disk_warning: "/var/lib の空き容量は %{free} しかなく、高密度 challenge ワークロードでは不足する可能性があります"
+install.preflight.details.disk_failed: "/var/lib の空き容量は %{free} しかなく、最低要件を下回っています"
+install.preflight.details.disk_unknown: "ディスク空き容量を確認できませんでした: %{error}"
+install.preflight.details.memory_ready: "物理メモリーは %{total} です"
+install.preflight.details.memory_warning: "物理メモリーは %{total} で、高密度 challenge ワークロードには厳しい可能性があります"
+install.preflight.details.memory_failed: "物理メモリーは %{total} で、最低要件を下回っています"
+install.preflight.details.memory_unknown: "物理メモリーを確認できませんでした: %{error}"
+install.preflight.details.ports_ready: ノード用およびコントロールプレーン用の必要ポートは空いているようです
+install.preflight.details.ports_warning: "コントロールプレーン関連ポートがすでに使用中です: %{ports}"
+install.preflight.details.ports_failed: "ノード必須ポートがすでに使用中です: %{ports}"
+install.preflight.details.sysctl_ready: 必要な sysctl 値はすでに有効です
+install.preflight.details.sysctl_warning: "現在の値: %{values}"
 install.preflight.details.cgroup_memory_ready: memory cgroup コントローラーを利用できます
 install.preflight.details.cgroup_memory_missing: このホストには memory cgroup コントローラーがありません
 install.preflight.details.kernel_ready: 現在のカーネル環境で利用可能です
@@ -69,6 +89,10 @@ install.kubernetes.source.k3s.official: k3s.io 公式ソース
 install.kubernetes.source.k3s.china_mirror: 中国本土向け rancher.cn ソース
 install.kubernetes.source.rke2.official: get.rke2.io 公式ソース
 install.kubernetes.source.rke2.china_mirror: 中国本土向け rancher.cn ソース
+install.kubernetes.source.filtered: このホストから到達できないインストールソースは非表示にしました。
+install.kubernetes.source.recommended: "現在のパブリックネットワーク %{public_network} を検出したため、推奨ソースは %{source} です"
+install.kubernetes.source.auto_selected: "現在到達できるのは %{source} のみのため、自動選択しました。"
+install.kubernetes.source.none_available: 現在のホストから到達できる Kubernetes インストールソースがありません。
 install.kubernetes.worker.server_url.prompt: ワーカーノードが接続する主ノード URL を入力してください
 install.kubernetes.worker.server_url_hint.k3s: k3s ワーカーでは、通常これは 6443 番ポートの https URL です。
 install.kubernetes.worker.server_url_hint.rke2: rke2 ワーカーでは、通常これは 9345 番ポートの https URL です。

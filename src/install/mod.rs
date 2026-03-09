@@ -8,7 +8,7 @@ use tracing::{debug, info};
 use self::{
   collectors::{Collector, ConfirmCollector, SingleSelectCollector},
   steps::{
-    InstallStepPlan, StepExecutionContext, StepPlanContext, StepPreflightContext,
+    InstallStepPlan, PreflightState, StepExecutionContext, StepPlanContext, StepPreflightContext,
     StepQuestionContext,
   },
 };
@@ -58,6 +58,7 @@ struct InstallFlow<'a> {
   runtime: &'a RuntimeState,
   config_path: String,
   validated_steps: Vec<crate::config::InstallStepId>,
+  preflight_state: PreflightState,
 }
 
 impl<'a> InstallFlow<'a> {
@@ -67,6 +68,7 @@ impl<'a> InstallFlow<'a> {
       runtime,
       config_path: Ret2BootConfig::path_display()?,
       validated_steps: Vec::new(),
+      preflight_state: PreflightState::default(),
     })
   }
 
@@ -138,8 +140,12 @@ impl<'a> InstallFlow<'a> {
         continue;
       }
 
-      let mut question_context =
-        StepQuestionContext::new(self.config, self.runtime, &self.config_path);
+      let mut question_context = StepQuestionContext::new(
+        self.config,
+        self.runtime,
+        &self.config_path,
+        &self.preflight_state,
+      );
       step.collect(&mut question_context)?;
     }
 
@@ -149,8 +155,12 @@ impl<'a> InstallFlow<'a> {
   fn run_preflight(&mut self) -> Result<()> {
     for step in steps::registry() {
       let validated = {
-        let mut preflight_context =
-          StepPreflightContext::new(self.config, self.runtime, &self.config_path);
+        let mut preflight_context = StepPreflightContext::new(
+          self.config,
+          self.runtime,
+          &self.config_path,
+          &mut self.preflight_state,
+        );
         step.preflight(&mut preflight_context)?
       };
 

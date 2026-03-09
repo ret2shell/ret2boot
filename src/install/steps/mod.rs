@@ -1,5 +1,9 @@
 use std::{
-  env, fs,
+  collections::BTreeSet,
+  env,
+  ffi::CString,
+  fs,
+  mem::MaybeUninit,
   path::{Path, PathBuf},
   process::Command,
   time::{Duration, SystemTime, UNIX_EPOCH},
@@ -8,6 +12,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::blocking::Client;
 use rust_i18n::t;
+use serde::Deserialize;
 use tracing::{debug, info};
 
 use crate::{
@@ -27,6 +32,144 @@ const K3S_CONFIG_DEST: &str = "/etc/rancher/k3s/config.yaml";
 const K3S_KUBELET_CONFIG_DEST: &str = "/etc/rancher/k3s/kubelet.config";
 const RKE2_CONFIG_DEST: &str = "/etc/rancher/rke2/config.yaml";
 const RKE2_KUBELET_CONFIG_DEST: &str = "/etc/rancher/rke2/kubelet.conf";
+const PREFLIGHT_MIN_DISK_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+const PREFLIGHT_WARN_DISK_FREE_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+const PREFLIGHT_MIN_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const PREFLIGHT_WARN_MEMORY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+#[derive(Default, Clone)]
+pub struct PreflightState {
+  public_network: Option<PublicNetworkIdentity>,
+  source_reachability: SourceReachability,
+}
+
+impl PreflightState {
+  pub fn available_sources(
+    &self, distribution: KubernetesDistribution,
+  ) -> Vec<KubernetesInstallSource> {
+    KubernetesInstallSource::ALL
+      .into_iter()
+      .filter(|source| self.is_source_reachable(distribution, *source))
+      .collect()
+  }
+
+  pub fn recommended_source(
+    &self, distribution: KubernetesDistribution,
+  ) -> Option<KubernetesInstallSource> {
+    let available = self.available_sources(distribution);
+
+    if available.is_empty() {
+      return None;
+    }
+
+    if self
+      .public_network
+      .as_ref()
+      .is_some_and(PublicNetworkIdentity::is_mainland_china)
+      && available.contains(&KubernetesInstallSource::ChinaMirror)
+    {
+      return Some(KubernetesInstallSource::ChinaMirror);
+    }
+
+    if available.contains(&KubernetesInstallSource::Official) {
+      return Some(KubernetesInstallSource::Official);
+    }
+
+    available.first().copied()
+  }
+
+  pub fn public_network_description(&self) -> Option<String> {
+    self
+      .public_network
+      .as_ref()
+      .map(PublicNetworkIdentity::display)
+  }
+
+  fn is_source_reachable(
+    &self, distribution: KubernetesDistribution, source: KubernetesInstallSource,
+  ) -> bool {
+    match (distribution, source) {
+      (KubernetesDistribution::K3s, KubernetesInstallSource::Official) => {
+        self.source_reachability.k3s_official
+      }
+      (KubernetesDistribution::K3s, KubernetesInstallSource::ChinaMirror) => {
+        self.source_reachability.k3s_china_mirror
+      }
+      (KubernetesDistribution::Rke2, KubernetesInstallSource::Official) => {
+        self.source_reachability.rke2_official
+      }
+      (KubernetesDistribution::Rke2, KubernetesInstallSource::ChinaMirror) => {
+        self.source_reachability.rke2_china_mirror
+      }
+    }
+  }
+
+  fn set_source_reachability(
+    &mut self, distribution: KubernetesDistribution, source: KubernetesInstallSource,
+    reachable: bool,
+  ) {
+    match (distribution, source) {
+      (KubernetesDistribution::K3s, KubernetesInstallSource::Official) => {
+        self.source_reachability.k3s_official = reachable;
+      }
+      (KubernetesDistribution::K3s, KubernetesInstallSource::ChinaMirror) => {
+        self.source_reachability.k3s_china_mirror = reachable;
+      }
+      (KubernetesDistribution::Rke2, KubernetesInstallSource::Official) => {
+        self.source_reachability.rke2_official = reachable;
+      }
+      (KubernetesDistribution::Rke2, KubernetesInstallSource::ChinaMirror) => {
+        self.source_reachability.rke2_china_mirror = reachable;
+      }
+    }
+  }
+}
+
+#[derive(Default, Clone)]
+struct SourceReachability {
+  k3s_official: bool,
+  k3s_china_mirror: bool,
+  rke2_official: bool,
+  rke2_china_mirror: bool,
+}
+
+#[derive(Clone, Deserialize)]
+struct PublicNetworkIdentity {
+  ip: String,
+  country_code: Option<String>,
+  country: Option<String>,
+  region: Option<String>,
+  city: Option<String>,
+}
+
+impl PublicNetworkIdentity {
+  fn is_mainland_china(&self) -> bool {
+    self
+      .country_code
+      .as_deref()
+      .is_some_and(|code| code.eq_ignore_ascii_case("CN"))
+  }
+
+  fn display(&self) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(city) = self.city.as_deref().filter(|value| !value.is_empty()) {
+      parts.push(city.to_string());
+    }
+    if let Some(region) = self.region.as_deref().filter(|value| !value.is_empty()) {
+      parts.push(region.to_string());
+    }
+    if let Some(country) = self.country.as_deref().filter(|value| !value.is_empty()) {
+      parts.push(country.to_string());
+    }
+
+    if parts.is_empty() {
+      self.ip.clone()
+    } else {
+      format!("{} ({})", self.ip, parts.join(", "))
+    }
+  }
+}
 
 enum PreflightStatus {
   Passed,
@@ -45,13 +188,14 @@ struct PreflightReport {
 }
 
 impl PreflightReport {
-  fn collect() -> Result<Self> {
+  fn collect() -> Result<(Self, PreflightState)> {
     let client = Client::builder()
       .https_only(true)
       .timeout(Duration::from_secs(5))
       .build()
       .context("failed to build preflight HTTP client")?;
 
+    let public_network = probe_public_network(&client);
     let github = probe_endpoint(&client, "https://github.com");
     let k3s_official = probe_endpoint(&client, "https://get.k3s.io");
     let k3s_mirror = probe_endpoint(
@@ -61,9 +205,35 @@ impl PreflightReport {
     let rke2_official = probe_endpoint(&client, "https://get.rke2.io");
     let rke2_mirror = probe_endpoint(&client, "https://rancher-mirror.rancher.cn/rke2/install.sh");
 
+    let mut state = PreflightState {
+      public_network,
+      ..PreflightState::default()
+    };
+    state.set_source_reachability(
+      KubernetesDistribution::K3s,
+      KubernetesInstallSource::Official,
+      k3s_official,
+    );
+    state.set_source_reachability(
+      KubernetesDistribution::K3s,
+      KubernetesInstallSource::ChinaMirror,
+      k3s_mirror,
+    );
+    state.set_source_reachability(
+      KubernetesDistribution::Rke2,
+      KubernetesInstallSource::Official,
+      rke2_official,
+    );
+    state.set_source_reachability(
+      KubernetesDistribution::Rke2,
+      KubernetesInstallSource::ChinaMirror,
+      rke2_mirror,
+    );
+
     let mut checks = Vec::new();
     checks.push(check_downloader());
     checks.push(check_systemd());
+    checks.push(check_public_network(&state.public_network));
     checks.push(check_github_connectivity(github));
     checks.push(check_source_connectivity(
       t!("install.preflight.checks.k3s_sources").to_string(),
@@ -79,6 +249,10 @@ impl PreflightReport {
         endpoint_reachability("rancher-mirror.rancher.cn/rke2", rke2_mirror),
       ],
     ));
+    checks.push(check_disk_capacity());
+    checks.push(check_memory_capacity());
+    checks.push(check_port_state());
+    checks.push(check_sysctl_state());
     checks.push(check_cgroup_memory());
     checks.push(check_kernel_feature(
       t!("install.preflight.checks.overlay").to_string(),
@@ -89,7 +263,7 @@ impl PreflightReport {
       kernel_feature_state_br_netfilter(),
     ));
 
-    Ok(Self { checks })
+    Ok((Self { checks }, state))
   }
 
   fn has_failures(&self) -> bool {
@@ -217,21 +391,27 @@ pub struct StepQuestionContext<'a> {
   config: &'a mut Ret2BootConfig,
   runtime: &'a RuntimeState,
   config_path: &'a str,
+  preflight_state: &'a PreflightState,
 }
 
 pub struct StepPreflightContext<'a> {
   config: &'a Ret2BootConfig,
   runtime: &'a RuntimeState,
   config_path: &'a str,
+  state: &'a mut PreflightState,
 }
 
 #[allow(dead_code)]
 impl<'a> StepPreflightContext<'a> {
-  pub fn new(config: &'a Ret2BootConfig, runtime: &'a RuntimeState, config_path: &'a str) -> Self {
+  pub fn new(
+    config: &'a Ret2BootConfig, runtime: &'a RuntimeState, config_path: &'a str,
+    state: &'a mut PreflightState,
+  ) -> Self {
     Self {
       config,
       runtime,
       config_path,
+      state,
     }
   }
 
@@ -246,17 +426,27 @@ impl<'a> StepPreflightContext<'a> {
   pub fn config_path(&self) -> &str {
     self.config_path
   }
+
+  pub fn state(&self) -> &PreflightState {
+    self.state
+  }
+
+  pub fn state_mut(&mut self) -> &mut PreflightState {
+    self.state
+  }
 }
 
 #[allow(dead_code)]
 impl<'a> StepQuestionContext<'a> {
   pub fn new(
     config: &'a mut Ret2BootConfig, runtime: &'a RuntimeState, config_path: &'a str,
+    preflight_state: &'a PreflightState,
   ) -> Self {
     Self {
       config,
       runtime,
       config_path,
+      preflight_state,
     }
   }
 
@@ -270,6 +460,10 @@ impl<'a> StepQuestionContext<'a> {
 
   pub fn runtime(&self) -> &RuntimeState {
     self.runtime
+  }
+
+  pub fn preflight_state(&self) -> &PreflightState {
+    self.preflight_state
   }
 
   pub fn as_plan_context(&self) -> StepPlanContext<'_> {
@@ -393,8 +587,9 @@ impl AtomicInstallStep for PreflightValidationStep {
     InstallStepId::PreflightValidation
   }
 
-  fn preflight(&self, _ctx: &mut StepPreflightContext<'_>) -> Result<bool> {
-    let report = PreflightReport::collect()?;
+  fn preflight(&self, ctx: &mut StepPreflightContext<'_>) -> Result<bool> {
+    let (report, state) = PreflightReport::collect()?;
+    *ctx.state_mut() = state;
     report.print();
 
     if report.has_failures() {
@@ -467,27 +662,64 @@ impl AtomicInstallStep for ClusterBootstrapStep {
       |config| config.set_install_kubernetes_distribution(distribution),
     )?;
 
-    let source_default = ctx
-      .config()
-      .install
-      .questionnaire
-      .kubernetes
-      .source
-      .unwrap_or(KubernetesInstallSource::Official)
-      .default_index();
+    let source_default = ctx.config().install.questionnaire.kubernetes.source;
+    let available_sources = ctx.preflight_state().available_sources(distribution);
 
-    let source_options = KubernetesInstallSource::ALL
-      .iter()
-      .copied()
-      .map(|source| kubernetes_source_label(distribution, source))
-      .collect();
+    if available_sources.is_empty() {
+      bail!(t!("install.kubernetes.source.none_available").to_string());
+    }
 
-    let source = KubernetesInstallSource::ALL[SingleSelectCollector::new(
-      t!("install.kubernetes.source.prompt"),
-      source_options,
-    )
-    .with_default(source_default)
-    .collect_index()?];
+    if available_sources.len() < KubernetesInstallSource::ALL.len() {
+      println!("{}", ui::note(t!("install.kubernetes.source.filtered")));
+    }
+
+    let recommended_source = ctx.preflight_state().recommended_source(distribution);
+    if let (Some(public_network), Some(source)) = (
+      ctx.preflight_state().public_network_description(),
+      recommended_source,
+    ) {
+      println!(
+        "{}",
+        ui::note(t!(
+          "install.kubernetes.source.recommended",
+          public_network = public_network,
+          source = kubernetes_source_label(distribution, source)
+        ))
+      );
+    }
+
+    let source = if available_sources.len() == 1 {
+      let source = available_sources[0];
+      println!(
+        "{}",
+        ui::note(t!(
+          "install.kubernetes.source.auto_selected",
+          source = kubernetes_source_label(distribution, source)
+        ))
+      );
+      source
+    } else {
+      let default_source = source_default
+        .filter(|source| available_sources.contains(source))
+        .or(recommended_source)
+        .unwrap_or(available_sources[0]);
+      let default_index = available_sources
+        .iter()
+        .position(|source| *source == default_source)
+        .unwrap_or(0);
+      let source_options = available_sources
+        .iter()
+        .copied()
+        .map(|source| kubernetes_source_label(distribution, source))
+        .collect();
+
+      available_sources[SingleSelectCollector::new(
+        t!("install.kubernetes.source.prompt"),
+        source_options,
+      )
+      .with_default(default_index)
+      .collect_index()?]
+    };
 
     ctx.persist_change(
       "install.questionnaire.kubernetes.source",
@@ -861,6 +1093,25 @@ fn check_github_connectivity(reachable: bool) -> PreflightCheck {
   }
 }
 
+fn check_public_network(public_network: &Option<PublicNetworkIdentity>) -> PreflightCheck {
+  PreflightCheck {
+    label: t!("install.preflight.checks.public_network").to_string(),
+    detail: match public_network {
+      Some(identity) => t!(
+        "install.preflight.details.public_network_detected",
+        public_network = identity.display()
+      )
+      .to_string(),
+      None => t!("install.preflight.details.public_network_unknown").to_string(),
+    },
+    status: if public_network.is_some() {
+      PreflightStatus::Passed
+    } else {
+      PreflightStatus::Warning
+    },
+  }
+}
+
 fn check_source_connectivity(
   label: String, endpoints: &[EndpointReachability<'_>],
 ) -> PreflightCheck {
@@ -930,6 +1181,179 @@ fn check_cgroup_memory() -> PreflightCheck {
   }
 }
 
+fn check_disk_capacity() -> PreflightCheck {
+  let result = disk_free_bytes("/var/lib").or_else(|_| disk_free_bytes("/"));
+
+  match result {
+    Ok(free_bytes) if free_bytes < PREFLIGHT_MIN_DISK_FREE_BYTES => PreflightCheck {
+      label: t!("install.preflight.checks.disk").to_string(),
+      detail: t!(
+        "install.preflight.details.disk_failed",
+        free = format_gib(free_bytes)
+      )
+      .to_string(),
+      status: PreflightStatus::Failed,
+    },
+    Ok(free_bytes) if free_bytes < PREFLIGHT_WARN_DISK_FREE_BYTES => PreflightCheck {
+      label: t!("install.preflight.checks.disk").to_string(),
+      detail: t!(
+        "install.preflight.details.disk_warning",
+        free = format_gib(free_bytes)
+      )
+      .to_string(),
+      status: PreflightStatus::Warning,
+    },
+    Ok(free_bytes) => PreflightCheck {
+      label: t!("install.preflight.checks.disk").to_string(),
+      detail: t!(
+        "install.preflight.details.disk_ready",
+        free = format_gib(free_bytes)
+      )
+      .to_string(),
+      status: PreflightStatus::Passed,
+    },
+    Err(error) => PreflightCheck {
+      label: t!("install.preflight.checks.disk").to_string(),
+      detail: t!(
+        "install.preflight.details.disk_unknown",
+        error = error.to_string()
+      )
+      .to_string(),
+      status: PreflightStatus::Warning,
+    },
+  }
+}
+
+fn check_memory_capacity() -> PreflightCheck {
+  match memory_total_bytes() {
+    Ok(total_bytes) if total_bytes < PREFLIGHT_MIN_MEMORY_BYTES => PreflightCheck {
+      label: t!("install.preflight.checks.memory").to_string(),
+      detail: t!(
+        "install.preflight.details.memory_failed",
+        total = format_gib(total_bytes)
+      )
+      .to_string(),
+      status: PreflightStatus::Failed,
+    },
+    Ok(total_bytes) if total_bytes < PREFLIGHT_WARN_MEMORY_BYTES => PreflightCheck {
+      label: t!("install.preflight.checks.memory").to_string(),
+      detail: t!(
+        "install.preflight.details.memory_warning",
+        total = format_gib(total_bytes)
+      )
+      .to_string(),
+      status: PreflightStatus::Warning,
+    },
+    Ok(total_bytes) => PreflightCheck {
+      label: t!("install.preflight.checks.memory").to_string(),
+      detail: t!(
+        "install.preflight.details.memory_ready",
+        total = format_gib(total_bytes)
+      )
+      .to_string(),
+      status: PreflightStatus::Passed,
+    },
+    Err(error) => PreflightCheck {
+      label: t!("install.preflight.checks.memory").to_string(),
+      detail: t!(
+        "install.preflight.details.memory_unknown",
+        error = error.to_string()
+      )
+      .to_string(),
+      status: PreflightStatus::Warning,
+    },
+  }
+}
+
+fn check_port_state() -> PreflightCheck {
+  let listening = listening_tcp_ports();
+  let all_nodes_in_use = [10250_u16]
+    .into_iter()
+    .filter(|port| listening.contains(port))
+    .collect::<Vec<_>>();
+  let control_plane_in_use = [6443_u16, 9345, 2379, 2380]
+    .into_iter()
+    .filter(|port| listening.contains(port))
+    .collect::<Vec<_>>();
+
+  if !all_nodes_in_use.is_empty() {
+    return PreflightCheck {
+      label: t!("install.preflight.checks.ports").to_string(),
+      detail: t!(
+        "install.preflight.details.ports_failed",
+        ports = format_ports(&all_nodes_in_use)
+      )
+      .to_string(),
+      status: PreflightStatus::Failed,
+    };
+  }
+
+  if !control_plane_in_use.is_empty() {
+    return PreflightCheck {
+      label: t!("install.preflight.checks.ports").to_string(),
+      detail: t!(
+        "install.preflight.details.ports_warning",
+        ports = format_ports(&control_plane_in_use)
+      )
+      .to_string(),
+      status: PreflightStatus::Warning,
+    };
+  }
+
+  PreflightCheck {
+    label: t!("install.preflight.checks.ports").to_string(),
+    detail: t!("install.preflight.details.ports_ready").to_string(),
+    status: PreflightStatus::Passed,
+  }
+}
+
+fn check_sysctl_state() -> PreflightCheck {
+  let sysctls = [
+    ("net.ipv4.ip_forward", "/proc/sys/net/ipv4/ip_forward"),
+    (
+      "net.bridge.bridge-nf-call-iptables",
+      "/proc/sys/net/bridge/bridge-nf-call-iptables",
+    ),
+    (
+      "net.bridge.bridge-nf-call-ip6tables",
+      "/proc/sys/net/bridge/bridge-nf-call-ip6tables",
+    ),
+  ];
+
+  let mismatches = sysctls
+    .into_iter()
+    .filter_map(|(name, path)| match fs::read_to_string(path) {
+      Ok(value) => {
+        let trimmed = value.trim().to_string();
+        if trimmed == "1" {
+          None
+        } else {
+          Some(format!("{name}={trimmed}"))
+        }
+      }
+      Err(_) => Some(format!("{name}=missing")),
+    })
+    .collect::<Vec<_>>();
+
+  if mismatches.is_empty() {
+    return PreflightCheck {
+      label: t!("install.preflight.checks.sysctl").to_string(),
+      detail: t!("install.preflight.details.sysctl_ready").to_string(),
+      status: PreflightStatus::Passed,
+    };
+  }
+
+  PreflightCheck {
+    label: t!("install.preflight.checks.sysctl").to_string(),
+    detail: t!(
+      "install.preflight.details.sysctl_warning",
+      values = mismatches.join(", ")
+    )
+    .to_string(),
+    status: PreflightStatus::Warning,
+  }
+}
+
 fn check_kernel_feature(label: String, state: KernelFeatureState) -> PreflightCheck {
   let (detail, status) = match state {
     KernelFeatureState::Ready => (
@@ -965,8 +1389,87 @@ fn probe_endpoint(client: &Client, url: &str) -> bool {
     .is_ok()
 }
 
+fn probe_public_network(client: &Client) -> Option<PublicNetworkIdentity> {
+  client
+    .get("https://api.ip.sb/geoip")
+    .header(
+      "User-Agent",
+      format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
+    )
+    .send()
+    .ok()?
+    .error_for_status()
+    .ok()?
+    .json::<PublicNetworkIdentity>()
+    .ok()
+}
+
 fn endpoint_reachability(label: &'static str, reachable: bool) -> EndpointReachability<'static> {
   EndpointReachability { label, reachable }
+}
+
+fn disk_free_bytes(path: &str) -> Result<u64> {
+  let path = CString::new(path).context("invalid disk path")?;
+  let mut stat = MaybeUninit::<libc::statvfs>::uninit();
+
+  let result = unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) };
+  if result != 0 {
+    return Err(anyhow!(
+      "failed to stat filesystem for `{}`",
+      path.to_string_lossy()
+    ));
+  }
+
+  let stat = unsafe { stat.assume_init() };
+  Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
+}
+
+fn memory_total_bytes() -> Result<u64> {
+  let contents = fs::read_to_string("/proc/meminfo").context("failed to read /proc/meminfo")?;
+
+  let kibibytes = contents
+    .lines()
+    .find_map(|line| {
+      let value = line.strip_prefix("MemTotal:")?.trim();
+      value.split_whitespace().next()?.parse::<u64>().ok()
+    })
+    .ok_or_else(|| anyhow!("unable to parse MemTotal from /proc/meminfo"))?;
+
+  Ok(kibibytes.saturating_mul(1024))
+}
+
+fn listening_tcp_ports() -> BTreeSet<u16> {
+  ["/proc/net/tcp", "/proc/net/tcp6"]
+    .into_iter()
+    .filter_map(|path| fs::read_to_string(path).ok())
+    .flat_map(|contents| {
+      contents
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+          let columns = line.split_whitespace().collect::<Vec<_>>();
+          if columns.get(3).copied() != Some("0A") {
+            return None;
+          }
+
+          let port = columns.get(1)?.split(':').nth(1)?;
+          u16::from_str_radix(port, 16).ok()
+        })
+        .collect::<Vec<_>>()
+    })
+    .collect()
+}
+
+fn format_ports(ports: &[u16]) -> String {
+  ports
+    .iter()
+    .map(u16::to_string)
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+fn format_gib(bytes: u64) -> String {
+  format!("{:.1} GiB", bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }
 
 fn cgroup_memory_available() -> bool {

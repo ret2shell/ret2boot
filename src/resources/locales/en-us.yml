@@ -29,9 +29,14 @@ install.entry.next_steps: Mock prompts are removed; proceed with the real deploy
 install.preflight.title: Preflight checks
 install.preflight.checks.downloader: downloader
 install.preflight.checks.systemd: systemd
+install.preflight.checks.public_network: public network
 install.preflight.checks.github: github connectivity
 install.preflight.checks.k3s_sources: k3s source reachability
 install.preflight.checks.rke2_sources: rke2 source reachability
+install.preflight.checks.disk: disk capacity
+install.preflight.checks.memory: memory capacity
+install.preflight.checks.ports: port availability
+install.preflight.checks.sysctl: sysctl state
 install.preflight.checks.cgroup_memory: cgroup memory controller
 install.preflight.checks.overlay: overlay filesystem support
 install.preflight.checks.br_netfilter: br_netfilter support
@@ -39,12 +44,27 @@ install.preflight.details.downloader_available: "available: %{available}"
 install.preflight.details.downloader_missing: missing curl and wget
 install.preflight.details.systemd_ready: systemd is running and systemctl is available
 install.preflight.details.systemd_missing: systemd is required but not active on this host
+install.preflight.details.public_network_detected: "public egress: %{public_network}"
+install.preflight.details.public_network_unknown: unable to determine the current public egress IP and region
 install.preflight.details.github_reachable: github is reachable
 install.preflight.details.github_unreachable: github is unreachable right now; startup updates may fail
 install.preflight.details.sources_all_reachable: "reachable endpoints: %{reachable}"
 install.preflight.details.sources_partial: "reachable: %{reachable}; unreachable: %{unreachable}"
 install.preflight.details.sources_missing: "all checked endpoints are unreachable: %{unreachable}"
 install.preflight.details.sources_unknown: no endpoints were checked
+install.preflight.details.disk_ready: "free space under /var/lib is %{free}"
+install.preflight.details.disk_warning: "free space under /var/lib is only %{free}; large challenge fleets may exhaust it"
+install.preflight.details.disk_failed: "free space under /var/lib is only %{free}; this is below the minimum requirement"
+install.preflight.details.disk_unknown: "could not determine free disk space: %{error}"
+install.preflight.details.memory_ready: "physical memory is %{total}"
+install.preflight.details.memory_warning: "physical memory is %{total}; this may be tight for dense challenge workloads"
+install.preflight.details.memory_failed: "physical memory is %{total}; this is below the minimum requirement"
+install.preflight.details.memory_unknown: "could not determine physical memory: %{error}"
+install.preflight.details.ports_ready: required node and control-plane ports appear to be free
+install.preflight.details.ports_warning: "control-plane ports already in use: %{ports}"
+install.preflight.details.ports_failed: "required node ports already in use: %{ports}"
+install.preflight.details.sysctl_ready: required sysctl values are already enabled
+install.preflight.details.sysctl_warning: "current values: %{values}"
 install.preflight.details.cgroup_memory_ready: memory cgroup controller is available
 install.preflight.details.cgroup_memory_missing: memory cgroup controller is missing from the current host
 install.preflight.details.kernel_ready: available in the current kernel environment
@@ -69,6 +89,10 @@ install.kubernetes.source.k3s.official: Official k3s.io source
 install.kubernetes.source.k3s.china_mirror: rancher.cn source for mainland China
 install.kubernetes.source.rke2.official: Official get.rke2.io source
 install.kubernetes.source.rke2.china_mirror: rancher.cn source for mainland China
+install.kubernetes.source.filtered: Unreachable installation sources are hidden for this host.
+install.kubernetes.source.recommended: "Detected public network %{public_network}; recommended source: %{source}"
+install.kubernetes.source.auto_selected: "Only %{source} is currently reachable, so it was selected automatically."
+install.kubernetes.source.none_available: No Kubernetes installation source is reachable from the current host.
 install.kubernetes.worker.server_url.prompt: Enter the primary node URL for the worker to join
 install.kubernetes.worker.server_url_hint.k3s: For k3s workers, this is usually an https URL on port 6443.
 install.kubernetes.worker.server_url_hint.rke2: For rke2 workers, this is usually an https URL on port 9345.

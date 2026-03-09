@@ -29,9 +29,14 @@ install.entry.next_steps: 之前的 mock 询问已移除，接下来进入真实
 install.preflight.title: 安装前检查
 install.preflight.checks.downloader: 下载工具
 install.preflight.checks.systemd: systemd
+install.preflight.checks.public_network: 公网出口
 install.preflight.checks.github: github 连通性
 install.preflight.checks.k3s_sources: k3s 安装源连通性
 install.preflight.checks.rke2_sources: rke2 安装源连通性
+install.preflight.checks.disk: 磁盘容量
+install.preflight.checks.memory: 内存容量
+install.preflight.checks.ports: 端口可用性
+install.preflight.checks.sysctl: sysctl 状态
 install.preflight.checks.cgroup_memory: cgroup memory 控制器
 install.preflight.checks.overlay: overlay 文件系统支持
 install.preflight.checks.br_netfilter: br_netfilter 支持
@@ -39,12 +44,27 @@ install.preflight.details.downloader_available: "可用：%{available}"
 install.preflight.details.downloader_missing: 缺少 curl 和 wget
 install.preflight.details.systemd_ready: systemd 正在运行，且 systemctl 可用
 install.preflight.details.systemd_missing: 当前主机未启用 systemd，无法继续安装
+install.preflight.details.public_network_detected: "公网出口：%{public_network}"
+install.preflight.details.public_network_unknown: 无法确定当前公网出口 IP 与属地
 install.preflight.details.github_reachable: 当前可以访问 github
 install.preflight.details.github_unreachable: 当前无法访问 github，启动更新检查可能失败
 install.preflight.details.sources_all_reachable: "可访问的端点：%{reachable}"
 install.preflight.details.sources_partial: "可访问：%{reachable}；不可访问：%{unreachable}"
 install.preflight.details.sources_missing: "所有检查过的端点都不可访问：%{unreachable}"
 install.preflight.details.sources_unknown: 没有检查到任何端点
+install.preflight.details.disk_ready: "/var/lib 可用空间为 %{free}"
+install.preflight.details.disk_warning: "/var/lib 可用空间仅有 %{free}，大规模 challenge 负载可能很快耗尽"
+install.preflight.details.disk_failed: "/var/lib 可用空间仅有 %{free}，低于最低要求"
+install.preflight.details.disk_unknown: "无法确定磁盘剩余空间：%{error}"
+install.preflight.details.memory_ready: "物理内存为 %{total}"
+install.preflight.details.memory_warning: "物理内存为 %{total}，对于高密度 challenge 负载可能偏紧"
+install.preflight.details.memory_failed: "物理内存为 %{total}，低于最低要求"
+install.preflight.details.memory_unknown: "无法确定物理内存：%{error}"
+install.preflight.details.ports_ready: 节点与控制平面所需端口看起来都处于空闲状态
+install.preflight.details.ports_warning: "控制平面相关端口已被占用：%{ports}"
+install.preflight.details.ports_failed: "节点必需端口已被占用：%{ports}"
+install.preflight.details.sysctl_ready: 必需的 sysctl 值已经启用
+install.preflight.details.sysctl_warning: "当前值：%{values}"
 install.preflight.details.cgroup_memory_ready: 当前主机提供 memory cgroup 控制器
 install.preflight.details.cgroup_memory_missing: 当前主机缺少 memory cgroup 控制器
 install.preflight.details.kernel_ready: 当前内核环境已提供该能力
@@ -69,6 +89,10 @@ install.kubernetes.source.k3s.official: k3s.io 官方安装源
 install.kubernetes.source.k3s.china_mirror: 面向中国大陆的 rancher.cn 安装源
 install.kubernetes.source.rke2.official: get.rke2.io 官方安装源
 install.kubernetes.source.rke2.china_mirror: 面向中国大陆的 rancher.cn 安装源
+install.kubernetes.source.filtered: 当前主机无法访问的安装源已被隐藏。
+install.kubernetes.source.recommended: "检测到当前公网出口为 %{public_network}，推荐使用：%{source}"
+install.kubernetes.source.auto_selected: "当前只有 %{source} 可访问，因此已自动选中。"
+install.kubernetes.source.none_available: 当前主机无法访问任何 Kubernetes 安装源。
 install.kubernetes.worker.server_url.prompt: 请输入从节点连接主节点时使用的 URL
 install.kubernetes.worker.server_url_hint.k3s: 对于 k3s 从节点，这通常是指向 6443 端口的 https 地址。
 install.kubernetes.worker.server_url_hint.rke2: 对于 rke2 从节点，这通常是指向 9345 端口的 https 地址。
