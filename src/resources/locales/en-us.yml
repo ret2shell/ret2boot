@@ -1,111 +1,103 @@
 _version: 1
 startup.language.prompt: Choose the language to use
-startup.language.options.zh_hans: Simplified Chinese
-startup.language.options.zh_hant: Traditional Chinese
+startup.language.options.zh_hans: 简体中文
+startup.language.options.zh_hant: 繁體中文
 startup.language.options.en_us: English (US)
-startup.language.options.ja_jp: Japanese
-startup.safety.title: Before continuing
-startup.safety.root_required: This installer needs root privileges to deploy Ret2Shell.
-startup.safety.clean_server: Use a clean server when possible for the safest installation path.
-startup.safety.conflict_risk: It may install Kubernetes and other critical components that can conflict with existing services and create risk.
-startup.safety.user_config: Your preferences will still be stored in %{path}.
+startup.language.options.ja_jp: 日本語
+startup.safety.title: Review before installing
+startup.safety.root_required: Installing Ret2Shell requires root access.
+startup.safety.clean_server: A clean server is recommended to avoid conflicts with existing services.
+startup.safety.conflict_risk: Installation will change Kubernetes, networking, and system services. Make sure this host is safe to use for deployment.
+startup.safety.user_config: Your configuration is saved in %{path}, so you can rerun the installer and continue later.
 startup.safety.continue_prompt: Continue with installation?
 startup.safety.cancelled: Installation cancelled.
-startup.privilege.request: Requesting root privileges for upcoming deployment steps...
-startup.privilege.already_root: Root privileges are already active for deployment.
-startup.privilege.acquired: Root privileges are ready for deployment via %{backend}.
-startup.update.downloaded: "Downloaded installer release %{version} from %{source} to %{path}. This session still continues with the current binary."
-startup.update.cached: "Reusing cached installer release %{version} from %{source} at %{path}."
-startup.update.no_asset: "Release %{version} is available from %{source}, but no compatible asset was found for this machine."
+startup.privilege.request: Acquiring root access...
+startup.privilege.already_root: Root access is already available.
+startup.privilege.acquired: Root access acquired.
+startup.update.downloaded: "Downloaded %{version} to %{path}. This session will continue with the current version."
+startup.update.cached: "Found and reused the downloaded %{version} package: %{path}."
+startup.update.no_asset: "Release %{version} is available from %{source}, but there is no compatible package for this machine."
 startup.update.download_failed: "Release %{version} is available from %{source}, but the automatic download failed."
 startup.update.release_page: "release page: %{release_url}"
-startup.update.unreachable: "This installer only works normally when it is online and can reach %{repository} via %{source}."
-install.entry.title: Installer runtime is ready
+startup.update.unreachable: "Could not reach %{source} (%{repository}). Automatic update checking is unavailable for this run."
+install.entry.title: Installer is ready
 install.entry.language: interface language
 install.entry.config_path: config file
-install.entry.privilege_backend: privilege backend
-install.entry.resume_hint: Answers are saved to %{path} immediately, so you can resume later.
-install.entry.next_steps: Mock prompts are removed; proceed with the real deployment workflow next.
+install.entry.resume_hint: Your answers are saved to %{path} immediately, so you can continue later.
 install.preflight.title: Preflight checks
 install.preflight.checks.downloader: downloader
 install.preflight.checks.systemd: systemd
 install.preflight.checks.package_manager: package manager
-install.preflight.checks.public_network: public network
-install.preflight.checks.github: github connectivity
+install.preflight.checks.public_network: network location
+install.preflight.checks.github: GitHub connectivity
 install.preflight.checks.k3s_sources: k3s source reachability
 install.preflight.checks.rke2_sources: rke2 source reachability
 install.preflight.checks.disk: disk capacity
 install.preflight.checks.memory: memory capacity
 install.preflight.checks.ports: port availability
 install.preflight.checks.sysctl: sysctl state
-install.preflight.checks.cgroup_memory: cgroup memory controller
+install.preflight.checks.cgroup_memory: memory cgroup support
 install.preflight.checks.overlay: overlay filesystem support
 install.preflight.checks.br_netfilter: br_netfilter support
 install.preflight.details.downloader_available: "available: %{available}"
-install.preflight.details.downloader_missing: missing curl and wget
+install.preflight.details.downloader_missing: curl or wget is required
 install.preflight.details.systemd_ready: systemd is running and systemctl is available
 install.preflight.details.systemd_missing: systemd is required but not active on this host
-install.preflight.details.package_manager_ready: "supported package manager: %{package_manager}"
-install.preflight.details.package_manager_missing: no supported package manager was detected on this host
-install.preflight.details.public_network_detected: "public egress: %{public_network}"
-install.preflight.details.public_network_unknown: unable to determine the current public egress IP and region
-install.preflight.details.github_reachable: github is reachable
-install.preflight.details.github_unreachable: github is unreachable right now; startup updates may fail
+install.preflight.details.package_manager_ready: "available package manager: %{package_manager}"
+install.preflight.details.package_manager_missing: no supported package manager detected on this host
+install.preflight.details.public_network_detected: "public IP and region: %{public_network}"
+install.preflight.details.public_network_unknown: could not determine the current public IP or region; source recommendations may be inaccurate
+install.preflight.details.github_reachable: GitHub is reachable
+install.preflight.details.github_unreachable: GitHub is unreachable; automatic updates may be unavailable
 install.preflight.details.sources_all_reachable: "reachable endpoints: %{reachable}"
 install.preflight.details.sources_partial: "reachable: %{reachable}; unreachable: %{unreachable}"
 install.preflight.details.sources_missing: "all checked endpoints are unreachable: %{unreachable}"
 install.preflight.details.sources_unknown: no endpoints were checked
-install.preflight.details.disk_ready: "free space under /var/lib is %{free}"
-install.preflight.details.disk_warning: "free space under /var/lib is only %{free}; large challenge fleets may exhaust it"
+install.preflight.details.disk_ready: "free space under /var/lib: %{free}"
+install.preflight.details.disk_warning: "only %{free} is free under /var/lib; larger challenge workloads may run short"
 install.preflight.details.disk_failed: "free space under /var/lib is only %{free}; this is below the minimum requirement"
 install.preflight.details.disk_unknown: "could not determine free disk space: %{error}"
-install.preflight.details.memory_ready: "physical memory is %{total}"
+install.preflight.details.memory_ready: "physical memory: %{total}"
 install.preflight.details.memory_warning: "physical memory is %{total}; this may be tight for dense challenge workloads"
 install.preflight.details.memory_failed: "physical memory is %{total}; this is below the minimum requirement"
 install.preflight.details.memory_unknown: "could not determine physical memory: %{error}"
-install.preflight.details.ports_ready: required node and control-plane ports appear to be free
+install.preflight.details.ports_ready: required node and control-plane ports are free
 install.preflight.details.ports_warning: "control-plane ports already in use: %{ports}"
 install.preflight.details.ports_failed: "required node ports already in use: %{ports}"
-install.preflight.details.sysctl_ready: required sysctl values are already enabled
+install.preflight.details.sysctl_ready: required sysctl settings are already enabled
 install.preflight.details.sysctl_warning: "current values: %{values}"
-install.preflight.details.cgroup_memory_ready: memory cgroup controller is available
-install.preflight.details.cgroup_memory_missing: memory cgroup controller is missing from the current host
-install.preflight.details.kernel_ready: available in the current kernel environment
-install.preflight.details.kernel_loadable: not active yet, but the kernel reports that it can be loaded
-install.preflight.details.kernel_missing: missing from the current kernel environment
+install.preflight.details.cgroup_memory_ready: memory cgroup support is available
+install.preflight.details.cgroup_memory_missing: memory cgroup support is not available on this host
+install.preflight.details.kernel_ready: available in the current kernel
+install.preflight.details.kernel_loadable: not active yet, but it can be enabled by loading the kernel module
+install.preflight.details.kernel_missing: unavailable in the current kernel
 install.preflight.status.ok: ok
 install.preflight.status.running: checking
 install.preflight.status.warning: warn
 install.preflight.status.failed: fail
-install.preflight.summary.passed: Preflight passed. The host is ready for the questionnaire.
-install.preflight.summary.warning: Preflight passed with warnings. Review the current host state before continuing.
-install.preflight.summary.failed: Preflight found blocking issues. Fix them before continuing.
-install.node_role.prompt: Is this install target a primary node or a worker node?
+install.preflight.summary.passed: Preflight checks passed. You can continue.
+install.preflight.summary.warning: Preflight checks passed with warnings. Review them before continuing.
+install.preflight.summary.failed: Preflight checks failed. Fix the issues first.
+install.node_role.prompt: Is this machine a primary node or a worker node?
 install.node_role.options.control_plane: Primary node (control plane)
 install.node_role.options.worker: Worker node
-install.node_role.saved: Saved target role as %{role}.
-install.platform.resources_intro: Ret2Shell platform bootstrap resources
-install.platform.namespaces: "Namespaces: %{platform}, %{challenge}"
-install.platform.service_account: "Service account: %{name} in %{namespace}"
-install.platform.rbac: "Cluster RBAC: role %{role}, binding %{binding}"
-install.platform.configmaps: Shared configmaps such as ret2shell-config and ret2shell-blocked will be prepared later.
-install.platform.storage_notice: Every local service must use a storage class. The core platform service is restricted to the local-path storage class.
-install.platform.remaining_disk.prompt: How much disk space remains available for Ret2Shell on this server? (GiB)
-install.platform.detected_remaining_disk: "Detected remaining disk capacity: %{remaining} GiB"
-install.platform.requested_disk.prompt: How much total disk space should Ret2Shell reserve? (GiB)
-install.platform.services_intro: Planned Ret2Shell services
+install.platform.resources_intro: Configure the Ret2Shell platform
+install.platform.questionnaire_intro: Next, choose deployment and disk settings for each platform service.
+install.platform.storage_notice: Services that use local disk need storage configuration. The core platform service always uses local-path.
+install.platform.detected_remaining_disk: "Detected available disk space: %{remaining} GiB"
+install.platform.requested_disk.prompt: How much disk space should be reserved for Ret2Shell? (GiB)
+install.platform.services_intro: Configure Ret2Shell services
 install.platform.service_heading: "Configure service: %{service}"
-install.platform.service_release: "Release: %{release} in namespace %{namespace}"
-install.platform.service_platform_fixed: The core platform service is always deployed locally and always uses the ret2shell-storage-platform storage class backed by local-path.
+install.platform.service_platform_fixed: The core platform service is always deployed locally, and its storage uses the default setting automatically.
 install.platform.service_deployment.prompt: How should this service be deployed?
-install.platform.service_storage.prompt: Which storage backend should this local service use?
+install.platform.service_storage.prompt: Which storage should this local service use?
 install.platform.service_storage_class.prompt: Enter the storage class name for this service
-install.platform.external_intro: This service is marked as externally provided. Fill in the connection details that later deployment steps should reuse.
-install.platform.disk_budget_too_small: The selected local-path services need a larger disk budget than the current total reservation.
-install.platform.disk_plan_intro: Review and adjust the local-path disk allocations for locally stored services
+install.platform.external_intro: This service is provided externally. Enter the connection details.
+install.platform.disk_budget_too_small: The current disk reservation is too small for all services that use local disk.
+install.platform.disk_plan_intro: Review and adjust disk allocations for services that use local disk
 install.platform.service_disk.prompt: "Disk allocation for %{service} (GiB)"
-install.platform.disk_plan_overflow: "The assigned local disks total %{assigned} GiB, which exceeds the reserved %{budget} GiB. Adjust the values and try again."
-install.platform.disk_plan_unused: "Unused disk budget after local allocations: %{unused} GiB"
+install.platform.disk_plan_overflow: "The current local disk allocations total %{assigned} GiB, which exceeds the reserved %{budget} GiB. Adjust the values and try again."
+install.platform.disk_plan_unused: "%{unused} GiB of the reserved disk space is still unused"
 install.platform.input.invalid_integer: Please enter a whole number in GiB.
 install.platform.input.too_small: "The value must be at least %{minimum} GiB."
 install.platform.input.too_large: "The value must be at most %{maximum} GiB."
@@ -120,12 +112,12 @@ install.platform.services.cache: cache
 install.platform.services.queue: queue
 install.platform.services.registry: registry
 install.platform.services.logs: logs
-install.platform.service_desc.platform: The main Ret2Shell API, scheduler, and challenge orchestration service.
+install.platform.service_desc.platform: Ret2Shell API, scheduling, and challenge orchestration services.
 install.platform.service_desc.database: PostgreSQL storage for platform data.
-install.platform.service_desc.cache: Valkey cache for hot platform state.
-install.platform.service_desc.queue: NATS queue and JetStream storage for internal event delivery.
-install.platform.service_desc.registry: OCI registry for challenge images. This can be replaced by an external registry.
-install.platform.service_desc.logs: Optional VictoriaLogs stack for centralized logs and observability.
+install.platform.service_desc.cache: Valkey for hot-state caching.
+install.platform.service_desc.queue: Internal message queue service (NATS / JetStream). This can also be provided externally.
+install.platform.service_desc.registry: Image registry for storing and distributing challenge images. This can also be replaced with an external registry.
+install.platform.service_desc.logs: Optional logging and monitoring service (VictoriaLogs).
 install.platform.external.database.host: External database host
 install.platform.external.database.port: External database port
 install.platform.external.database.name: External database name
@@ -138,110 +130,99 @@ install.platform.external.queue.port: External queue port
 install.platform.external.queue.token: External queue token
 install.platform.external.registry.external: External registry address for cluster pulls
 install.platform.external.registry.server: Internal registry address for platform pushes
-install.platform.external.registry.insecure: Registry insecure mode (true/false)
+install.platform.external.registry.insecure: Allow HTTP or skip TLS verification for this registry (true/false)
 install.platform.external.registry.username: Registry username
 install.platform.external.registry.password: Registry password
 install.platform.external.logs.endpoint: External logs endpoint
-install.worker_probe.title: Probe the master platform status
-install.worker_probe.intro: This worker node only joins the cluster. Ret2Boot will now probe the master-side ret2shell-platform status and then exit.
-install.worker_probe.done: Master-side platform probe completed.
-install.worker_probe.failed: "Unable to complete the master-side platform probe: %{error}"
-install.worker_probe.cli_missing: The required cluster CLI is not available on this worker, so the platform probe cannot continue automatically.
-install.exposure.prompt: Which application exposure mode should this cluster use?
+install.worker_probe.title: Check primary platform status
+install.worker_probe.intro: This worker only joins the cluster. Next, the installer will check the platform deployment on the primary node and then stop.
+install.worker_probe.done: Primary platform status check completed.
+install.worker_probe.failed: Primary platform status check failed.
+install.worker_probe.failed_detail: "Error details: %{error}"
+install.worker_probe.cli_missing: The required cluster CLI is missing on this worker, so the platform status check cannot continue automatically.
+install.exposure.prompt: How should applications be exposed?
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort plus external nginx
-install.exposure.ingress_notice: Ingress mode is recorded. Later Helm chart values will be adjusted to match it.
-install.exposure.nodeport_notice: NodePort plus external nginx mode is recorded. Ret2Boot will reserve ports 80 and 443 for the system nginx.
-install.exposure.package_manager_notice: "Nginx will be installed through %{package_manager} if it is not already present."
-install.exposure.nginx_reuse_notice: "An existing nginx binary was detected at %{path}; this step will reuse it if possible."
-install.exposure.nginx_service_reuse_notice: An existing nginx service was detected on this host; this step will reuse it if possible.
+install.exposure.ingress_notice: Ingress mode has been recorded and will be applied during installation.
+install.exposure.nodeport_notice: NodePort plus external nginx mode has been recorded. During installation, the Kubernetes gateway will move to ports 10080 and 10443, leaving 80 and 443 for system nginx.
+install.exposure.package_manager_notice: "nginx will be installed through %{package_manager} if it is not already present."
+install.exposure.nginx_reuse_notice: "Existing nginx binary detected at %{path}; it will be reused if possible."
+install.exposure.nginx_service_reuse_notice: Existing nginx service detected; it will be reused if possible.
 install.kubernetes.worker_hint: Worker nodes must use the same Kubernetes distribution as the primary node.
 install.kubernetes.distribution.prompt: Which Kubernetes distribution do you want to use?
 install.kubernetes.distribution.options.k3s: k3s
 install.kubernetes.distribution.options.rke2: rke2
-install.kubernetes.source.prompt: Which installation source do you want to use for this distribution?
+install.kubernetes.source.prompt: Which installation source do you want to use?
 install.kubernetes.source.k3s.official: Official k3s.io source
 install.kubernetes.source.k3s.china_mirror: rancher.cn source for mainland China
 install.kubernetes.source.rke2.official: Official get.rke2.io source
 install.kubernetes.source.rke2.china_mirror: rancher.cn source for mainland China
 install.kubernetes.source.filtered: Unreachable installation sources are hidden for this host.
-install.kubernetes.source.recommended: "Detected public network %{public_network}; recommended source: %{source}"
-install.kubernetes.source.auto_selected: "Only %{source} is currently reachable, so it was selected automatically."
+install.kubernetes.source.recommended: "Detected network location %{public_network}; recommended source: %{source}"
+install.kubernetes.source.auto_selected: "Only %{source} is reachable right now, so it was selected automatically."
 install.kubernetes.source.none_available: No Kubernetes installation source is reachable from the current host.
 install.kubernetes.worker.server_url.prompt: Enter the primary node URL for the worker to join
 install.kubernetes.worker.server_url_hint.k3s: For k3s workers, this is usually an https URL on port 6443.
 install.kubernetes.worker.server_url_hint.rke2: For rke2 workers, this is usually an https URL on port 9345.
 install.kubernetes.worker.token.prompt: Enter the cluster join token
-install.helm.notice: Helm has no questionnaire options. It will be installed automatically as a later deployment dependency.
-install.helm.reuse_notice: "An existing helm binary was detected at %{path}; this step will reuse it instead of replacing it."
+install.helm.notice: Helm has no extra configuration here. It will be installed automatically during installation.
+install.helm.reuse_notice: "Existing helm binary detected at %{path}; it will be reused."
 install.plan.title: Installation plan
 install.plan.node_role: target role
-install.plan.phase: recorded phase
-install.plan.steps: Planned atomic steps
-install.review.confirm_prompt: Please review the plan above and confirm installation.
-install.review.already_confirmed: Installation has already been confirmed; resuming the recorded plan.
-install.review.cancelled: Installation stays in review mode until you confirm it.
-install.execution.title: Installation phase initialized
-install.execution.progress_saved: The installation journal has been saved and can be resumed later.
-install.execution.resume_ready: Resuming from the previously recorded installation journal.
-install.execution.noop_notice: Kubernetes bootstrap, Helm, application gateway, and platform planning are wired right now; later deployment steps will keep expanding.
-install.execution.step_running: "Running step: %{step}"
-install.execution.step_done: "Completed step: %{step}"
-install.execution.step_failed: "Step failed: %{step} (%{error})"
+install.plan.steps: Planned steps
+install.review.confirm_prompt: Review the plan above, then confirm installation.
+install.review.already_confirmed: The plan was already confirmed. Continuing with the recorded configuration.
+install.review.cancelled: The plan is not confirmed yet. The installer will stay in review mode.
+install.execution.title: Starting installation
+install.execution.progress_saved: Installation progress has been saved. You can continue later if interrupted.
+install.execution.resume_ready: Existing installation progress was found. Continuing from the last recorded step.
+install.execution.step_running: "Running: %{step}"
+install.execution.step_done: "Completed: %{step}"
+install.execution.step_failed: "Failed: %{step}"
+install.execution.step_failed_detail: "Error details: %{error}"
 install.execution.step_skipped: "Skipping completed step: %{step}"
-install.execution.rollback_started: Rolling back completed installation steps in reverse order.
-install.execution.rollback_step: "Rolling back step: %{step}"
+install.execution.rollback_started: Installation failed. Rolling back completed steps in reverse order.
+install.execution.rollback_step: "Rolling back: %{step}"
 install.execution.rollback_done: Rollback completed.
-install.execution.completed: Installation steps completed successfully.
-install.progress.title: Recorded installation progress
+install.execution.completed: Installation completed.
+install.progress.title: Installation progress
 install.progress.status.pending: pending
 install.progress.status.in_progress: in progress
 install.progress.status.completed: completed
 install.progress.status.failed: failed
-install.phase.questionnaire: questionnaire
-install.phase.review: review
-install.phase.installing: installing
-install.phase.completed: completed
-install.steps.preflight: Validate the target host and deployment prerequisites
-install.steps.preflight_detail: Inspect the operating system, privileges, networking, and required runtime conditions before making changes.
+install.steps.preflight: Check the target host and installation prerequisites
+install.steps.preflight_detail: Inspect the operating system, privileges, networking, and runtime requirements before making changes.
 install.steps.cluster.control_plane: Bootstrap the Kubernetes control plane
 install.steps.cluster.control_plane_detail: Initialize the primary cluster services and establish the control plane foundations.
 install.steps.cluster.worker: Join this node to the Kubernetes cluster
-install.steps.cluster.worker_detail: Enroll the node into the existing cluster using the recorded join parameters.
+install.steps.cluster.worker_detail: Join this node to the existing cluster using the saved join parameters.
 install.steps.cluster.selected_distribution: "Kubernetes distribution: %{distribution}"
 install.steps.cluster.selected_source: "Installation source: %{source}"
 install.steps.cluster.pod_cidr: "Cluster pod CIDR: %{cidr}"
 install.steps.cluster.node_cidr_mask: "Per-node pod CIDR mask: /%{mask}"
 install.steps.cluster.max_pods: "Per-node max pods: %{max_pods}"
-install.steps.cluster.application_exposure: "Application exposure mode: %{exposure}"
-install.steps.cluster.gateway_ports_shifted: Cluster gateway host ports 80 and 443 will be moved to free high ports for the system nginx.
+install.steps.cluster.application_exposure: "Application exposure: %{exposure}"
+install.steps.cluster.gateway_ports_shifted: The cluster gateway will move off ports 80 and 443 to free high ports for system nginx.
 install.steps.cluster.worker_server: "Primary node URL: %{server}"
 install.steps.cluster.worker_token_saved: Join token is saved in the installer config.
 install.steps.helm.title: Install Helm CLI
-install.steps.helm.detail: Install Helm as the package manager used by later Ret2Shell deployment steps.
+install.steps.helm.detail: Install Helm for later Ret2Shell deployment steps.
 install.steps.helm.reuse: "Reuse the existing helm binary at %{path}."
 install.steps.helm.install_path: "Install helm into %{path}."
-install.steps.gateway.title: Configure the application gateway
+install.steps.gateway.title: Configure application exposure
 install.steps.gateway.selected_mode: "Selected application exposure: %{exposure}"
-install.steps.gateway.ingress_detail: Record the ingress requirement so later Helm values can enable ingress-based exposure.
-install.steps.gateway.nodeport_detail: Install or reuse the system nginx and prepare it to front the cluster on ports 80 and 443.
-install.steps.gateway.port_reservation: Ret2Boot will move the cluster gateway away from ports 80 and 443 before nginx takes them over.
+install.steps.gateway.ingress_detail: Record the ingress requirement so it can be enabled during installation.
+install.steps.gateway.nodeport_detail: Install or reuse system nginx and let it take over ports 80 and 443 on this host.
+install.steps.gateway.port_reservation: The cluster gateway will be moved off 80 and 443 before system nginx takes them over.
 install.steps.gateway.nginx_reuse: "Reuse the existing nginx binary at %{path}."
 install.steps.gateway.nginx_service_reuse: Reuse the existing nginx service that is already present on this host.
 install.steps.gateway.nginx_install: Install nginx through the detected system package manager.
-install.steps.platform_plan.title: Prepare the Ret2Shell platform layout
-install.steps.platform_plan.namespaces: "Namespaces to create: %{platform}, %{challenge}"
-install.steps.platform_plan.service_account: "Shared service account: %{name} in %{namespace}"
-install.steps.platform_plan.rbac: "Shared RBAC objects: role %{role}, binding %{binding}"
-install.steps.platform_plan.disk_budget: "Disk budget: %{allocated} GiB allocated out of %{requested} GiB requested (%{remaining} GiB physically available)"
-install.steps.platform_plan.unallocated_disk: "Unallocated disk budget: %{remaining} GiB"
-install.steps.worker_probe.title: Probe master platform status
-install.steps.worker_probe.detail: After this worker joins the cluster, inspect the master-side ret2shell-platform deployment and then stop the workflow.
-install.steps.platform.control_plane: Deploy core Ret2Shell platform services
-install.steps.platform.control_plane_detail: Install the central Ret2Shell services that must live on the primary node.
-install.steps.platform.worker: Configure worker-side Ret2Shell services
-install.steps.platform.worker_detail: Install only the worker-side components required for this node to serve the cluster.
+install.steps.platform_plan.title: Prepare the Ret2Shell platform configuration
+install.steps.platform_plan.namespaces: "Namespaces to prepare: %{platform}, %{challenge}"
+install.steps.platform_plan.service_account: "Service account to prepare: %{name} in %{namespace}"
+install.steps.platform_plan.rbac: "Permissions to prepare: %{role}, %{binding}"
+install.steps.platform_plan.disk_budget: "Disk budget: %{allocated} GiB allocated / %{requested} GiB planned (%{remaining} GiB currently available)"
+install.steps.platform_plan.unallocated_disk: "Unused disk budget: %{remaining} GiB"
+install.steps.worker_probe.title: Check primary platform status
+install.steps.worker_probe.detail: After this worker joins the cluster, check the platform deployment on the primary node and then stop.
 install.errors.empty_value: value cannot be empty
-shared.yes: yes
-shared.no: no
-shared.none: none

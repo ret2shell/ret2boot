@@ -2,111 +2,103 @@ _version: 1
 startup.language.prompt: 請選擇介面語言
 startup.language.options.zh_hans: 簡體中文
 startup.language.options.zh_hant: 繁體中文
-startup.language.options.en_us: 英語（美國）
-startup.language.options.ja_jp: 日語
-startup.safety.title: 繼續之前請注意
-startup.safety.root_required: 此安裝器需要 root 權限才能部署 Ret2Shell。
-startup.safety.clean_server: 最好在乾淨的伺服器環境中執行安裝，以降低風險。
-startup.safety.conflict_risk: 安裝器可能會部署 Kubernetes 等關鍵元件，可能與現有服務衝突並帶來風險。
-startup.safety.user_config: 你的偏好設定仍會儲存到 %{path}。
+startup.language.options.en_us: English (US)
+startup.language.options.ja_jp: 日本語
+startup.safety.title: 安裝前請先確認以下事項
+startup.safety.root_required: 安裝回歸終端需要 root 權限。
+startup.safety.clean_server: 建議在盡量乾淨的伺服器上安裝，避免和現有服務衝突。
+startup.safety.conflict_risk: 安裝過程會調整 Kubernetes、網路和系統服務，請確認目前主機可用於部署。
+startup.safety.user_config: 設定會儲存在 %{path}，中斷後重新執行安裝器即可繼續。
 startup.safety.continue_prompt: 是否繼續安裝？
 startup.safety.cancelled: 已取消安裝。
-startup.privilege.request: 正在為後續部署步驟申請 root 權限...
-startup.privilege.already_root: 目前已具備 root 權限，可繼續部署。
-startup.privilege.acquired: 已透過 %{backend} 取得後續部署所需的 root 權限。
-startup.update.downloaded: "已從 %{source} 下載最新安裝包 %{version} 到 %{path}，目前工作階段仍會繼續使用現有程式。"
-startup.update.cached: "已重用 %{source} 的快取更新包 %{version}：%{path}。"
-startup.update.no_asset: "%{source} 上有新版本 %{version}，但目前機器沒有可用的相容安裝包。"
-startup.update.download_failed: "%{source} 上有新版本 %{version}，但自動下載失敗，請稍後再試。"
+startup.privilege.request: 正在取得 root 權限...
+startup.privilege.already_root: 已具備 root 權限。
+startup.privilege.acquired: 已取得 root 權限。
+startup.update.downloaded: "已下載新版本 %{version} 到 %{path}，本次仍會繼續使用目前版本。"
+startup.update.cached: "已發現並重用已下載的新版本 %{version}：%{path}。"
+startup.update.no_asset: "%{source} 上有新版本 %{version}，但目前機器沒有可用的安裝包。"
+startup.update.download_failed: "%{source} 上有新版本 %{version}，但自動下載失敗。"
 startup.update.release_page: "發布頁面：%{release_url}"
-startup.update.unreachable: "只有在連網且能夠存取 %{repository}（%{source}）時，安裝器才能正常使用。"
-install.entry.title: 安裝器執行環境已就緒
+startup.update.unreachable: "暫時無法連線 %{source}（%{repository}），這次不會自動檢查更新。"
+install.entry.title: 安裝環境已就緒
 install.entry.language: 介面語言
 install.entry.config_path: 設定檔
-install.entry.privilege_backend: 提權後端
-install.entry.resume_hint: 每一步的答案都會立即儲存到 %{path}，中斷後可繼續恢復。
-install.entry.next_steps: 先前的 mock 詢問已移除，接下來進入真實部署流程開發。
+install.entry.resume_hint: 你的選擇會立即儲存到 %{path}，中斷後可以繼續。
 install.preflight.title: 安裝前檢查
 install.preflight.checks.downloader: 下載工具
 install.preflight.checks.systemd: systemd
 install.preflight.checks.package_manager: 系統套件管理器
-install.preflight.checks.public_network: 公網出口
-install.preflight.checks.github: github 連通性
+install.preflight.checks.public_network: 網路位置
+install.preflight.checks.github: GitHub 連通性
 install.preflight.checks.k3s_sources: k3s 安裝來源連通性
 install.preflight.checks.rke2_sources: rke2 安裝來源連通性
 install.preflight.checks.disk: 磁碟容量
 install.preflight.checks.memory: 記憶體容量
 install.preflight.checks.ports: 連接埠可用性
 install.preflight.checks.sysctl: sysctl 狀態
-install.preflight.checks.cgroup_memory: cgroup memory 控制器
+install.preflight.checks.cgroup_memory: 記憶體 cgroup 支援
 install.preflight.checks.overlay: overlay 檔案系統支援
 install.preflight.checks.br_netfilter: br_netfilter 支援
 install.preflight.details.downloader_available: "可用：%{available}"
-install.preflight.details.downloader_missing: 缺少 curl 和 wget
+install.preflight.details.downloader_missing: 未找到 curl 或 wget
 install.preflight.details.systemd_ready: systemd 正在執行，且 systemctl 可用
 install.preflight.details.systemd_missing: 目前主機未啟用 systemd，無法繼續安裝
-install.preflight.details.package_manager_ready: "受支援的系統套件管理器：%{package_manager}"
-install.preflight.details.package_manager_missing: 目前主機沒有偵測到受支援的系統套件管理器
-install.preflight.details.public_network_detected: "公網出口：%{public_network}"
-install.preflight.details.public_network_unknown: 無法判定目前公網出口 IP 與屬地
-install.preflight.details.github_reachable: 目前可以存取 github
-install.preflight.details.github_unreachable: 目前無法存取 github，啟動更新檢查可能失敗
+install.preflight.details.package_manager_ready: "可用的套件管理器：%{package_manager}"
+install.preflight.details.package_manager_missing: 目前主機未偵測到受支援的套件管理器
+install.preflight.details.public_network_detected: "公網 IP 與地區：%{public_network}"
+install.preflight.details.public_network_unknown: 暫時無法判定公網 IP 和地區，安裝來源建議可能不準確
+install.preflight.details.github_reachable: 可以存取 GitHub
+install.preflight.details.github_unreachable: 無法存取 GitHub，自動更新可能不可用
 install.preflight.details.sources_all_reachable: "可存取的端點：%{reachable}"
 install.preflight.details.sources_partial: "可存取：%{reachable}；不可存取：%{unreachable}"
 install.preflight.details.sources_missing: "所有檢查過的端點都不可存取：%{unreachable}"
-install.preflight.details.sources_unknown: 沒有檢查到任何端點
-install.preflight.details.disk_ready: "/var/lib 可用空間為 %{free}"
-install.preflight.details.disk_warning: "/var/lib 可用空間僅有 %{free}，大規模 challenge 負載可能很快耗盡"
-install.preflight.details.disk_failed: "/var/lib 可用空間僅有 %{free}，低於最低要求"
+install.preflight.details.sources_unknown: 沒有檢查到可用端點
+install.preflight.details.disk_ready: "/var/lib 可用空間：%{free}"
+install.preflight.details.disk_warning: "/var/lib 僅剩 %{free}，題目規模較大時可能不夠用"
+install.preflight.details.disk_failed: "/var/lib 僅剩 %{free}，低於最低要求"
 install.preflight.details.disk_unknown: "無法判定磁碟剩餘空間：%{error}"
-install.preflight.details.memory_ready: "實體記憶體為 %{total}"
-install.preflight.details.memory_warning: "實體記憶體為 %{total}，對高密度 challenge 負載可能偏緊"
+install.preflight.details.memory_ready: "實體記憶體：%{total}"
+install.preflight.details.memory_warning: "實體記憶體為 %{total}，高負載時可能不夠用"
 install.preflight.details.memory_failed: "實體記憶體為 %{total}，低於最低要求"
 install.preflight.details.memory_unknown: "無法判定實體記憶體：%{error}"
-install.preflight.details.ports_ready: 節點與控制平面所需連接埠看起來都處於空閒狀態
+install.preflight.details.ports_ready: 節點和控制平面所需連接埠都處於空閒狀態
 install.preflight.details.ports_warning: "控制平面相關連接埠已被占用：%{ports}"
 install.preflight.details.ports_failed: "節點必需連接埠已被占用：%{ports}"
-install.preflight.details.sysctl_ready: 必需的 sysctl 值已啟用
+install.preflight.details.sysctl_ready: 必需的 sysctl 參數已啟用
 install.preflight.details.sysctl_warning: "目前值：%{values}"
-install.preflight.details.cgroup_memory_ready: 目前主機提供 memory cgroup 控制器
-install.preflight.details.cgroup_memory_missing: 目前主機缺少 memory cgroup 控制器
-install.preflight.details.kernel_ready: 目前核心環境已提供該能力
-install.preflight.details.kernel_loadable: 目前尚未啟用，但核心回報可以載入該能力
-install.preflight.details.kernel_missing: 目前核心環境缺少該能力
+install.preflight.details.cgroup_memory_ready: 已啟用記憶體 cgroup 支援
+install.preflight.details.cgroup_memory_missing: 未啟用記憶體 cgroup 支援，無法繼續安裝
+install.preflight.details.kernel_ready: 目前核心已提供該功能
+install.preflight.details.kernel_loadable: 目前尚未啟用，但可以透過載入核心模組啟用
+install.preflight.details.kernel_missing: 目前核心不支援該功能
 install.preflight.status.ok: 通過
 install.preflight.status.running: 檢查中
 install.preflight.status.warning: 警告
 install.preflight.status.failed: 失敗
-install.preflight.summary.passed: 安裝前檢查通過，目前主機可以進入問詢階段。
-install.preflight.summary.warning: 安裝前檢查已通過，但存在警告，請在繼續前確認目前主機狀態。
-install.preflight.summary.failed: 安裝前檢查發現阻斷問題，請先修復後再繼續。
-install.node_role.prompt: 目前安裝目標屬於主節點還是從節點？
+install.preflight.summary.passed: 安裝前檢查通過，可以繼續。
+install.preflight.summary.warning: 安裝前檢查已通過，但有一些提示，請確認後再繼續。
+install.preflight.summary.failed: 安裝前檢查未通過，請先修復問題。
+install.node_role.prompt: 這台機器是主節點還是工作節點？
 install.node_role.options.control_plane: 主節點（控制平面）
-install.node_role.options.worker: 從節點
-install.node_role.saved: 已將目前目標角色儲存為：%{role}。
-install.platform.resources_intro: Ret2Shell 平台引導資源
-install.platform.namespaces: "將建立的命名空間：%{platform}、%{challenge}"
-install.platform.service_account: "共用 ServiceAccount：%{namespace} 中的 %{name}"
-install.platform.rbac: "共用 RBAC：ClusterRole %{role}，ClusterRoleBinding %{binding}"
-install.platform.configmaps: 後續會準備 ret2shell-config、ret2shell-blocked 等共用 ConfigMap。
-install.platform.storage_notice: 所有本地服務都必須使用 StorageClass，其中核心平台服務只能使用 local-path。
-install.platform.remaining_disk.prompt: 目前伺服器還能為 Ret2Shell 提供多少可用磁碟空間？（GiB）
-install.platform.detected_remaining_disk: "已自動偵測到剩餘可用磁碟空間：%{remaining} GiB"
-install.platform.requested_disk.prompt: 你希望 Ret2Shell 總共劃分多少磁碟空間？（GiB）
-install.platform.services_intro: 計畫部署的 Ret2Shell 服務
+install.node_role.options.worker: 工作節點
+install.platform.resources_intro: 開始設定回歸終端平台
+install.platform.questionnaire_intro: 接下來要確認各項平台服務的部署方式和磁碟分配。
+install.platform.storage_notice: 使用本機磁碟的服務都需要設定儲存；核心平台服務固定使用 local-path。
+install.platform.detected_remaining_disk: "偵測到可用磁碟空間：%{remaining} GiB"
+install.platform.requested_disk.prompt: 你希望為回歸終端預留多少磁碟空間？（GiB）
+install.platform.services_intro: 設定各項回歸終端服務
 install.platform.service_heading: "設定服務：%{service}"
-install.platform.service_release: "Helm Release：%{namespace} 命名空間中的 %{release}"
-install.platform.service_platform_fixed: 核心平台服務必須本地部署，並且固定使用由 local-path 支援的 ret2shell-storage-platform 儲存類。
-install.platform.service_deployment.prompt: 這個服務希望如何部署？
-install.platform.service_storage.prompt: 這個本地服務希望使用哪一種儲存後端？
+install.platform.service_platform_fixed: 核心平台服務固定為本地部署，儲存方式也會自動使用預設值。
+install.platform.service_deployment.prompt: 這個服務如何部署？
+install.platform.service_storage.prompt: 這個本地服務使用哪種儲存？
 install.platform.service_storage_class.prompt: 請輸入這個服務要使用的 StorageClass 名稱
-install.platform.external_intro: 這個服務已標記為外部提供，請補充後續部署步驟需要重用的連線參數。
-install.platform.disk_budget_too_small: 目前選擇的 local-path 本地服務數量，已經超過你預留的總磁碟預算下限。
-install.platform.disk_plan_intro: 請檢查並調整使用 local-path 的本地服務磁碟劃分
-install.platform.service_disk.prompt: "%{service} 的磁碟劃分（GiB）"
-install.platform.disk_plan_overflow: "目前本地磁碟劃分合計 %{assigned} GiB，已超過預留的 %{budget} GiB，請調整後再試。"
-install.platform.disk_plan_unused: "本地磁碟劃分完成後，仍有 %{unused} GiB 預算未使用。"
-install.platform.input.invalid_integer: 請輸入一個以 GiB 為單位的整數。
+install.platform.external_intro: 該服務由外部提供，請填寫連線資訊。
+install.platform.disk_budget_too_small: 目前預留的總磁碟空間不足以覆蓋所有使用本機磁碟的服務。
+install.platform.disk_plan_intro: 請檢查並調整使用本機磁碟的服務磁碟分配
+install.platform.service_disk.prompt: "%{service} 的磁碟分配（GiB）"
+install.platform.disk_plan_overflow: "目前本地磁碟分配合計 %{assigned} GiB，已超過預留的 %{budget} GiB，請調整後再試。"
+install.platform.disk_plan_unused: "本地磁碟分配完成後，還有 %{unused} GiB 未使用。"
+install.platform.input.invalid_integer: 請輸入 GiB 整數。
 install.platform.input.too_small: "這個值至少要為 %{minimum} GiB。"
 install.platform.input.too_large: "這個值最多只能為 %{maximum} GiB。"
 install.platform.deployment.local: 本地部署
@@ -120,12 +112,12 @@ install.platform.services.cache: 快取
 install.platform.services.queue: 佇列
 install.platform.services.registry: 映像倉庫
 install.platform.services.logs: 日誌
-install.platform.service_desc.platform: Ret2Shell 的主 API、排程器與 challenge 編排服務。
+install.platform.service_desc.platform: 回歸終端的 API、排程和題目編排服務。
 install.platform.service_desc.database: 用於平台核心資料儲存的 PostgreSQL。
-install.platform.service_desc.cache: 用於熱狀態快取的 Valkey。
-install.platform.service_desc.queue: 用於內部事件投遞的 NATS 與 JetStream。
-install.platform.service_desc.registry: 用於 challenge 映像分發的 OCI Registry，也可以替換成外部映像倉庫。
-install.platform.service_desc.logs: 可選的 VictoriaLogs 日誌與觀測元件。
+install.platform.service_desc.cache: 用於快取熱狀態的 Valkey。
+install.platform.service_desc.queue: 平台內部訊息佇列服務（NATS / JetStream），也可以改為外部提供。
+install.platform.service_desc.registry: 用於存放和分發題目映像的映像倉庫，也可以改為外部映像倉庫。
+install.platform.service_desc.logs: 可選的日誌與監控服務（VictoriaLogs）。
 install.platform.external.database.host: 外部資料庫主機
 install.platform.external.database.port: 外部資料庫連接埠
 install.platform.external.database.name: 外部資料庫名稱
@@ -138,110 +130,99 @@ install.platform.external.queue.port: 外部佇列連接埠
 install.platform.external.queue.token: 外部佇列 token
 install.platform.external.registry.external: 提供給叢集拉取的外部映像倉庫位址
 install.platform.external.registry.server: 提供給平台推送的內部映像倉庫位址
-install.platform.external.registry.insecure: 映像倉庫是否不驗證憑證（true/false）
+install.platform.external.registry.insecure: 映像倉庫是否允許使用 HTTP 或跳過 TLS 驗證（true/false）
 install.platform.external.registry.username: 映像倉庫使用者名稱
 install.platform.external.registry.password: 映像倉庫密碼
 install.platform.external.logs.endpoint: 外部日誌服務位址
-install.worker_probe.title: 探測主節點平台狀態
-install.worker_probe.intro: 這個從節點只負責加入叢集。接下來 Ret2Boot 會探測主節點側的 ret2shell-platform 執行情況，然後退出。
-install.worker_probe.done: 主節點平台狀態探測已完成。
-install.worker_probe.failed: "無法完成主節點平台狀態探測：%{error}"
-install.worker_probe.cli_missing: 目前從節點缺少所需的叢集 CLI，無法自動繼續執行平台探測。
-install.exposure.prompt: 目前叢集希望使用哪一種應用出口模式？
+install.worker_probe.title: 檢查主節點平台狀態
+install.worker_probe.intro: 這個工作節點只負責加入叢集。接下來會檢查主節點上的平台部署狀態，然後結束目前流程。
+install.worker_probe.done: 主節點平台狀態檢查完成。
+install.worker_probe.failed: 主節點平台狀態檢查失敗。
+install.worker_probe.failed_detail: "錯誤詳情：%{error}"
+install.worker_probe.cli_missing: 目前工作節點缺少所需的叢集 CLI，無法繼續自動檢查平台狀態。
+install.exposure.prompt: 叢集準備使用哪種對外存取方式？
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx
-install.exposure.ingress_notice: 已記錄 ingress 需求，後續 Helm chart 的 values 會依此模式修正。
-install.exposure.nodeport_notice: 已記錄 NodePort + 外置 nginx 模式。Ret2Boot 會將 80 與 443 留給系統 nginx 使用。
-install.exposure.package_manager_notice: "如果目前主機還沒有 nginx，Ret2Boot 會透過 %{package_manager} 自動安裝。"
-install.exposure.nginx_reuse_notice: "偵測到目前主機已存在 nginx 二進位：%{path}，如果可用會直接重用。"
-install.exposure.nginx_service_reuse_notice: 偵測到目前主機已經存在 nginx 服務，這一步會盡量直接重用它。
-install.kubernetes.worker_hint: 從節點必須使用與主節點完全一致的 Kubernetes 發行版。
+install.exposure.ingress_notice: 已記錄 ingress 模式，安裝時會依此對外公開服務。
+install.exposure.nodeport_notice: 已記錄 NodePort + 外置 nginx 模式。安裝時會把 Kubernetes 閘道連接埠調整到 10080 和 10443，把 80 和 443 留給系統 nginx。
+install.exposure.package_manager_notice: "如果主機還沒有 nginx，會透過 %{package_manager} 自動安裝。"
+install.exposure.nginx_reuse_notice: "偵測到現有 nginx 二進位：%{path}，會盡量直接重用。"
+install.exposure.nginx_service_reuse_notice: 偵測到現有 nginx 服務，這一步會盡量直接重用。
+install.kubernetes.worker_hint: 工作節點必須使用與主節點完全一致的 Kubernetes 發行版。
 install.kubernetes.distribution.prompt: 你想使用哪一種 Kubernetes 發行版？
 install.kubernetes.distribution.options.k3s: k3s
 install.kubernetes.distribution.options.rke2: rke2
-install.kubernetes.source.prompt: 你想為目前發行版使用哪一個安裝來源？
+install.kubernetes.source.prompt: 你想使用哪個安裝來源？
 install.kubernetes.source.k3s.official: k3s.io 官方安裝來源
 install.kubernetes.source.k3s.china_mirror: 面向中國大陸的 rancher.cn 安裝來源
 install.kubernetes.source.rke2.official: get.rke2.io 官方安裝來源
 install.kubernetes.source.rke2.china_mirror: 面向中國大陸的 rancher.cn 安裝來源
 install.kubernetes.source.filtered: 目前主機無法存取的安裝來源已被隱藏。
-install.kubernetes.source.recommended: "偵測到目前公網出口為 %{public_network}，建議使用：%{source}"
-install.kubernetes.source.auto_selected: "目前只有 %{source} 可存取，因此已自動選取。"
+install.kubernetes.source.recommended: "偵測到目前網路位置為 %{public_network}，建議使用：%{source}"
+install.kubernetes.source.auto_selected: "目前只有 %{source} 可存取，已自動選取。"
 install.kubernetes.source.none_available: 目前主機無法存取任何 Kubernetes 安裝來源。
-install.kubernetes.worker.server_url.prompt: 請輸入從節點連線主節點時使用的 URL
-install.kubernetes.worker.server_url_hint.k3s: 對於 k3s 從節點，這通常是指向 6443 連接埠的 https 位址。
-install.kubernetes.worker.server_url_hint.rke2: 對於 rke2 從節點，這通常是指向 9345 連接埠的 https 位址。
-install.kubernetes.worker.token.prompt: 請輸入叢集加入 token
-install.helm.notice: Helm 沒有額外的問詢選項，後續會作為部署依賴自動安裝。
-install.helm.reuse_notice: "偵測到目前主機已存在 helm 二進位：%{path}，這一步會直接重用它而不是覆寫。"
+install.kubernetes.worker.server_url.prompt: 請輸入工作節點連線主節點時使用的 URL
+install.kubernetes.worker.server_url_hint.k3s: 對於 k3s 工作節點，這通常是指向 6443 連接埠的 https 位址。
+install.kubernetes.worker.server_url_hint.rke2: 對於 rke2 工作節點，這通常是指向 9345 連接埠的 https 位址。
+install.kubernetes.worker.token.prompt: 請輸入叢集加入權杖
+install.helm.notice: Helm 沒有額外設定，安裝階段會自動安裝。
+install.helm.reuse_notice: "偵測到現有 helm 二進位：%{path}，會直接重用。"
 install.plan.title: 安裝計畫
 install.plan.node_role: 目標角色
-install.plan.phase: 目前記錄階段
-install.plan.steps: 計畫中的原子步驟
-install.review.confirm_prompt: 請複核以上安裝計畫，並確認是否開始安裝。
-install.review.already_confirmed: 安裝計畫先前已確認，將基於已記錄的計畫繼續。
-install.review.cancelled: 目前安裝維持在複核階段，待你確認後再繼續。
-install.execution.title: 已進入安裝階段
-install.execution.progress_saved: 安裝步驟日誌已儲存，後續中斷後可繼續恢復。
-install.execution.resume_ready: 將從先前記錄的安裝步驟日誌繼續。
-install.execution.noop_notice: 目前已接入 Kubernetes 引導、Helm、應用出口與平台規劃步驟，後續部署步驟會繼續擴展。
-install.execution.step_running: "正在執行步驟：%{step}"
-install.execution.step_done: "步驟已完成：%{step}"
-install.execution.step_failed: "步驟執行失敗：%{step}（%{error}）"
+install.plan.steps: 計畫執行的步驟
+install.review.confirm_prompt: 請確認以上安裝計畫，然後開始安裝。
+install.review.already_confirmed: 已確認過安裝計畫，將依已記錄的內容繼續。
+install.review.cancelled: 安裝計畫尚未確認，目前停留在複核階段。
+install.execution.title: 開始安裝
+install.execution.progress_saved: 已儲存安裝記錄，中斷後可以繼續。
+install.execution.resume_ready: 偵測到既有安裝記錄，將從上次進度繼續。
+install.execution.step_running: "正在執行：%{step}"
+install.execution.step_done: "已完成：%{step}"
+install.execution.step_failed: "執行失敗：%{step}"
+install.execution.step_failed_detail: "錯誤詳情：%{error}"
 install.execution.step_skipped: "跳過已完成步驟：%{step}"
-install.execution.rollback_started: 將依照相反順序回退已完成的安裝步驟。
-install.execution.rollback_step: "正在回退步驟：%{step}"
+install.execution.rollback_started: 安裝失敗，開始依相反順序回退已完成的步驟。
+install.execution.rollback_step: "正在回退：%{step}"
 install.execution.rollback_done: 回退完成。
-install.execution.completed: 安裝步驟已全部成功完成。
-install.progress.title: 已記錄的安裝進度
+install.execution.completed: 安裝已完成。
+install.progress.title: 安裝進度
 install.progress.status.pending: 待執行
 install.progress.status.in_progress: 執行中
 install.progress.status.completed: 已完成
 install.progress.status.failed: 已失敗
-install.phase.questionnaire: 問詢階段
-install.phase.review: 複核階段
-install.phase.installing: 安裝階段
-install.phase.completed: 已完成
-install.steps.preflight: 驗證目標主機與部署前置條件
-install.steps.preflight_detail: 在真正修改系統之前，檢查作業系統、權限、網路與所需執行條件是否滿足。
+install.steps.preflight: 檢查目標主機和安裝前置條件
+install.steps.preflight_detail: 在真正修改系統前，檢查作業系統、權限、網路與執行條件。
 install.steps.cluster.control_plane: 引導 Kubernetes 控制平面
 install.steps.cluster.control_plane_detail: 初始化主叢集服務，並建立控制平面的基礎能力。
 install.steps.cluster.worker: 將目前節點加入 Kubernetes 叢集
-install.steps.cluster.worker_detail: 使用已記錄的加入參數，將目前節點註冊進既有叢集。
+install.steps.cluster.worker_detail: 使用已儲存的加入參數，將目前節點接入既有叢集。
 install.steps.cluster.selected_distribution: "Kubernetes 發行版：%{distribution}"
 install.steps.cluster.selected_source: "安裝來源：%{source}"
 install.steps.cluster.pod_cidr: "叢集 Pod CIDR：%{cidr}"
 install.steps.cluster.node_cidr_mask: "單節點 Pod CIDR 遮罩：/%{mask}"
 install.steps.cluster.max_pods: "單節點最大 Pod 數：%{max_pods}"
-install.steps.cluster.application_exposure: "應用出口模式：%{exposure}"
-install.steps.cluster.gateway_ports_shifted: 叢集閘道預設占用的 80 與 443 會遷移到空閒高位連接埠，以便系統 nginx 接管它們。
+install.steps.cluster.application_exposure: "對外存取方式：%{exposure}"
+install.steps.cluster.gateway_ports_shifted: 叢集閘道預設使用的 80 與 443 會移到高位空閒連接埠，交給系統 nginx 使用。
 install.steps.cluster.worker_server: "主節點 URL：%{server}"
-install.steps.cluster.worker_token_saved: 叢集加入 token 已儲存到安裝器設定中。
+install.steps.cluster.worker_token_saved: 叢集加入權杖已儲存到安裝器設定中。
 install.steps.helm.title: 安裝 Helm CLI
-install.steps.helm.detail: 安裝 Helm，供後續 Ret2Shell 部署步驟作為套件管理工具使用。
+install.steps.helm.detail: 安裝 Helm，供後續回歸終端部署使用。
 install.steps.helm.reuse: "重用目前主機上已存在的 helm 二進位：%{path}。"
 install.steps.helm.install_path: "將 helm 安裝到 %{path}。"
-install.steps.gateway.title: 設定應用出口閘道
-install.steps.gateway.selected_mode: "已選擇的應用出口：%{exposure}"
-install.steps.gateway.ingress_detail: 記錄 ingress 需求，供後續 Helm values 開啟 ingress 模式時使用。
-install.steps.gateway.nodeport_detail: 安裝或重用系統 nginx，並讓它接管目前主機的 80 與 443 連接埠。
-install.steps.gateway.port_reservation: Ret2Boot 會先將叢集閘道從 80 與 443 遷移走，再交給系統 nginx 使用。
+install.steps.gateway.title: 設定對外存取
+install.steps.gateway.selected_mode: "已選擇的對外存取方式：%{exposure}"
+install.steps.gateway.ingress_detail: 記錄 ingress 需求，後續安裝時會依此開啟。
+install.steps.gateway.nodeport_detail: 安裝或重用系統 nginx，讓它接管目前主機的 80 與 443 連接埠。
+install.steps.gateway.port_reservation: 安裝前會先把叢集閘道從 80 與 443 挪開，再交給系統 nginx。
 install.steps.gateway.nginx_reuse: "重用目前主機上已存在的 nginx 二進位：%{path}。"
 install.steps.gateway.nginx_service_reuse: 重用目前主機上已經存在的 nginx 服務。
 install.steps.gateway.nginx_install: 透過目前偵測到的系統套件管理器安裝 nginx。
-install.steps.platform_plan.title: 準備 Ret2Shell 平台部署規劃
-install.steps.platform_plan.namespaces: "將建立的命名空間：%{platform}、%{challenge}"
-install.steps.platform_plan.service_account: "共用 ServiceAccount：%{namespace} 中的 %{name}"
-install.steps.platform_plan.rbac: "共用 RBAC 物件：ClusterRole %{role}，ClusterRoleBinding %{binding}"
-install.steps.platform_plan.disk_budget: "磁碟預算：已劃分 %{allocated} GiB / 計畫 %{requested} GiB（目前實體可用 %{remaining} GiB）"
-install.steps.platform_plan.unallocated_disk: "尚未使用的磁碟預算：%{remaining} GiB"
-install.steps.worker_probe.title: 探測主節點平台狀態
-install.steps.worker_probe.detail: 目前從節點加入叢集後，將探測主節點側的 ret2shell-platform 部署狀態，然後結束目前流程。
-install.steps.platform.control_plane: 部署 Ret2Shell 核心平台服務
-install.steps.platform.control_plane_detail: 安裝必須運行在主節點上的 Ret2Shell 核心服務。
-install.steps.platform.worker: 設定從節點側的 Ret2Shell 服務
-install.steps.platform.worker_detail: 僅安裝目前從節點為叢集提供能力所需的服務元件。
+install.steps.platform_plan.title: 準備回歸終端平台設定
+install.steps.platform_plan.namespaces: "將準備平台使用的命名空間：%{platform}、%{challenge}"
+install.steps.platform_plan.service_account: "將準備平台運行所需的服務帳號：%{namespace} 中的 %{name}"
+install.steps.platform_plan.rbac: "將準備平台運行所需的權限設定：%{role}、%{binding}"
+install.steps.platform_plan.disk_budget: "磁碟預算：已分配 %{allocated} GiB / 計畫 %{requested} GiB（目前可用 %{remaining} GiB）"
+install.steps.platform_plan.unallocated_disk: "未使用的磁碟預算：%{remaining} GiB"
+install.steps.worker_probe.title: 檢查主節點平台狀態
+install.steps.worker_probe.detail: 目前工作節點加入叢集後，會檢查主節點上的平台部署狀態，然後結束目前流程。
 install.errors.empty_value: 不能為空
-shared.yes: 是
-shared.no: 否
-shared.none: 無

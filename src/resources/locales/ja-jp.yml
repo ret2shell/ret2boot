@@ -1,111 +1,103 @@
 _version: 1
 startup.language.prompt: 使用する言語を選択してください
-startup.language.options.zh_hans: 簡体字中国語
-startup.language.options.zh_hant: 繁体字中国語
-startup.language.options.en_us: 英語（米国）
+startup.language.options.zh_hans: 简体中文
+startup.language.options.zh_hant: 繁體中文
+startup.language.options.en_us: English (US)
 startup.language.options.ja_jp: 日本語
-startup.safety.title: 続行前の注意
-startup.safety.root_required: このインストーラーは Ret2Shell のデプロイに root 権限が必要です。
-startup.safety.clean_server: できるだけクリーンなサーバーで実行することを推奨します。
-startup.safety.conflict_risk: Kubernetes などの重要なコンポーネントを導入するため、既存サービスと競合してリスクを生む可能性があります。
-startup.safety.user_config: 設定は引き続き %{path} に保存されます。
+startup.safety.title: インストール前に次の点を確認してください
+startup.safety.root_required: Ret2Shell のインストールには root 権限が必要です。
+startup.safety.clean_server: 既存サービスとの競合を避けるため、できるだけクリーンなサーバーでの実行を推奨します。
+startup.safety.conflict_risk: インストール中に Kubernetes、ネットワーク、システムサービスを変更します。このホストをデプロイに使ってよいか確認してください。
+startup.safety.user_config: 設定は %{path} に保存されるため、中断してもインストーラーを再実行すれば続きから進められます。
 startup.safety.continue_prompt: インストールを続行しますか？
 startup.safety.cancelled: インストールを中止しました。
-startup.privilege.request: これ以降のデプロイ手順のために root 権限を要求しています...
-startup.privilege.already_root: デプロイに必要な root 権限はすでに有効です。
-startup.privilege.acquired: "%{backend} 経由でデプロイ用の root 権限を取得しました。"
-startup.update.downloaded: "%{source} からインストーラー %{version} を %{path} にダウンロードしました。このセッションは現在のバイナリのまま続行します。"
-startup.update.cached: "%{source} のキャッシュ済みインストーラー %{version} を再利用します: %{path}。"
-startup.update.no_asset: "%{source} で新しいリリース %{version} が見つかりましたが、このマシン向けの互換アセットがありません。"
-startup.update.download_failed: "%{source} で新しいリリース %{version} が見つかりましたが、自動ダウンロードに失敗しました。"
+startup.privilege.request: root 権限を取得しています...
+startup.privilege.already_root: root 権限はすでに有効です。
+startup.privilege.acquired: root 権限を取得しました。
+startup.update.downloaded: "新しいバージョン %{version} を %{path} にダウンロードしました。本セッションでは現在のバージョンをそのまま使います。"
+startup.update.cached: "すでにダウンロード済みの %{version} を再利用します: %{path}。"
+startup.update.no_asset: "%{source} で %{version} が公開されていますが、このマシン向けの互換パッケージはありません。"
+startup.update.download_failed: "%{source} で %{version} が公開されていますが、自動ダウンロードに失敗しました。"
 startup.update.release_page: "リリースページ: %{release_url}"
-startup.update.unreachable: "%{source} 経由で %{repository} に到達できるオンライン状態でないと、このインストーラーは正常に動作できません。"
-install.entry.title: インストーラーの実行環境は準備できています
+startup.update.unreachable: "%{source}（%{repository}）に接続できなかったため、今回は自動更新を確認できません。"
+install.entry.title: インストーラーの準備ができました
 install.entry.language: 表示言語
 install.entry.config_path: 設定ファイル
-install.entry.privilege_backend: 権限昇格バックエンド
-install.entry.resume_hint: 各ステップの回答は %{path} にすぐ保存されるため、中断後も再開できます。
-install.entry.next_steps: これまでの mock 質問は削除されました。ここから実際のデプロイフロー実装に進みます。
+install.entry.resume_hint: 回答は %{path} にすぐ保存されるため、中断後も続きから進められます。
 install.preflight.title: 事前チェック
 install.preflight.checks.downloader: ダウンローダー
 install.preflight.checks.systemd: systemd
 install.preflight.checks.package_manager: パッケージマネージャー
-install.preflight.checks.public_network: パブリックネットワーク
-install.preflight.checks.github: github 接続性
+install.preflight.checks.public_network: ネットワーク位置
+install.preflight.checks.github: GitHub 接続性
 install.preflight.checks.k3s_sources: k3s インストールソース接続性
 install.preflight.checks.rke2_sources: rke2 インストールソース接続性
 install.preflight.checks.disk: ディスク容量
 install.preflight.checks.memory: メモリー容量
 install.preflight.checks.ports: ポート空き状況
 install.preflight.checks.sysctl: sysctl 状態
-install.preflight.checks.cgroup_memory: cgroup memory コントローラー
+install.preflight.checks.cgroup_memory: memory cgroup サポート
 install.preflight.checks.overlay: overlay ファイルシステム対応
 install.preflight.checks.br_netfilter: br_netfilter 対応
 install.preflight.details.downloader_available: "利用可能: %{available}"
-install.preflight.details.downloader_missing: curl と wget が見つかりません
+install.preflight.details.downloader_missing: curl または wget が必要です
 install.preflight.details.systemd_ready: systemd が稼働しており、systemctl が利用可能です
 install.preflight.details.systemd_missing: このホストでは systemd が有効ではないため、インストールを続行できません
-install.preflight.details.package_manager_ready: "対応しているパッケージマネージャー: %{package_manager}"
-install.preflight.details.package_manager_missing: このホストでは対応しているパッケージマネージャーを検出できませんでした
-install.preflight.details.public_network_detected: "パブリック送信元: %{public_network}"
-install.preflight.details.public_network_unknown: 現在のパブリック送信元 IP と地域を判定できませんでした
-install.preflight.details.github_reachable: github に接続できます
-install.preflight.details.github_unreachable: github に接続できないため、起動時更新確認が失敗する可能性があります
+install.preflight.details.package_manager_ready: "利用可能なパッケージマネージャー: %{package_manager}"
+install.preflight.details.package_manager_missing: このホストでは対応しているパッケージマネージャーが見つかりません
+install.preflight.details.public_network_detected: "現在のグローバル IP と地域: %{public_network}"
+install.preflight.details.public_network_unknown: 現在のグローバル IP と地域を特定できないため、インストールソースの推奨が正確でない可能性があります
+install.preflight.details.github_reachable: GitHub に接続できます
+install.preflight.details.github_unreachable: GitHub に接続できないため、自動更新が利用できない可能性があります
 install.preflight.details.sources_all_reachable: "到達可能なエンドポイント: %{reachable}"
 install.preflight.details.sources_partial: "到達可能: %{reachable}；到達不可: %{unreachable}"
 install.preflight.details.sources_missing: "確認したすべてのエンドポイントに到達できません: %{unreachable}"
 install.preflight.details.sources_unknown: 確認対象のエンドポイントがありません
-install.preflight.details.disk_ready: "/var/lib の空き容量は %{free} です"
-install.preflight.details.disk_warning: "/var/lib の空き容量は %{free} しかなく、高密度 challenge ワークロードでは不足する可能性があります"
+install.preflight.details.disk_ready: "/var/lib の空き容量: %{free}"
+install.preflight.details.disk_warning: "/var/lib の空き容量が %{free} しかなく、大きな challenge 負荷では不足する可能性があります"
 install.preflight.details.disk_failed: "/var/lib の空き容量は %{free} しかなく、最低要件を下回っています"
 install.preflight.details.disk_unknown: "ディスク空き容量を確認できませんでした: %{error}"
-install.preflight.details.memory_ready: "物理メモリーは %{total} です"
+install.preflight.details.memory_ready: "物理メモリー: %{total}"
 install.preflight.details.memory_warning: "物理メモリーは %{total} で、高密度 challenge ワークロードには厳しい可能性があります"
 install.preflight.details.memory_failed: "物理メモリーは %{total} で、最低要件を下回っています"
 install.preflight.details.memory_unknown: "物理メモリーを確認できませんでした: %{error}"
-install.preflight.details.ports_ready: ノード用およびコントロールプレーン用の必要ポートは空いているようです
+install.preflight.details.ports_ready: ノードとコントロールプレーンに必要なポートは空いています
 install.preflight.details.ports_warning: "コントロールプレーン関連ポートがすでに使用中です: %{ports}"
 install.preflight.details.ports_failed: "ノード必須ポートがすでに使用中です: %{ports}"
-install.preflight.details.sysctl_ready: 必要な sysctl 値はすでに有効です
+install.preflight.details.sysctl_ready: 必要な sysctl 設定はすでに有効です
 install.preflight.details.sysctl_warning: "現在の値: %{values}"
-install.preflight.details.cgroup_memory_ready: memory cgroup コントローラーを利用できます
-install.preflight.details.cgroup_memory_missing: このホストには memory cgroup コントローラーがありません
-install.preflight.details.kernel_ready: 現在のカーネル環境で利用可能です
-install.preflight.details.kernel_loadable: まだ有効ではありませんが、カーネルはロード可能と判断しています
-install.preflight.details.kernel_missing: 現在のカーネル環境には存在しません
-install.preflight.status.ok: ok
-install.preflight.status.running: checking
-install.preflight.status.warning: warn
-install.preflight.status.failed: fail
-install.preflight.summary.passed: 事前チェックに合格しました。このホストは質問フェーズに進めます。
-install.preflight.summary.warning: 事前チェックは通過しましたが警告があります。続行前に現在のホスト状態を確認してください。
-install.preflight.summary.failed: 事前チェックで続行を妨げる問題が見つかりました。修正してから再試行してください。
-install.node_role.prompt: このインストール対象は主ノードですか、それともワーカーノードですか？
+install.preflight.details.cgroup_memory_ready: memory cgroup サポートを利用できます
+install.preflight.details.cgroup_memory_missing: このホストでは memory cgroup サポートを利用できません
+install.preflight.details.kernel_ready: 現在のカーネルで利用できます
+install.preflight.details.kernel_loadable: まだ有効ではありませんが、カーネルモジュールを読み込めば利用できます
+install.preflight.details.kernel_missing: 現在のカーネルでは利用できません
+install.preflight.status.ok: 正常
+install.preflight.status.running: 確認中
+install.preflight.status.warning: 警告
+install.preflight.status.failed: 失敗
+install.preflight.summary.passed: 事前チェックに合格しました。続行できます。
+install.preflight.summary.warning: 事前チェックは通過しましたが、いくつか注意点があります。確認してから続行してください。
+install.preflight.summary.failed: 事前チェックに失敗しました。先に問題を修正してください。
+install.node_role.prompt: このマシンは主ノードですか、それともワーカーノードですか？
 install.node_role.options.control_plane: 主ノード（コントロールプレーン）
 install.node_role.options.worker: ワーカーノード
-install.node_role.saved: "%{role} として対象ロールを保存しました。"
-install.platform.resources_intro: Ret2Shell プラットフォーム初期化リソース
-install.platform.namespaces: "作成する Namespace: %{platform}、%{challenge}"
-install.platform.service_account: "共有 ServiceAccount: %{namespace} の %{name}"
-install.platform.rbac: "共有 RBAC: ClusterRole %{role}、ClusterRoleBinding %{binding}"
-install.platform.configmaps: 後続の手順で ret2shell-config や ret2shell-blocked などの共有 ConfigMap を準備します。
-install.platform.storage_notice: すべてのローカルサービスは StorageClass を使う必要があります。そのうちコア platform サービスだけは local-path に固定されます。
-install.platform.remaining_disk.prompt: このサーバーで Ret2Shell に使える残りディスク容量はどのくらいですか？（GiB）
-install.platform.detected_remaining_disk: "自動検出された残りディスク容量: %{remaining} GiB"
-install.platform.requested_disk.prompt: Ret2Shell 用に合計どのくらいのディスク容量を割り当てますか？（GiB）
-install.platform.services_intro: デプロイ予定の Ret2Shell サービス
+install.platform.resources_intro: Ret2Shell プラットフォームを設定する
+install.platform.questionnaire_intro: ここから各プラットフォームサービスの配置方法とディスク割り当てを確認します。
+install.platform.storage_notice: ローカルディスクを使うサービスにはストレージ設定が必要です。コア platform サービスは常に local-path を使います。
+install.platform.detected_remaining_disk: "検出した空きディスク容量: %{remaining} GiB"
+install.platform.requested_disk.prompt: Ret2Shell 用にどれだけのディスク容量を確保しますか？（GiB）
+install.platform.services_intro: Ret2Shell サービスを設定する
 install.platform.service_heading: "サービス設定: %{service}"
-install.platform.service_release: "Helm Release: %{namespace} Namespace の %{release}"
-install.platform.service_platform_fixed: コア platform サービスは常にローカル配置され、local-path を背後に持つ ret2shell-storage-platform StorageClass に固定されます。
+install.platform.service_platform_fixed: コア platform サービスは常にローカル配置され、ストレージも既定値が自動で使われます。
 install.platform.service_deployment.prompt: このサービスをどのように配置しますか？
-install.platform.service_storage.prompt: このローカルサービスではどのストレージバックエンドを使いますか？
+install.platform.service_storage.prompt: このローカルサービスではどのストレージを使いますか？
 install.platform.service_storage_class.prompt: このサービスに使う StorageClass 名を入力してください
-install.platform.external_intro: このサービスは外部提供として扱われます。後続のデプロイ手順で再利用する接続情報を入力してください。
-install.platform.disk_budget_too_small: 現在選択されている local-path サービス数に対して、予約した総ディスク容量が小さすぎます。
-install.platform.disk_plan_intro: local-path を使うローカルサービスのディスク配分を確認して調整してください
+install.platform.external_intro: このサービスは外部提供です。接続情報を入力してください。
+install.platform.disk_budget_too_small: 現在のディスク予約量では、ローカルディスクを使うすべてのサービスをまかなえません。
+install.platform.disk_plan_intro: ローカルディスクを使うサービスのディスク割り当てを確認して調整してください
 install.platform.service_disk.prompt: "%{service} のディスク割り当て（GiB）"
-install.platform.disk_plan_overflow: "現在のローカルディスク配分合計 %{assigned} GiB は、予約済み %{budget} GiB を超えています。調整して再試行してください。"
-install.platform.disk_plan_unused: "ローカルディスク配分後に未使用の予算が %{unused} GiB 残っています。"
+install.platform.disk_plan_overflow: "現在のローカルディスク割り当て合計 %{assigned} GiB は、予約済み %{budget} GiB を超えています。調整して再試行してください。"
+install.platform.disk_plan_unused: "ローカルディスク割り当て後も %{unused} GiB が未使用です。"
 install.platform.input.invalid_integer: GiB 単位の整数を入力してください。
 install.platform.input.too_small: "この値は少なくとも %{minimum} GiB 必要です。"
 install.platform.input.too_large: "この値は最大 %{maximum} GiB までです。"
@@ -120,12 +112,12 @@ install.platform.services.cache: cache
 install.platform.services.queue: queue
 install.platform.services.registry: registry
 install.platform.services.logs: logs
-install.platform.service_desc.platform: Ret2Shell のメイン API、スケジューラ、challenge オーケストレーションサービスです。
+install.platform.service_desc.platform: Ret2Shell の API、スケジューラ、challenge オーケストレーションサービスです。
 install.platform.service_desc.database: プラットフォームの中核データを保存する PostgreSQL です。
-install.platform.service_desc.cache: ホットなプラットフォーム状態を保持する Valkey キャッシュです。
-install.platform.service_desc.queue: 内部イベント配送用の NATS と JetStream です。
-install.platform.service_desc.registry: challenge イメージを配布する OCI レジストリで、外部レジストリに置き換えることもできます。
-install.platform.service_desc.logs: オプションの VictoriaLogs ログ／可観測性スタックです。
+install.platform.service_desc.cache: ホットデータを保持する Valkey です。
+install.platform.service_desc.queue: 内部メッセージキューサービス（NATS / JetStream）です。外部提供にも切り替えられます。
+install.platform.service_desc.registry: challenge イメージを保管・配布するレジストリです。外部レジストリに置き換えることもできます。
+install.platform.service_desc.logs: 任意導入のログ／監視サービス（VictoriaLogs）です。
 install.platform.external.database.host: 外部データベースホスト
 install.platform.external.database.port: 外部データベースポート
 install.platform.external.database.name: 外部データベース名
@@ -138,110 +130,99 @@ install.platform.external.queue.port: 外部キューポート
 install.platform.external.queue.token: 外部キュートークン
 install.platform.external.registry.external: クラスターの pull に使う外部レジストリアドレス
 install.platform.external.registry.server: プラットフォームの push に使う内部レジストリアドレス
-install.platform.external.registry.insecure: レジストリを insecure として扱うか（true/false）
+install.platform.external.registry.insecure: このレジストリで HTTP 利用または TLS 検証スキップを許可するか（true/false）
 install.platform.external.registry.username: レジストリユーザー名
 install.platform.external.registry.password: レジストリパスワード
 install.platform.external.logs.endpoint: 外部ログエンドポイント
-install.worker_probe.title: master 側 platform 状態を探査する
-install.worker_probe.intro: この worker ノードはクラスタ参加だけを担当します。続いて master 側の ret2shell-platform 状態を探査し、その後このワークフローを終了します。
-install.worker_probe.done: master 側 platform 状態の探査が完了しました。
-install.worker_probe.failed: "master 側 platform 状態の探査を完了できませんでした: %{error}"
-install.worker_probe.cli_missing: この worker には必要なクラスタ CLI がないため、platform 探査を自動で続行できません。
-install.exposure.prompt: このクラスターではどのアプリケーション出口モードを使いますか？
+install.worker_probe.title: 主ノードのプラットフォーム状態を確認する
+install.worker_probe.intro: この worker ノードはクラスタ参加だけを担当します。続いて主ノード上のプラットフォーム配置状態を確認し、このフローを終了します。
+install.worker_probe.done: 主ノードのプラットフォーム状態の確認が完了しました。
+install.worker_probe.failed: 主ノードのプラットフォーム状態の確認に失敗しました。
+install.worker_probe.failed_detail: "エラー詳細: %{error}"
+install.worker_probe.cli_missing: この worker には必要なクラスタ CLI がないため、プラットフォーム状態の確認を自動で続行できません。
+install.exposure.prompt: このクラスタではどの外部公開方式を使いますか？
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort と外部 nginx
-install.exposure.ingress_notice: Ingress 要件を記録しました。後続の Helm chart values はこのモードに合わせて調整されます。
-install.exposure.nodeport_notice: NodePort と外部 nginx モードを記録しました。Ret2Boot はポート 80 と 443 をシステム nginx 用に確保します。
-install.exposure.package_manager_notice: "このホストに nginx がない場合、Ret2Boot は %{package_manager} で自動インストールします。"
-install.exposure.nginx_reuse_notice: "このホストでは nginx バイナリが %{path} に見つかったため、利用可能ならそのまま再利用します。"
-install.exposure.nginx_service_reuse_notice: このホストでは nginx サービスがすでに存在するため、利用可能ならそのまま再利用します。
+install.exposure.ingress_notice: ingress モードを記録しました。インストール時にこの設定で公開します。
+install.exposure.nodeport_notice: NodePort と外部 nginx モードを記録しました。インストール時に Kubernetes gateway を 10080 / 10443 へ移し、80 / 443 は system nginx 用に空けます。
+install.exposure.package_manager_notice: "nginx がなければ %{package_manager} で自動インストールします。"
+install.exposure.nginx_reuse_notice: "既存の nginx バイナリ %{path} を検出しました。可能ならそのまま再利用します。"
+install.exposure.nginx_service_reuse_notice: 既存の nginx サービスを検出しました。可能ならそのまま再利用します。
 install.kubernetes.worker_hint: ワーカーノードでは、主ノードと同じ Kubernetes ディストリビューションを使う必要があります。
 install.kubernetes.distribution.prompt: 使用したい Kubernetes ディストリビューションを選択してください。
 install.kubernetes.distribution.options.k3s: k3s
 install.kubernetes.distribution.options.rke2: rke2
-install.kubernetes.source.prompt: このディストリビューションで使うインストールソースを選択してください。
+install.kubernetes.source.prompt: 使用するインストールソースを選択してください。
 install.kubernetes.source.k3s.official: k3s.io 公式ソース
 install.kubernetes.source.k3s.china_mirror: 中国本土向け rancher.cn ソース
 install.kubernetes.source.rke2.official: get.rke2.io 公式ソース
 install.kubernetes.source.rke2.china_mirror: 中国本土向け rancher.cn ソース
 install.kubernetes.source.filtered: このホストから到達できないインストールソースは非表示にしました。
-install.kubernetes.source.recommended: "現在のパブリックネットワーク %{public_network} を検出したため、推奨ソースは %{source} です"
+install.kubernetes.source.recommended: "現在のネットワーク位置 %{public_network} を検出したため、推奨ソースは %{source} です"
 install.kubernetes.source.auto_selected: "現在到達できるのは %{source} のみのため、自動選択しました。"
 install.kubernetes.source.none_available: 現在のホストから到達できる Kubernetes インストールソースがありません。
 install.kubernetes.worker.server_url.prompt: ワーカーノードが接続する主ノード URL を入力してください
 install.kubernetes.worker.server_url_hint.k3s: k3s ワーカーでは、通常これは 6443 番ポートの https URL です。
 install.kubernetes.worker.server_url_hint.rke2: rke2 ワーカーでは、通常これは 9345 番ポートの https URL です。
 install.kubernetes.worker.token.prompt: クラスター参加トークンを入力してください
-install.helm.notice: Helm には追加の質問項目はなく、後続のデプロイ依存関係として自動インストールされます。
-install.helm.reuse_notice: "このホストですでに helm バイナリが %{path} に存在するため、このステップではそれを再利用します。"
+install.helm.notice: Helm に追加設定はありません。インストール時に自動で導入します。
+install.helm.reuse_notice: "既存の helm バイナリ %{path} を検出しました。そのまま再利用します。"
 install.plan.title: インストール計画
 install.plan.node_role: 対象ロール
-install.plan.phase: 記録済みフェーズ
-install.plan.steps: 予定されている原子的ステップ
-install.review.confirm_prompt: 上の計画を確認し、インストールを開始してよいか確定してください。
-install.review.already_confirmed: インストール計画はすでに確認済みです。記録された計画から再開します。
-install.review.cancelled: インストールは確認待ちの状態のまま維持されます。
-install.execution.title: インストールフェーズを初期化しました
-install.execution.progress_saved: インストールジャーナルを保存しました。中断後も再開できます。
-install.execution.resume_ready: 以前に保存されたインストールジャーナルから再開します。
-install.execution.noop_notice: 現在は Kubernetes ブートストラップ、Helm、アプリケーション出口、プラットフォーム計画の手順まで実装されており、以降のデプロイ手順は順次追加されます。
-install.execution.step_running: "%{step} を実行しています"
-install.execution.step_done: "%{step} が完了しました"
-install.execution.step_failed: "%{step} が失敗しました（%{error}）"
+install.plan.steps: 実行予定のステップ
+install.review.confirm_prompt: 上の計画を確認し、問題なければインストールを開始してください。
+install.review.already_confirmed: 計画はすでに確認済みです。記録済みの設定で続行します。
+install.review.cancelled: インストール計画はまだ確定していないため、確認待ちで停止します。
+install.execution.title: インストールを開始します
+install.execution.progress_saved: インストール進捗を保存しました。中断後も続きから再開できます。
+install.execution.resume_ready: 既存のインストール進捗が見つかったため、前回の続きから再開します。
+install.execution.step_running: "実行中: %{step}"
+install.execution.step_done: "完了: %{step}"
+install.execution.step_failed: "失敗: %{step}"
+install.execution.step_failed_detail: "エラー詳細: %{error}"
 install.execution.step_skipped: "完了済みステップをスキップします: %{step}"
-install.execution.rollback_started: 完了済みのインストールステップを逆順でロールバックします。
-install.execution.rollback_step: "%{step} をロールバックしています"
+install.execution.rollback_started: インストールに失敗したため、完了済みステップを逆順でロールバックします。
+install.execution.rollback_step: "ロールバック中: %{step}"
 install.execution.rollback_done: ロールバックが完了しました。
-install.execution.completed: インストールステップがすべて正常に完了しました。
-install.progress.title: 記録済みのインストール進捗
+install.execution.completed: インストールが完了しました。
+install.progress.title: インストール進捗
 install.progress.status.pending: 未着手
 install.progress.status.in_progress: 実行中
 install.progress.status.completed: 完了
 install.progress.status.failed: 失敗
-install.phase.questionnaire: 質問フェーズ
-install.phase.review: 確認フェーズ
-install.phase.installing: インストールフェーズ
-install.phase.completed: 完了
-install.steps.preflight: 対象ホストとデプロイ前提条件を検証する
-install.steps.preflight_detail: 実際に変更を加える前に、OS、権限、ネットワーク、必要な実行条件を確認します。
+install.steps.preflight: 対象ホストとインストール前提条件を確認する
+install.steps.preflight_detail: 実際に変更を加える前に、OS、権限、ネットワーク、実行条件を確認します。
 install.steps.cluster.control_plane: Kubernetes コントロールプレーンを構築する
 install.steps.cluster.control_plane_detail: 主クラスタサービスを初期化し、コントロールプレーンの基盤を構築します。
 install.steps.cluster.worker: このノードを Kubernetes クラスターへ参加させる
-install.steps.cluster.worker_detail: 記録済みの参加パラメーターを使って、このノードを既存クラスターへ登録します。
+install.steps.cluster.worker_detail: 保存済みの参加パラメーターを使って、このノードを既存クラスタへ参加させます。
 install.steps.cluster.selected_distribution: "Kubernetes ディストリビューション: %{distribution}"
 install.steps.cluster.selected_source: "インストールソース: %{source}"
 install.steps.cluster.pod_cidr: "クラスター Pod CIDR: %{cidr}"
 install.steps.cluster.node_cidr_mask: "ノードごとの Pod CIDR マスク: /%{mask}"
 install.steps.cluster.max_pods: "ノードごとの最大 Pod 数: %{max_pods}"
-install.steps.cluster.application_exposure: "アプリケーション出口モード: %{exposure}"
-install.steps.cluster.gateway_ports_shifted: システム nginx が 80 と 443 を使えるよう、クラスターゲートウェイの既定ポートは空いている高位ポートへ移動されます。
+install.steps.cluster.application_exposure: "外部公開方式: %{exposure}"
+install.steps.cluster.gateway_ports_shifted: system nginx が 80 / 443 を使えるよう、cluster gateway は空いている高位ポートへ移動します。
 install.steps.cluster.worker_server: "主ノード URL: %{server}"
 install.steps.cluster.worker_token_saved: クラスター参加トークンはインストーラー設定に保存されています。
 install.steps.helm.title: Helm CLI をインストールする
-install.steps.helm.detail: 後続の Ret2Shell デプロイ手順で使うパッケージマネージャーとして Helm を導入します。
+install.steps.helm.detail: 後続の Ret2Shell デプロイに使うために Helm をインストールします。
 install.steps.helm.reuse: "既存の helm バイナリ %{path} を再利用します。"
 install.steps.helm.install_path: "helm を %{path} にインストールします。"
-install.steps.gateway.title: アプリケーション出口を設定する
-install.steps.gateway.selected_mode: "選択されたアプリケーション出口: %{exposure}"
-install.steps.gateway.ingress_detail: 後続の Helm values で ingress ベースの公開を有効にできるよう、この要件を記録します。
-install.steps.gateway.nodeport_detail: システム nginx を導入または再利用し、このホストの 80 と 443 を受け持たせます。
-install.steps.gateway.port_reservation: Ret2Boot はまずクラスターゲートウェイを 80 と 443 から退避させ、その後システム nginx に引き渡します。
+install.steps.gateway.title: 外部公開を設定する
+install.steps.gateway.selected_mode: "選択した外部公開方式: %{exposure}"
+install.steps.gateway.ingress_detail: ingress 要件を記録し、後続のインストールで有効化できるようにします。
+install.steps.gateway.nodeport_detail: system nginx を導入または再利用し、このホストの 80 / 443 を受け持たせます。
+install.steps.gateway.port_reservation: system nginx が引き継ぐ前に、cluster gateway を 80 / 443 から退避させます。
 install.steps.gateway.nginx_reuse: "既存の nginx バイナリ %{path} を再利用します。"
 install.steps.gateway.nginx_service_reuse: このホストですでに存在する nginx サービスを再利用します。
 install.steps.gateway.nginx_install: 検出したシステムパッケージマネージャーで nginx をインストールします。
-install.steps.platform_plan.title: Ret2Shell プラットフォーム構成を準備する
-install.steps.platform_plan.namespaces: "作成する Namespace: %{platform}、%{challenge}"
-install.steps.platform_plan.service_account: "共有 ServiceAccount: %{namespace} の %{name}"
-install.steps.platform_plan.rbac: "共有 RBAC オブジェクト: ClusterRole %{role}、ClusterRoleBinding %{binding}"
-install.steps.platform_plan.disk_budget: "ディスク予算: %{allocated} GiB 割り当て済み / %{requested} GiB 予約済み（物理空き %{remaining} GiB）"
-install.steps.platform_plan.unallocated_disk: "未割り当てのディスク予算: %{remaining} GiB"
-install.steps.worker_probe.title: master 側 platform 状態を探査する
-install.steps.worker_probe.detail: この worker がクラスタへ参加した後、master 側の ret2shell-platform デプロイ状況を確認して処理を終了します。
-install.steps.platform.control_plane: Ret2Shell の中核サービスを展開する
-install.steps.platform.control_plane_detail: 主ノード上で動作すべき Ret2Shell 中核サービスを導入します。
-install.steps.platform.worker: ワーカーノード側の Ret2Shell サービスを設定する
-install.steps.platform.worker_detail: このノードがクラスターに参加するために必要なワーカー側サービスのみ導入します。
+install.steps.platform_plan.title: Ret2Shell プラットフォーム設定を準備する
+install.steps.platform_plan.namespaces: "準備する Namespace: %{platform}、%{challenge}"
+install.steps.platform_plan.service_account: "準備する ServiceAccount: %{namespace} の %{name}"
+install.steps.platform_plan.rbac: "準備する権限設定: %{role}、%{binding}"
+install.steps.platform_plan.disk_budget: "ディスク予算: %{allocated} GiB 割り当て済み / %{requested} GiB 予定（現在空き %{remaining} GiB）"
+install.steps.platform_plan.unallocated_disk: "未使用のディスク予算: %{remaining} GiB"
+install.steps.worker_probe.title: 主ノードのプラットフォーム状態を確認する
+install.steps.worker_probe.detail: この worker がクラスタへ参加した後、主ノード上のプラットフォーム配置状態を確認して処理を終了します。
 install.errors.empty_value: 値を空にできません
-shared.yes: はい
-shared.no: いいえ
-shared.none: なし

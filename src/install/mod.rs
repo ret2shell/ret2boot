@@ -100,18 +100,14 @@ impl<'a> InstallFlow<'a> {
     println!("{}", ui::section(t!("install.entry.title")));
     println!(
       "{}",
-      ui::note_value(t!("install.entry.language"), &self.runtime.locale)
+      ui::note_value(
+        t!("install.entry.language"),
+        l10n::locale_label(&self.runtime.locale)
+      )
     );
     println!(
       "{}",
       ui::note_value(t!("install.entry.config_path"), &self.config_path)
-    );
-    println!(
-      "{}",
-      ui::note_value(
-        t!("install.entry.privilege_backend"),
-        self.runtime.privilege_backend
-      )
     );
     println!(
       "{}",
@@ -233,13 +229,6 @@ impl<'a> InstallFlow<'a> {
         node_role_label(plan.node_role)
       )
     );
-    println!(
-      "{}",
-      ui::note_value(
-        t!("install.plan.phase"),
-        phase_label(self.config.install.execution.phase)
-      )
-    );
     println!("{}", ui::note(t!("install.plan.steps")));
 
     for (index, step) in plan.steps.iter().enumerate() {
@@ -336,7 +325,6 @@ impl<'a> InstallFlow<'a> {
         ui::note(t!("install.execution.resume_ready"))
       }
     );
-    println!("{}", ui::warning(t!("install.execution.noop_notice")));
 
     Ok(())
   }
@@ -413,7 +401,13 @@ impl<'a> InstallFlow<'a> {
             "{}",
             ui::warning(t!(
               "install.execution.step_failed",
-              step = step_title,
+              step = step_title.as_str()
+            ))
+          );
+          println!(
+            "{}",
+            ui::note(t!(
+              "install.execution.step_failed_detail",
               error = error_text.as_str()
             ))
           );
@@ -609,15 +603,6 @@ fn node_role_label(role: InstallTargetRole) -> String {
   match role {
     InstallTargetRole::ControlPlane => t!("install.node_role.options.control_plane").to_string(),
     InstallTargetRole::Worker => t!("install.node_role.options.worker").to_string(),
-  }
-}
-
-fn phase_label(phase: InstallExecutionPhase) -> String {
-  match phase {
-    InstallExecutionPhase::Questionnaire => t!("install.phase.questionnaire").to_string(),
-    InstallExecutionPhase::Review => t!("install.phase.review").to_string(),
-    InstallExecutionPhase::Installing => t!("install.phase.installing").to_string(),
-    InstallExecutionPhase::Completed => t!("install.phase.completed").to_string(),
   }
 }
 

@@ -83,10 +83,7 @@ pub fn initialize(config: &mut Ret2BootConfig) -> Result<Option<RuntimeState>> {
     if already_root {
       ui::success(t!("startup.privilege.already_root"))
     } else {
-      ui::success(t!(
-        "startup.privilege.acquired",
-        backend = privilege_backend
-      ))
+      ui::success(t!("startup.privilege.acquired"))
     }
   );
 
@@ -196,7 +193,6 @@ fn handle_update_check(report: UpdateCheckResult) {
   match report {
     UpdateCheckResult::UpToDate | UpdateCheckResult::NoPublishedRelease => {}
     UpdateCheckResult::Downloaded {
-      source,
       version,
       path,
       reused,
@@ -206,14 +202,12 @@ fn handle_update_check(report: UpdateCheckResult) {
       let message = if reused {
         ui::note(t!(
           "startup.update.cached",
-          source = source.as_str(),
           version = version.as_str(),
           path = path.display().to_string()
         ))
       } else {
         ui::success(t!(
           "startup.update.downloaded",
-          source = source.as_str(),
           version = version.as_str(),
           path = path.display().to_string()
         ))

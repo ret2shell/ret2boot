@@ -71,6 +71,10 @@ pub fn locale_options() -> Vec<LocaleOption> {
     .collect()
 }
 
+pub fn locale_label(locale: &str) -> String {
+  language_label(locale)
+}
+
 fn language_label(locale: &str) -> String {
   match locale {
     "zh-hans" => t!("startup.language.options.zh_hans").to_string(),

@@ -556,32 +556,8 @@ fn resolve_platform_service_plan(
 fn print_platform_bootstrap_notice() {
   println!();
   println!("{}", ui::section(t!("install.platform.resources_intro")));
-  println!(
-    "{}",
-    ui::note(t!(
-      "install.platform.namespaces",
-      platform = PLATFORM_NAMESPACE,
-      challenge = CHALLENGE_NAMESPACE
-    ))
-  );
-  println!(
-    "{}",
-    ui::note(t!(
-      "install.platform.service_account",
-      name = PLATFORM_SERVICE_ACCOUNT,
-      namespace = PLATFORM_NAMESPACE
-    ))
-  );
-  println!(
-    "{}",
-    ui::note(t!(
-      "install.platform.rbac",
-      role = PLATFORM_CLUSTER_ROLE,
-      binding = PLATFORM_CLUSTER_ROLE_BINDING
-    ))
-  );
-  println!("{}", ui::note(t!("install.platform.configmaps")));
-  println!("{}", ui::warning(t!("install.platform.storage_notice")));
+  println!("{}", ui::note(t!("install.platform.questionnaire_intro")));
+  println!("{}", ui::note(t!("install.platform.storage_notice")));
 }
 
 fn collect_platform_service(
@@ -593,14 +569,6 @@ fn collect_platform_service(
     ui::section(t!(
       "install.platform.service_heading",
       service = platform_service_label(definition.id)
-    ))
-  );
-  println!(
-    "{}",
-    ui::note(t!(
-      "install.platform.service_release",
-      release = definition.release_name,
-      namespace = definition.namespace
     ))
   );
   println!("{}", ui::note(platform_service_description(definition.id)));
@@ -1203,9 +1171,14 @@ fn run_worker_probe_command(
   match ctx.run_privileged_command(program, args, envs) {
     Ok(()) => Ok(()),
     Err(error) => {
+      let error_text = error.to_string();
+      println!("{}", ui::warning(t!("install.worker_probe.failed")));
       println!(
         "{}",
-        ui::warning(t!("install.worker_probe.failed", error = error.to_string()))
+        ui::note(t!(
+          "install.worker_probe.failed_detail",
+          error = error_text.as_str()
+        ))
       );
       Ok(())
     }

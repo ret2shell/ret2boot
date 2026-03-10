@@ -23,7 +23,6 @@ pub enum UpdateCheckResult {
   UpToDate,
   NoPublishedRelease,
   Downloaded {
-    source: String,
     version: String,
     path: PathBuf,
     reused: bool,
@@ -141,7 +140,6 @@ impl UpdateManager {
           match self.download_asset(&release, asset) {
             Ok(download) => {
               return Ok(UpdateCheckResult::Downloaded {
-                source: source.name().to_string(),
                 version: release.version_text,
                 path: download.path,
                 reused: download.reused,

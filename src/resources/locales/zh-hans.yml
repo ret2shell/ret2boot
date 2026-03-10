@@ -1,112 +1,104 @@
 _version: 1
 startup.language.prompt: 请选择界面语言
 startup.language.options.zh_hans: 简体中文
-startup.language.options.zh_hant: 繁体中文
-startup.language.options.en_us: 英语（美国）
-startup.language.options.ja_jp: 日语
-startup.safety.title: 继续之前请注意
-startup.safety.root_required: 此安装器需要 root 权限才能部署 Ret2Shell。
-startup.safety.clean_server: 最好在干净的服务器环境中执行安装，以降低风险。
-startup.safety.conflict_risk: 安装器可能会部署 Kubernetes 等关键组件，可能与现有服务冲突并带来风险。
-startup.safety.user_config: 你的偏好设置仍会保存到 %{path}。
-startup.safety.continue_prompt: 是否继续安装？
+startup.language.options.zh_hant: 繁體中文
+startup.language.options.en_us: English (US)
+startup.language.options.ja_jp: 日本語
+startup.safety.title: 安装前请先确认以下事项
+startup.safety.root_required: 安装回归终端需要 root 权限。
+startup.safety.clean_server: 建议在尽量干净的服务器上安装，避免和现有服务冲突。
+startup.safety.conflict_risk: 安装过程会改动 Kubernetes、网络和系统服务，请确认当前主机可用于部署。
+startup.safety.user_config: 配置会保存在 %{path}，中断后重新运行安装器即可继续。
+startup.safety.continue_prompt: 继续安装吗？
 startup.safety.cancelled: 已取消安装。
-startup.privilege.request: 正在为后续部署步骤申请 root 权限...
-startup.privilege.already_root: 当前已经具备 root 权限，可继续部署。
-startup.privilege.acquired: 已通过 %{backend} 获取后续部署所需的 root 权限。
-startup.update.downloaded: "已从 %{source} 下载最新安装包 %{version} 到 %{path}，当前会话仍继续使用现有程序。"
-startup.update.cached: "已复用 %{source} 的缓存更新包 %{version}：%{path}。"
-startup.update.no_asset: "%{source} 上存在新版本 %{version}，但当前机器没有可用的兼容安装包。"
-startup.update.download_failed: "%{source} 上存在新版本 %{version}，但自动下载失败，请稍后重试。"
+startup.privilege.request: 正在获取 root 权限...
+startup.privilege.already_root: 已具备 root 权限。
+startup.privilege.acquired: 已获取 root 权限。
+startup.update.downloaded: "已下载新版本 %{version} 到 %{path}，本次仍继续使用当前版本。"
+startup.update.cached: "已发现并复用已下载的新版本 %{version}：%{path}。"
+startup.update.no_asset: "%{source} 上有新版本 %{version}，但当前机器没有可用的安装包。"
+startup.update.download_failed: "%{source} 上有新版本 %{version}，但自动下载失败。"
 startup.update.release_page: "发布页面：%{release_url}"
-startup.update.unreachable: "只有在联网且能够访问 %{repository}（%{source}）时，安装器才能正常使用。"
-install.entry.title: 安装器运行环境已就绪
+startup.update.unreachable: "暂时无法连接 %{source}（%{repository}），这次不会自动检查更新。"
+install.entry.title: 安装环境已就绪
 install.entry.language: 界面语言
 install.entry.config_path: 配置文件
-install.entry.privilege_backend: 提权后端
-install.entry.resume_hint: 每一步的答案都会立即保存到 %{path}，中断后可继续恢复。
-install.entry.next_steps: 之前的 mock 询问已移除，接下来进入真实部署流程开发。
+install.entry.resume_hint: 你的选择会立即保存到 %{path}，中断后可以继续。
 install.preflight.title: 安装前检查
 install.preflight.checks.downloader: 下载工具
 install.preflight.checks.systemd: systemd
 install.preflight.checks.package_manager: 系统包管理器
-install.preflight.checks.public_network: 公网出口
-install.preflight.checks.github: github 连通性
+install.preflight.checks.public_network: 网络位置
+install.preflight.checks.github: GitHub 连通性
 install.preflight.checks.k3s_sources: k3s 安装源连通性
-install.preflight.checks.rke2_sources: rke2 安装源连通性
+install.preflight.checks.rke2_sources: RKE2 安装源连通性
 install.preflight.checks.disk: 磁盘容量
 install.preflight.checks.memory: 内存容量
 install.preflight.checks.ports: 端口可用性
 install.preflight.checks.sysctl: sysctl 状态
-install.preflight.checks.cgroup_memory: cgroup memory 控制器
+install.preflight.checks.cgroup_memory: 内存 cgroup 支持
 install.preflight.checks.overlay: overlay 文件系统支持
 install.preflight.checks.br_netfilter: br_netfilter 支持
 install.preflight.details.downloader_available: "可用：%{available}"
-install.preflight.details.downloader_missing: 缺少 curl 和 wget
+install.preflight.details.downloader_missing: 未找到 curl 或 wget
 install.preflight.details.systemd_ready: systemd 正在运行，且 systemctl 可用
 install.preflight.details.systemd_missing: 当前主机未启用 systemd，无法继续安装
-install.preflight.details.package_manager_ready: "受支持的系统包管理器：%{package_manager}"
-install.preflight.details.package_manager_missing: 当前主机没有检测到受支持的系统包管理器
-install.preflight.details.public_network_detected: "公网出口：%{public_network}"
-install.preflight.details.public_network_unknown: 无法确定当前公网出口 IP 与属地
-install.preflight.details.github_reachable: 当前可以访问 github
-install.preflight.details.github_unreachable: 当前无法访问 github，启动更新检查可能失败
+install.preflight.details.package_manager_ready: "可用的包管理器：%{package_manager}"
+install.preflight.details.package_manager_missing: 当前主机未检测到受支持的包管理器
+install.preflight.details.public_network_detected: "公网 IP 与地区：%{public_network}"
+install.preflight.details.public_network_unknown: 暂时无法判断公网 IP 和地区，安装源推荐可能不准确
+install.preflight.details.github_reachable: 可以访问 GitHub
+install.preflight.details.github_unreachable: 无法访问 GitHub，自动更新可能不可用
 install.preflight.details.sources_all_reachable: "可访问的端点：%{reachable}"
 install.preflight.details.sources_partial: "可访问：%{reachable}；不可访问：%{unreachable}"
 install.preflight.details.sources_missing: "所有检查过的端点都不可访问：%{unreachable}"
-install.preflight.details.sources_unknown: 没有检查到任何端点
-install.preflight.details.disk_ready: "/var/lib 可用空间为 %{free}"
-install.preflight.details.disk_warning: "/var/lib 可用空间仅有 %{free}，大规模 challenge 负载可能很快耗尽"
-install.preflight.details.disk_failed: "/var/lib 可用空间仅有 %{free}，低于最低要求"
+install.preflight.details.sources_unknown: 没有检查到可用端点
+install.preflight.details.disk_ready: "/var/lib 可用空间：%{free}"
+install.preflight.details.disk_warning: "/var/lib 仅剩 %{free}，题目规模较大时可能不够用"
+install.preflight.details.disk_failed: "/var/lib 仅剩 %{free}，低于最低要求"
 install.preflight.details.disk_unknown: "无法确定磁盘剩余空间：%{error}"
-install.preflight.details.memory_ready: "物理内存为 %{total}"
-install.preflight.details.memory_warning: "物理内存为 %{total}，对于高密度 challenge 负载可能偏紧"
+install.preflight.details.memory_ready: "物理内存：%{total}"
+install.preflight.details.memory_warning: "物理内存为 %{total}，高负载时可能不够用"
 install.preflight.details.memory_failed: "物理内存为 %{total}，低于最低要求"
 install.preflight.details.memory_unknown: "无法确定物理内存：%{error}"
-install.preflight.details.ports_ready: 节点与控制平面所需端口看起来都处于空闲状态
+install.preflight.details.ports_ready: 节点和控制平面所需端口都处于空闲状态
 install.preflight.details.ports_warning: "控制平面相关端口已被占用：%{ports}"
 install.preflight.details.ports_failed: "节点必需端口已被占用：%{ports}"
-install.preflight.details.sysctl_ready: 必需的 sysctl 值已经启用
+install.preflight.details.sysctl_ready: 必需的 sysctl 参数已启用
 install.preflight.details.sysctl_warning: "当前值：%{values}"
-install.preflight.details.cgroup_memory_ready: 当前主机提供 memory cgroup 控制器
-install.preflight.details.cgroup_memory_missing: 当前主机缺少 memory cgroup 控制器
-install.preflight.details.kernel_ready: 当前内核环境已提供该能力
-install.preflight.details.kernel_loadable: 当前尚未启用，但内核报告可以加载该能力
-install.preflight.details.kernel_missing: 当前内核环境缺少该能力
+install.preflight.details.cgroup_memory_ready: 已启用内存 cgroup 支持
+install.preflight.details.cgroup_memory_missing: 未启用内存 cgroup 支持，无法继续安装
+install.preflight.details.kernel_ready: 当前内核已提供该功能
+install.preflight.details.kernel_loadable: 当前尚未启用，但可以通过加载内核模块启用
+install.preflight.details.kernel_missing: 当前内核不支持该功能
 install.preflight.status.ok: 通过
 install.preflight.status.running: 检查中
 install.preflight.status.warning: 警告
 install.preflight.status.failed: 失败
-install.preflight.summary.passed: 安装前检查通过，当前主机可以进入问询阶段。
-install.preflight.summary.warning: 安装前检查已通过，但存在警告，请在继续前确认当前主机状态。
-install.preflight.summary.failed: 安装前检查发现阻断问题，请先修复后再继续。
-install.node_role.prompt: 当前安装目标属于主节点还是从节点？
+install.preflight.summary.passed: 安装前检查通过，可以继续。
+install.preflight.summary.warning: 安装前检查已通过，但有一些提示，请确认后再继续。
+install.preflight.summary.failed: 安装前检查未通过，请先修复问题。
+install.node_role.prompt: 这台机器是主节点还是工作节点？
 install.node_role.options.control_plane: 主节点（控制平面）
-install.node_role.options.worker: 从节点
-install.node_role.saved: 已将当前目标角色保存为：%{role}。
-install.platform.resources_intro: Ret2Shell 平台引导资源
-install.platform.namespaces: "将创建的命名空间：%{platform}、%{challenge}"
-install.platform.service_account: "共享 ServiceAccount：%{namespace} 中的 %{name}"
-install.platform.rbac: "共享 RBAC：ClusterRole %{role}，ClusterRoleBinding %{binding}"
-install.platform.configmaps: 后续会准备 ret2shell-config、ret2shell-blocked 等共享 ConfigMap。
-install.platform.storage_notice: 所有本地服务都必须使用 StorageClass，其中核心平台服务只能使用 local-path。
-install.platform.remaining_disk.prompt: 当前服务器还能为 Ret2Shell 提供多少可用磁盘空间？（GiB）
-install.platform.detected_remaining_disk: "已自动探测到剩余可用磁盘空间：%{remaining} GiB"
-install.platform.requested_disk.prompt: 你希望 Ret2Shell 总共划分多少磁盘空间？（GiB）
-install.platform.services_intro: 计划部署的 Ret2Shell 服务
+install.node_role.options.worker: 工作节点
+install.platform.resources_intro: 开始配置回归终端平台
+install.platform.questionnaire_intro: 接下来要确认各项平台服务的部署方式和磁盘分配。
+install.platform.storage_notice: 使用本机磁盘的服务都需要配置存储；核心平台服务固定使用 local-path。
+install.platform.detected_remaining_disk: "检测到可用磁盘空间：%{remaining} GiB"
+install.platform.requested_disk.prompt: 你希望为回归终端预留多少磁盘空间？（GiB）
+install.platform.services_intro: 配置各项回归终端服务
 install.platform.service_heading: "配置服务：%{service}"
-install.platform.service_release: "Helm Release：%{namespace} 命名空间中的 %{release}"
-install.platform.service_platform_fixed: 核心平台服务必须本地部署，并且固定使用由 local-path 支持的 ret2shell-storage-platform 存储类。
-install.platform.service_deployment.prompt: 这个服务希望如何部署？
-install.platform.service_storage.prompt: 这个本地服务希望使用哪一种存储后端？
+install.platform.service_platform_fixed: 核心平台服务固定为本地部署，存储方式也会自动使用默认值。
+install.platform.service_deployment.prompt: 这个服务如何部署？
+install.platform.service_storage.prompt: 这个本地服务使用哪种存储？
 install.platform.service_storage_class.prompt: 请输入这个服务要使用的 StorageClass 名称
-install.platform.external_intro: 这个服务已标记为外部提供，请补充后续部署步骤需要复用的连接参数。
-install.platform.disk_budget_too_small: 当前选择的 local-path 本地服务数量，已经超过了你预留的总磁盘预算下限。
-install.platform.disk_plan_intro: 请检查并调整使用 local-path 的本地服务磁盘划分
-install.platform.service_disk.prompt: "%{service} 的磁盘划分（GiB）"
-install.platform.disk_plan_overflow: "当前本地磁盘划分合计 %{assigned} GiB，已经超过预留的 %{budget} GiB，请调整后重试。"
-install.platform.disk_plan_unused: "本地磁盘划分完成后，仍有 %{unused} GiB 预算未使用。"
-install.platform.input.invalid_integer: 请输入一个以 GiB 为单位的整数。
+install.platform.external_intro: 该服务由外部提供，请填写连接信息。
+install.platform.disk_budget_too_small: 当前预留的总磁盘空间不足以覆盖所有使用本机磁盘的服务。
+install.platform.disk_plan_intro: 请检查并调整使用本机磁盘的服务磁盘分配
+install.platform.service_disk.prompt: "%{service} 的磁盘分配（GiB）"
+install.platform.disk_plan_overflow: "当前本地磁盘分配合计 %{assigned} GiB，已超过预留的 %{budget} GiB，请调整后重试。"
+install.platform.disk_plan_unused: "本地磁盘分配完成后，还有 %{unused} GiB 未使用。"
+install.platform.input.invalid_integer: 请输入 GiB 整数。
 install.platform.input.too_small: "这个值至少要为 %{minimum} GiB。"
 install.platform.input.too_large: "这个值最多只能为 %{maximum} GiB。"
 install.platform.deployment.local: 本地部署
@@ -120,12 +112,12 @@ install.platform.services.cache: 缓存
 install.platform.services.queue: 队列
 install.platform.services.registry: 镜像仓库
 install.platform.services.logs: 日志
-install.platform.service_desc.platform: Ret2Shell 的主 API、调度器与 challenge 编排服务。
+install.platform.service_desc.platform: 回归终端的 API、调度和题目编排服务。
 install.platform.service_desc.database: 用于平台核心数据存储的 PostgreSQL。
-install.platform.service_desc.cache: 用于热点状态缓存的 Valkey。
-install.platform.service_desc.queue: 用于内部事件投递的 NATS 与 JetStream。
-install.platform.service_desc.registry: 用于 challenge 镜像分发的 OCI Registry，也可以替换为外部镜像仓库。
-install.platform.service_desc.logs: 可选的 VictoriaLogs 日志与观测组件。
+install.platform.service_desc.cache: 用于缓存热点状态的 Valkey。
+install.platform.service_desc.queue: 平台内部消息队列服务（NATS / JetStream），也可以改为外部提供。
+install.platform.service_desc.registry: 用于存放和分发题目镜像的镜像仓库，也可以改为外部镜像仓库。
+install.platform.service_desc.logs: 可选的日志与监控服务（VictoriaLogs）。
 install.platform.external.database.host: 外部数据库主机
 install.platform.external.database.port: 外部数据库端口
 install.platform.external.database.name: 外部数据库名称
@@ -138,110 +130,99 @@ install.platform.external.queue.port: 外部队列端口
 install.platform.external.queue.token: 外部队列 token
 install.platform.external.registry.external: 提供给集群拉取的外部镜像仓库地址
 install.platform.external.registry.server: 提供给平台推送的内部镜像仓库地址
-install.platform.external.registry.insecure: 镜像仓库是否不校验证书（true/false）
+install.platform.external.registry.insecure: 镜像仓库是否允许使用 HTTP 或跳过 TLS 校验（true/false）
 install.platform.external.registry.username: 镜像仓库用户名
 install.platform.external.registry.password: 镜像仓库密码
 install.platform.external.logs.endpoint: 外部日志服务地址
-install.worker_probe.title: 探测主节点平台状态
-install.worker_probe.intro: 这个从节点只负责加入集群。接下来 Ret2Boot 会探测主节点侧的 ret2shell-platform 运行情况，然后退出。
-install.worker_probe.done: 主节点平台状态探测已完成。
-install.worker_probe.failed: "无法完成主节点平台状态探测：%{error}"
-install.worker_probe.cli_missing: 当前从节点缺少所需的集群 CLI，无法自动继续执行平台探测。
-install.exposure.prompt: 当前集群希望使用哪一种应用出口模式？
+install.worker_probe.title: 检查主节点平台状态
+install.worker_probe.intro: 这个工作节点只负责加入集群。接下来会检查主节点上的平台部署状态，然后结束当前流程。
+install.worker_probe.done: 主节点平台状态检查完成。
+install.worker_probe.failed: 主节点平台状态检查失败。
+install.worker_probe.failed_detail: "错误详情：%{error}"
+install.worker_probe.cli_missing: 当前工作节点缺少所需的集群 CLI，无法继续自动检查平台状态。
+install.exposure.prompt: 集群准备使用哪种对外访问方式？
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx
-install.exposure.ingress_notice: 已记录 ingress 需求，后续 Helm chart 的 values 会按该模式修正。
-install.exposure.nodeport_notice: 已记录 NodePort + 外置 nginx 模式。Ret2Boot 会把 80 和 443 留给系统 nginx 使用。
-install.exposure.package_manager_notice: "如果当前主机还没有 nginx，Ret2Boot 会通过 %{package_manager} 自动安装。"
-install.exposure.nginx_reuse_notice: "检测到当前主机已存在 nginx 二进制：%{path}，如果可用会直接复用。"
-install.exposure.nginx_service_reuse_notice: 检测到当前主机已经存在 nginx 服务，这一步会尽量直接复用它。
-install.kubernetes.worker_hint: 从节点必须使用和主节点完全一致的 Kubernetes 发行版。
+install.exposure.ingress_notice: 已记录 ingress 模式，安装时会按此暴露服务。
+install.exposure.nodeport_notice: 已记录 NodePort + 外置 nginx 模式。安装时会把 Kubernetes 网关端口调整到 10080 和 10443，把 80 和 443 留给系统 nginx。
+install.exposure.package_manager_notice: "如果主机还没有 nginx，会通过 %{package_manager} 自动安装。"
+install.exposure.nginx_reuse_notice: "检测到现有 nginx 二进制：%{path}，会尽量直接复用。"
+install.exposure.nginx_service_reuse_notice: 检测到现有 nginx 服务，这一步会尽量直接复用。
+install.kubernetes.worker_hint: 工作节点必须与主节点使用同一种 Kubernetes 发行版。
 install.kubernetes.distribution.prompt: 你想使用哪一种 Kubernetes 发行版？
 install.kubernetes.distribution.options.k3s: k3s
 install.kubernetes.distribution.options.rke2: rke2
-install.kubernetes.source.prompt: 你想为当前发行版使用哪一个安装源？
+install.kubernetes.source.prompt: 你想使用哪个安装源？
 install.kubernetes.source.k3s.official: k3s.io 官方安装源
 install.kubernetes.source.k3s.china_mirror: 面向中国大陆的 rancher.cn 安装源
 install.kubernetes.source.rke2.official: get.rke2.io 官方安装源
 install.kubernetes.source.rke2.china_mirror: 面向中国大陆的 rancher.cn 安装源
 install.kubernetes.source.filtered: 当前主机无法访问的安装源已被隐藏。
-install.kubernetes.source.recommended: "检测到当前公网出口为 %{public_network}，推荐使用：%{source}"
-install.kubernetes.source.auto_selected: "当前只有 %{source} 可访问，因此已自动选中。"
+install.kubernetes.source.recommended: "检测到当前网络位置为 %{public_network}，建议使用：%{source}"
+install.kubernetes.source.auto_selected: "目前只有 %{source} 可访问，已自动选中。"
 install.kubernetes.source.none_available: 当前主机无法访问任何 Kubernetes 安装源。
-install.kubernetes.worker.server_url.prompt: 请输入从节点连接主节点时使用的 URL
-install.kubernetes.worker.server_url_hint.k3s: 对于 k3s 从节点，这通常是指向 6443 端口的 https 地址。
-install.kubernetes.worker.server_url_hint.rke2: 对于 rke2 从节点，这通常是指向 9345 端口的 https 地址。
-install.kubernetes.worker.token.prompt: 请输入集群加入 token
-install.helm.notice: Helm 没有额外的问询选项，后续会作为部署依赖自动安装。
-install.helm.reuse_notice: "检测到当前主机已存在 helm 二进制：%{path}，这一步会直接复用它而不是覆盖。"
+install.kubernetes.worker.server_url.prompt: 请输入工作节点连接主节点时使用的 URL
+install.kubernetes.worker.server_url_hint.k3s: 对于 k3s 工作节点，这通常是指向 6443 端口的 https 地址。
+install.kubernetes.worker.server_url_hint.rke2: 对于 rke2 工作节点，这通常是指向 9345 端口的 https 地址。
+install.kubernetes.worker.token.prompt: 请输入集群加入令牌
+install.helm.notice: Helm 没有额外配置，安装阶段会自动安装。
+install.helm.reuse_notice: "检测到现有 helm 二进制：%{path}，会直接复用。"
 install.plan.title: 安装计划
 install.plan.node_role: 目标角色
-install.plan.phase: 当前记录阶段
-install.plan.steps: 计划中的原子步骤
-install.review.confirm_prompt: 请复核以上安装计划，并确认是否开始安装。
-install.review.already_confirmed: 安装计划此前已确认，将基于已记录的计划继续。
-install.review.cancelled: 当前安装保持在复核阶段，待你确认后再继续。
-install.execution.title: 已进入安装阶段
-install.execution.progress_saved: 安装步骤日志已保存，后续中断后可继续恢复。
-install.execution.resume_ready: 将从之前记录的安装步骤日志继续。
-install.execution.noop_notice: 当前已经接入 Kubernetes 引导、Helm、应用出口与平台规划步骤，后续部署步骤会继续扩展。
-install.execution.step_running: "正在执行步骤：%{step}"
-install.execution.step_done: "步骤已完成：%{step}"
-install.execution.step_failed: "步骤执行失败：%{step}（%{error}）"
+install.plan.steps: 计划执行的步骤
+install.review.confirm_prompt: 请确认以上安装计划，然后开始安装。
+install.review.already_confirmed: 已确认过安装计划，将按已记录的内容继续。
+install.review.cancelled: 安装计划尚未确认，当前停留在复核阶段。
+install.execution.title: 开始安装
+install.execution.progress_saved: 已保存安装记录，中断后可以继续。
+install.execution.resume_ready: 检测到已有安装记录，将从上次进度继续。
+install.execution.step_running: "正在执行：%{step}"
+install.execution.step_done: "已完成：%{step}"
+install.execution.step_failed: "执行失败：%{step}"
+install.execution.step_failed_detail: "错误详情：%{error}"
 install.execution.step_skipped: "跳过已完成步骤：%{step}"
-install.execution.rollback_started: 将按相反顺序回退已经完成的安装步骤。
-install.execution.rollback_step: "正在回退步骤：%{step}"
+install.execution.rollback_started: 安装失败，开始按相反顺序回退已完成的步骤。
+install.execution.rollback_step: "正在回退：%{step}"
 install.execution.rollback_done: 回退完成。
-install.execution.completed: 安装步骤已全部成功完成。
-install.progress.title: 已记录的安装进度
+install.execution.completed: 安装已完成。
+install.progress.title: 安装进度
 install.progress.status.pending: 待执行
 install.progress.status.in_progress: 执行中
 install.progress.status.completed: 已完成
 install.progress.status.failed: 已失败
-install.phase.questionnaire: 问询阶段
-install.phase.review: 复核阶段
-install.phase.installing: 安装阶段
-install.phase.completed: 已完成
-install.steps.preflight: 校验目标主机与部署前置条件
-install.steps.preflight_detail: 在真正修改系统之前，检查操作系统、权限、网络和所需运行条件是否满足。
+install.steps.preflight: 检查目标主机和安装前置条件
+install.steps.preflight_detail: 在真正修改系统前，检查操作系统、权限、网络和运行条件。
 install.steps.cluster.control_plane: 引导 Kubernetes 控制平面
 install.steps.cluster.control_plane_detail: 初始化主集群服务，并建立控制平面的基础能力。
 install.steps.cluster.worker: 将当前节点加入 Kubernetes 集群
-install.steps.cluster.worker_detail: 使用已记录的加入参数，把当前节点注册进现有集群。
+install.steps.cluster.worker_detail: 使用已保存的加入参数，将当前节点接入现有集群。
 install.steps.cluster.selected_distribution: "Kubernetes 发行版：%{distribution}"
 install.steps.cluster.selected_source: "安装源：%{source}"
 install.steps.cluster.pod_cidr: "集群 Pod CIDR：%{cidr}"
 install.steps.cluster.node_cidr_mask: "单节点 Pod CIDR 掩码：/%{mask}"
 install.steps.cluster.max_pods: "单节点最大 Pod 数：%{max_pods}"
-install.steps.cluster.application_exposure: "应用出口模式：%{exposure}"
-install.steps.cluster.gateway_ports_shifted: 集群网关默认占用的 80 和 443 会迁移到空闲高位端口，以便系统 nginx 接管它们。
+install.steps.cluster.application_exposure: "对外访问方式：%{exposure}"
+install.steps.cluster.gateway_ports_shifted: 集群网关默认使用的 80 和 443 会迁移到高位空闲端口，交给系统 nginx 使用。
 install.steps.cluster.worker_server: "主节点 URL：%{server}"
-install.steps.cluster.worker_token_saved: 集群加入 token 已保存到安装器配置中。
+install.steps.cluster.worker_token_saved: 集群加入令牌已保存到安装器配置中。
 install.steps.helm.title: 安装 Helm CLI
-install.steps.helm.detail: 安装 Helm，供后续 Ret2Shell 部署步骤作为包管理工具使用。
+install.steps.helm.detail: 安装 Helm，供后续回归终端部署使用。
 install.steps.helm.reuse: "复用当前主机上已存在的 helm 二进制：%{path}。"
 install.steps.helm.install_path: "将 helm 安装到 %{path}。"
-install.steps.gateway.title: 配置应用出口网关
-install.steps.gateway.selected_mode: "已选择的应用出口：%{exposure}"
-install.steps.gateway.ingress_detail: 记录 ingress 需求，供后续 Helm values 打开 ingress 模式时使用。
-install.steps.gateway.nodeport_detail: 安装或复用系统 nginx，并让它接管当前主机的 80 和 443 端口。
-install.steps.gateway.port_reservation: Ret2Boot 会先把集群网关从 80 和 443 迁移走，再交给系统 nginx 使用。
+install.steps.gateway.title: 配置对外访问
+install.steps.gateway.selected_mode: "已选择的对外访问方式：%{exposure}"
+install.steps.gateway.ingress_detail: 记录 ingress 需求，后续安装时会按此开启。
+install.steps.gateway.nodeport_detail: 安装或复用系统 nginx，让它接管当前主机的 80 和 443 端口。
+install.steps.gateway.port_reservation: 安装前会先把集群网关从 80 和 443 挪开，再交给系统 nginx。
 install.steps.gateway.nginx_reuse: "复用当前主机上已存在的 nginx 二进制：%{path}。"
 install.steps.gateway.nginx_service_reuse: 复用当前主机上已经存在的 nginx 服务。
 install.steps.gateway.nginx_install: 通过当前检测到的系统包管理器安装 nginx。
-install.steps.platform_plan.title: 准备 Ret2Shell 平台部署规划
-install.steps.platform_plan.namespaces: "将创建的命名空间：%{platform}、%{challenge}"
-install.steps.platform_plan.service_account: "共享 ServiceAccount：%{namespace} 中的 %{name}"
-install.steps.platform_plan.rbac: "共享 RBAC 对象：ClusterRole %{role}，ClusterRoleBinding %{binding}"
-install.steps.platform_plan.disk_budget: "磁盘预算：已划分 %{allocated} GiB / 计划 %{requested} GiB（当前物理可用 %{remaining} GiB）"
-install.steps.platform_plan.unallocated_disk: "尚未使用的磁盘预算：%{remaining} GiB"
-install.steps.worker_probe.title: 探测主节点平台状态
-install.steps.worker_probe.detail: 当前从节点加入集群后，将探测主节点侧的 ret2shell-platform 部署状态，然后结束当前流程。
-install.steps.platform.control_plane: 部署 Ret2Shell 核心平台服务
-install.steps.platform.control_plane_detail: 安装必须运行在主节点上的 Ret2Shell 核心服务。
-install.steps.platform.worker: 配置从节点侧的 Ret2Shell 服务
-install.steps.platform.worker_detail: 仅安装当前从节点为集群提供能力所需的服务组件。
+install.steps.platform_plan.title: 准备回归终端平台配置
+install.steps.platform_plan.namespaces: "将准备平台使用的命名空间：%{platform}、%{challenge}"
+install.steps.platform_plan.service_account: "将准备平台运行所需的服务账号：%{namespace} 中的 %{name}"
+install.steps.platform_plan.rbac: "将准备平台运行所需的权限配置：%{role}、%{binding}"
+install.steps.platform_plan.disk_budget: "磁盘预算：已分配 %{allocated} GiB / 计划 %{requested} GiB（当前可用 %{remaining} GiB）"
+install.steps.platform_plan.unallocated_disk: "未使用的磁盘预算：%{remaining} GiB"
+install.steps.worker_probe.title: 检查主节点平台状态
+install.steps.worker_probe.detail: 当前工作节点加入集群后，会检查主节点上的平台部署状态，然后结束当前流程。
 install.errors.empty_value: 不能为空
-shared.yes: 是
-shared.no: 否
-shared.none: 无
