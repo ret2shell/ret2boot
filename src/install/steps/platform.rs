@@ -13,10 +13,11 @@ use crate::{
     PlatformStorageMode,
   },
   install::collectors::{Collector, InputCollector, SingleSelectCollector},
-  ui,
+  resources, ui,
 };
 
 const PLATFORM_PLAN_DEST: &str = "/etc/ret2shell/ret2boot-platform-plan.yaml";
+const PLATFORM_BOOTSTRAP_DEST: &str = "/etc/ret2shell/ret2boot-platform-bootstrap.yaml";
 const PLATFORM_NAMESPACE: &str = "ret2shell-platform";
 const CHALLENGE_NAMESPACE: &str = "ret2shell-challenge";
 const PLATFORM_SERVICE_ACCOUNT: &str = "ret2shell-service";
@@ -90,6 +91,13 @@ const PLATFORM_SERVICE_DEFINITIONS: [PlatformServiceDefinition; 6] = [
     legacy_storage_class: "ret2shell-storage-logs",
   },
 ];
+
+struct ExternalFieldDefinition {
+  key: &'static str,
+  label_key: &'static str,
+  default: Option<&'static str>,
+  secret: bool,
+}
 
 pub struct PlatformDeploymentStep;
 
@@ -211,6 +219,11 @@ impl AtomicInstallStep for PlatformDeploymentStep {
     let summary = platform_plan_summary(&ctx.as_plan_context())?;
     install_directory(ctx, "/etc/ret2shell")?;
 
+    let bootstrap = render_platform_bootstrap_manifest()?;
+    let bootstrap_staged = stage_text_file("ret2boot-platform-bootstrap", "yaml", bootstrap)?;
+    install_staged_file(ctx, &bootstrap_staged, PLATFORM_BOOTSTRAP_DEST)?;
+    let _ = std::fs::remove_file(&bootstrap_staged);
+
     let staged = stage_text_file(
       "ret2boot-platform-plan",
       "yaml",
@@ -224,6 +237,13 @@ impl AtomicInstallStep for PlatformDeploymentStep {
       PLATFORM_PLAN_DEST,
       |config| config.set_install_step_metadata(self.id(), "plan_path", PLATFORM_PLAN_DEST),
     )?;
+    ctx.persist_change(
+      "install.execution.platform.bootstrap",
+      PLATFORM_BOOTSTRAP_DEST,
+      |config| {
+        config.set_install_step_metadata(self.id(), "bootstrap_path", PLATFORM_BOOTSTRAP_DEST)
+      },
+    )?;
 
     Ok(())
   }
@@ -231,11 +251,16 @@ impl AtomicInstallStep for PlatformDeploymentStep {
   fn uninstall(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
     ctx.run_privileged_command(
       "rm",
-      &["-f".to_string(), PLATFORM_PLAN_DEST.to_string()],
+      &[
+        "-f".to_string(),
+        PLATFORM_PLAN_DEST.to_string(),
+        PLATFORM_BOOTSTRAP_DEST.to_string(),
+      ],
       &[],
     )?;
     ctx.persist_change("install.execution.platform.plan", "removed", |config| {
-      config.remove_install_step_metadata(self.id(), "plan_path")
+      let changed = config.remove_install_step_metadata(self.id(), "plan_path");
+      config.remove_install_step_metadata(self.id(), "bootstrap_path") || changed
     })?;
     Ok(())
   }
@@ -257,6 +282,7 @@ struct ResolvedPlatformServicePlan {
   storage_mode: Option<PlatformStorageMode>,
   storage_class_name: Option<String>,
   local_disk_gib: Option<u32>,
+  external_summary: Vec<(String, String)>,
 }
 
 fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummary> {
@@ -333,6 +359,7 @@ fn resolve_platform_service_plan(
   };
 
   let storage_class_name = match storage_mode {
+    Some(PlatformStorageMode::LocalPath) => Some(definition.legacy_storage_class.to_string()),
     Some(PlatformStorageMode::CustomStorageClass) => {
       Some(stored.storage_class_name.clone().ok_or_else(|| {
         anyhow!(
@@ -342,6 +369,22 @@ fn resolve_platform_service_plan(
       })?)
     }
     _ => None,
+  };
+
+  let external_summary = if deployment == PlatformServiceDeploymentMode::External {
+    external_field_definitions(definition.id)
+      .iter()
+      .filter(|field| !field.secret)
+      .filter_map(|field| {
+        stored
+          .external
+          .get(field.key)
+          .filter(|value| !value.trim().is_empty())
+          .map(|value| (t!(field.label_key).to_string(), value.clone()))
+      })
+      .collect()
+  } else {
+    Vec::new()
   };
 
   let local_disk_gib = if uses_local_disk(definition.id, deployment, storage_mode) {
@@ -363,6 +406,7 @@ fn resolve_platform_service_plan(
     storage_mode,
     storage_class_name,
     local_disk_gib,
+    external_summary,
   })
 }
 
@@ -433,10 +477,18 @@ fn collect_platform_service(
         config.set_platform_service_storage_mode(definition.id, PlatformStorageMode::LocalPath)
       },
     )?;
-    let _ = ctx.persist_change(
+    ctx.persist_change(
       "install.questionnaire.platform.service.storage_class_name",
+      definition.legacy_storage_class,
+      |config| {
+        config
+          .set_platform_service_storage_class_name(definition.id, definition.legacy_storage_class)
+      },
+    )?;
+    let _ = ctx.persist_change(
+      "install.questionnaire.platform.service.external",
       "cleared",
-      |config| config.clear_platform_service_storage_class_name(definition.id),
+      |config| config.clear_platform_service_external_values(definition.id),
     )?;
 
     println!(
@@ -490,8 +542,15 @@ fn collect_platform_service(
       "cleared",
       |config| config.clear_platform_service_local_disk_gib(definition.id),
     )?;
+    collect_external_platform_service(ctx, definition)?;
     return Ok(());
   }
+
+  let _ = ctx.persist_change(
+    "install.questionnaire.platform.service.external",
+    "cleared",
+    |config| config.clear_platform_service_external_values(definition.id),
+  )?;
 
   let storage_modes = [
     PlatformStorageMode::LocalPath,
@@ -542,10 +601,53 @@ fn collect_platform_service(
       |config| config.set_platform_service_storage_class_name(definition.id, storage_class.clone()),
     )?;
   } else {
-    let _ = ctx.persist_change(
+    ctx.persist_change(
       "install.questionnaire.platform.service.storage_class_name",
-      "cleared",
-      |config| config.clear_platform_service_storage_class_name(definition.id),
+      definition.legacy_storage_class,
+      |config| {
+        config
+          .set_platform_service_storage_class_name(definition.id, definition.legacy_storage_class)
+      },
+    )?;
+  }
+
+  Ok(())
+}
+
+fn collect_external_platform_service(
+  ctx: &mut StepQuestionContext<'_>, definition: &PlatformServiceDefinition,
+) -> Result<()> {
+  let fields = external_field_definitions(definition.id);
+
+  if fields.is_empty() {
+    return Ok(());
+  }
+
+  println!("{}", ui::note(t!("install.platform.external_intro")));
+
+  for field in fields {
+    let prompt = InputCollector::new(t!(field.label_key));
+    let prompt = match ctx
+      .config()
+      .platform_service_external_value(definition.id, field.key)
+      .map(str::to_string)
+      .or_else(|| field.default.map(str::to_string))
+    {
+      Some(default) => prompt.with_default(default),
+      None => prompt,
+    };
+
+    let value = prompt.collect()?.trim().to_string();
+    let persisted_value = if field.secret {
+      "[redacted]"
+    } else {
+      value.as_str()
+    };
+
+    ctx.persist_change(
+      "install.questionnaire.platform.service.external",
+      persisted_value,
+      |config| config.set_platform_service_external_value(definition.id, field.key, value.clone()),
     )?;
   }
 
@@ -729,6 +831,114 @@ fn deployment_modes_for_service(
   modes
 }
 
+fn external_field_definitions(service: PlatformServiceId) -> &'static [ExternalFieldDefinition] {
+  match service {
+    PlatformServiceId::Platform => &[],
+    PlatformServiceId::Database => &[
+      ExternalFieldDefinition {
+        key: "host",
+        label_key: "install.platform.external.database.host",
+        default: Some("database"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "port",
+        label_key: "install.platform.external.database.port",
+        default: Some("5432"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "database",
+        label_key: "install.platform.external.database.name",
+        default: Some("ret2shell"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "username",
+        label_key: "install.platform.external.database.username",
+        default: Some("ret2shell"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "password",
+        label_key: "install.platform.external.database.password",
+        default: None,
+        secret: true,
+      },
+      ExternalFieldDefinition {
+        key: "ssl_mode",
+        label_key: "install.platform.external.database.ssl_mode",
+        default: Some("disable"),
+        secret: false,
+      },
+    ],
+    PlatformServiceId::Cache => &[ExternalFieldDefinition {
+      key: "url",
+      label_key: "install.platform.external.cache.url",
+      default: Some("redis://cache:6379"),
+      secret: false,
+    }],
+    PlatformServiceId::Queue => &[
+      ExternalFieldDefinition {
+        key: "host",
+        label_key: "install.platform.external.queue.host",
+        default: Some("message_queue"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "port",
+        label_key: "install.platform.external.queue.port",
+        default: Some("4222"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "token",
+        label_key: "install.platform.external.queue.token",
+        default: None,
+        secret: true,
+      },
+    ],
+    PlatformServiceId::Registry => &[
+      ExternalFieldDefinition {
+        key: "external",
+        label_key: "install.platform.external.registry.external",
+        default: Some("registry.example.com:5000"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "server",
+        label_key: "install.platform.external.registry.server",
+        default: Some("registry.internal:5000"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "insecure",
+        label_key: "install.platform.external.registry.insecure",
+        default: Some("false"),
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "username",
+        label_key: "install.platform.external.registry.username",
+        default: None,
+        secret: false,
+      },
+      ExternalFieldDefinition {
+        key: "password",
+        label_key: "install.platform.external.registry.password",
+        default: None,
+        secret: true,
+      },
+    ],
+    PlatformServiceId::Logs => &[ExternalFieldDefinition {
+      key: "endpoint",
+      label_key: "install.platform.external.logs.endpoint",
+      default: Some("http://logs.example.com:9428"),
+      secret: false,
+    }],
+  }
+}
+
 fn local_disk_services(config: &crate::config::Ret2BootConfig) -> Vec<PlatformServiceDefinition> {
   PLATFORM_SERVICE_DEFINITIONS
     .iter()
@@ -909,22 +1119,37 @@ fn render_platform_plan_yaml(summary: &PlatformPlanSummary) -> String {
   lines.join("\n")
 }
 
+fn render_platform_bootstrap_manifest() -> Result<String> {
+  resources::load_utf8("templates/k8s/platform-bootstrap.yaml.tmpl").map(|template| {
+    template
+      .replace("{{CHALLENGE_NAMESPACE}}", CHALLENGE_NAMESPACE)
+      .replace("{{PLATFORM_NAMESPACE}}", PLATFORM_NAMESPACE)
+      .replace("{{CLUSTER_ROLE_NAME}}", PLATFORM_CLUSTER_ROLE)
+      .replace("{{SERVICE_ACCOUNT_NAME}}", PLATFORM_SERVICE_ACCOUNT)
+      .replace(
+        "{{CLUSTER_ROLE_BINDING_NAME}}",
+        PLATFORM_CLUSTER_ROLE_BINDING,
+      )
+  })
+}
+
 fn platform_service_summary_line(service: &ResolvedPlatformServicePlan) -> String {
   let mut parts = vec![platform_service_deployment_label(service.deployment)];
 
   if let Some(storage_mode) = service.storage_mode {
-    parts.push(match storage_mode {
-      PlatformStorageMode::LocalPath => platform_storage_mode_label(storage_mode),
-      PlatformStorageMode::CustomStorageClass => format!(
-        "{} ({})",
-        platform_storage_mode_label(storage_mode),
-        service.storage_class_name.as_deref().unwrap_or("-")
-      ),
-    });
+    parts.push(format!(
+      "{} ({})",
+      platform_storage_mode_label(storage_mode),
+      service.storage_class_name.as_deref().unwrap_or("-")
+    ));
   }
 
   if let Some(local_disk_gib) = service.local_disk_gib {
     parts.push(format!("{local_disk_gib} GiB"));
+  }
+
+  for (label, value) in &service.external_summary {
+    parts.push(format!("{label}={value}"));
   }
 
   parts.join(" / ")

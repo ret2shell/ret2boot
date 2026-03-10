@@ -66,6 +66,7 @@ pub struct PlatformServiceConfig {
   pub storage_mode: Option<PlatformStorageMode>,
   pub storage_class_name: Option<String>,
   pub local_disk_gib: Option<u32>,
+  pub external: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -593,6 +594,43 @@ impl Ret2BootConfig {
     }
 
     had_value
+  }
+
+  pub fn platform_service_external_value(
+    &self, service: PlatformServiceId, key: &str,
+  ) -> Option<&str> {
+    self
+      .platform_service_config(service)
+      .and_then(|config| config.external.get(key))
+      .map(String::as_str)
+  }
+
+  pub fn set_platform_service_external_value(
+    &mut self, service: PlatformServiceId, key: impl Into<String>, value: impl Into<String>,
+  ) -> bool {
+    let key = key.into();
+    let value = value.into();
+    let service_config = self.ensure_platform_service_config(service);
+
+    if service_config.external.get(&key) == Some(&value) {
+      return false;
+    }
+
+    service_config.external.insert(key, value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn clear_platform_service_external_values(&mut self, service: PlatformServiceId) -> bool {
+    let service_config = self.ensure_platform_service_config(service);
+    let had_values = !service_config.external.is_empty();
+    service_config.external.clear();
+
+    if had_values {
+      self.invalidate_install_pipeline();
+    }
+
+    had_values
   }
 
   pub fn set_install_review_confirmed(&mut self, confirmed: bool) -> bool {

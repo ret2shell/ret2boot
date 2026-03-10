@@ -89,7 +89,7 @@ install.platform.namespaces: "將建立的命名空間：%{platform}、%{challen
 install.platform.service_account: "共用 ServiceAccount：%{namespace} 中的 %{name}"
 install.platform.rbac: "共用 RBAC：ClusterRole %{role}，ClusterRoleBinding %{binding}"
 install.platform.configmaps: 後續會準備 ret2shell-config、ret2shell-blocked 等共用 ConfigMap。
-install.platform.storage_notice: 平台服務的儲存必須使用 local-path，其他本地服務可以改用其他儲存後端。
+install.platform.storage_notice: 所有本地服務都必須使用 StorageClass，其中核心平台服務只能使用 local-path。
 install.platform.remaining_disk.prompt: 目前伺服器還能為 Ret2Shell 提供多少可用磁碟空間？（GiB）
 install.platform.detected_remaining_disk: "已自動偵測到剩餘可用磁碟空間：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望 Ret2Shell 總共劃分多少磁碟空間？（GiB）
@@ -100,6 +100,7 @@ install.platform.service_platform_fixed: 核心平台服務必須本地部署，
 install.platform.service_deployment.prompt: 這個服務希望如何部署？
 install.platform.service_storage.prompt: 這個本地服務希望使用哪一種儲存後端？
 install.platform.service_storage_class.prompt: 請輸入這個服務要使用的 StorageClass 名稱
+install.platform.external_intro: 這個服務已標記為外部提供，請補充後續部署步驟需要重用的連線參數。
 install.platform.disk_budget_too_small: 目前選擇的 local-path 本地服務數量，已經超過你預留的總磁碟預算下限。
 install.platform.disk_plan_intro: 請檢查並調整使用 local-path 的本地服務磁碟劃分
 install.platform.service_disk.prompt: "%{service} 的磁碟劃分（GiB）"
@@ -125,6 +126,22 @@ install.platform.service_desc.cache: 用於熱狀態快取的 Valkey。
 install.platform.service_desc.queue: 用於內部事件投遞的 NATS 與 JetStream。
 install.platform.service_desc.registry: 用於 challenge 映像分發的 OCI Registry，也可以替換成外部映像倉庫。
 install.platform.service_desc.logs: 可選的 VictoriaLogs 日誌與觀測元件。
+install.platform.external.database.host: 外部資料庫主機
+install.platform.external.database.port: 外部資料庫連接埠
+install.platform.external.database.name: 外部資料庫名稱
+install.platform.external.database.username: 外部資料庫使用者名稱
+install.platform.external.database.password: 外部資料庫密碼
+install.platform.external.database.ssl_mode: 外部資料庫 SSL 模式
+install.platform.external.cache.url: 外部快取 URL
+install.platform.external.queue.host: 外部佇列主機
+install.platform.external.queue.port: 外部佇列連接埠
+install.platform.external.queue.token: 外部佇列 token
+install.platform.external.registry.external: 提供給叢集拉取的外部映像倉庫位址
+install.platform.external.registry.server: 提供給平台推送的內部映像倉庫位址
+install.platform.external.registry.insecure: 映像倉庫是否不驗證憑證（true/false）
+install.platform.external.registry.username: 映像倉庫使用者名稱
+install.platform.external.registry.password: 映像倉庫密碼
+install.platform.external.logs.endpoint: 外部日誌服務位址
 install.exposure.prompt: 目前叢集希望使用哪一種應用出口模式？
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx

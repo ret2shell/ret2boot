@@ -89,7 +89,7 @@ install.platform.namespaces: "Namespaces: %{platform}, %{challenge}"
 install.platform.service_account: "Service account: %{name} in %{namespace}"
 install.platform.rbac: "Cluster RBAC: role %{role}, binding %{binding}"
 install.platform.configmaps: Shared configmaps such as ret2shell-config and ret2shell-blocked will be prepared later.
-install.platform.storage_notice: Platform storage must use the local-path storage class. Other local services may use a different storage backend.
+install.platform.storage_notice: Every local service must use a storage class. The core platform service is restricted to the local-path storage class.
 install.platform.remaining_disk.prompt: How much disk space remains available for Ret2Shell on this server? (GiB)
 install.platform.detected_remaining_disk: "Detected remaining disk capacity: %{remaining} GiB"
 install.platform.requested_disk.prompt: How much total disk space should Ret2Shell reserve? (GiB)
@@ -100,6 +100,7 @@ install.platform.service_platform_fixed: The core platform service is always dep
 install.platform.service_deployment.prompt: How should this service be deployed?
 install.platform.service_storage.prompt: Which storage backend should this local service use?
 install.platform.service_storage_class.prompt: Enter the storage class name for this service
+install.platform.external_intro: This service is marked as externally provided. Fill in the connection details that later deployment steps should reuse.
 install.platform.disk_budget_too_small: The selected local-path services need a larger disk budget than the current total reservation.
 install.platform.disk_plan_intro: Review and adjust the local-path disk allocations for locally stored services
 install.platform.service_disk.prompt: "Disk allocation for %{service} (GiB)"
@@ -125,6 +126,22 @@ install.platform.service_desc.cache: Valkey cache for hot platform state.
 install.platform.service_desc.queue: NATS queue and JetStream storage for internal event delivery.
 install.platform.service_desc.registry: OCI registry for challenge images. This can be replaced by an external registry.
 install.platform.service_desc.logs: Optional VictoriaLogs stack for centralized logs and observability.
+install.platform.external.database.host: External database host
+install.platform.external.database.port: External database port
+install.platform.external.database.name: External database name
+install.platform.external.database.username: External database username
+install.platform.external.database.password: External database password
+install.platform.external.database.ssl_mode: External database SSL mode
+install.platform.external.cache.url: External cache URL
+install.platform.external.queue.host: External queue host
+install.platform.external.queue.port: External queue port
+install.platform.external.queue.token: External queue token
+install.platform.external.registry.external: External registry address for cluster pulls
+install.platform.external.registry.server: Internal registry address for platform pushes
+install.platform.external.registry.insecure: Registry insecure mode (true/false)
+install.platform.external.registry.username: Registry username
+install.platform.external.registry.password: Registry password
+install.platform.external.logs.endpoint: External logs endpoint
 install.exposure.prompt: Which application exposure mode should this cluster use?
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort plus external nginx

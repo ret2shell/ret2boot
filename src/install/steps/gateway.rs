@@ -15,16 +15,16 @@ use super::{
 use crate::{
   config::{ApplicationExposureMode, InstallStepId, InstallTargetRole},
   install::collectors::SingleSelectCollector,
-  ui,
+  resources, ui,
 };
 
 const NGINX_BINARY_DEST: &str = "/usr/sbin/nginx";
 const NGINX_MAIN_CONF: &str = "/etc/nginx/nginx.conf";
-const NGINX_SITE_AVAILABLE: &str = "/etc/nginx/sites-available/ret2boot.conf";
-const NGINX_SITE_ENABLED: &str = "/etc/nginx/sites-enabled/ret2boot.conf";
-const NGINX_SITE_INCLUDE: &str = "/etc/nginx/conf.d/ret2boot-sites-enabled.conf";
-const NGINX_STREAM_AVAILABLE: &str = "/etc/nginx/ret2boot-stream-available/ret2boot.conf";
-const NGINX_STREAM_ENABLED: &str = "/etc/nginx/ret2boot-stream-enabled/ret2boot.conf";
+const NGINX_SITE_AVAILABLE: &str = "/etc/nginx/sites-available/ret2shell.conf";
+const NGINX_SITE_ENABLED: &str = "/etc/nginx/sites-enabled/ret2shell.conf";
+const NGINX_STREAM_AVAILABLE: &str = "/etc/nginx/ret2boot-stream-available/ret2shell.conf";
+const NGINX_STREAM_ENABLED: &str = "/etc/nginx/ret2boot-stream-enabled/ret2shell.conf";
+const NGINX_SITE_INCLUDE_MARKER: &str = "include /etc/nginx/sites-enabled/*.conf;";
 const NGINX_STREAM_INCLUDE_MARKER: &str = "include /etc/nginx/ret2boot-stream-enabled/*.conf;";
 
 pub struct ApplicationGatewayStep;
@@ -289,24 +289,15 @@ fn install_external_nginx_gateway(
 ) -> Result<()> {
   install_directory(ctx, "/etc/nginx/sites-available")?;
   install_directory(ctx, "/etc/nginx/sites-enabled")?;
-  install_directory(ctx, "/etc/nginx/conf.d")?;
   install_directory(ctx, "/etc/nginx/ret2boot-stream-available")?;
   install_directory(ctx, "/etc/nginx/ret2boot-stream-enabled")?;
 
-  if !nginx_http_sites_enabled_already_included()? {
-    let include_path = stage_text_file(
-      "nginx-sites-include",
-      "conf",
-      "include /etc/nginx/sites-enabled/*.conf;\n".to_string(),
-    )?;
-    install_staged_file(ctx, &include_path, NGINX_SITE_INCLUDE)?;
-    let _ = fs::remove_file(&include_path);
-  }
+  ensure_nginx_site_include(ctx)?;
 
   let site_path = stage_text_file(
     "nginx-ret2boot-site",
     "conf",
-    render_nginx_http_site(http_port),
+    render_nginx_http_site(http_port)?,
   )?;
   install_staged_file(ctx, &site_path, NGINX_SITE_AVAILABLE)?;
   let _ = fs::remove_file(&site_path);
@@ -315,7 +306,7 @@ fn install_external_nginx_gateway(
   let stream_path = stage_text_file(
     "nginx-ret2boot-stream",
     "conf",
-    render_nginx_stream_site(https_port),
+    render_nginx_stream_site(https_port)?,
   )?;
   install_staged_file(ctx, &stream_path, NGINX_STREAM_AVAILABLE)?;
   let _ = fs::remove_file(&stream_path);
@@ -331,7 +322,6 @@ fn cleanup_external_nginx_gateway(ctx: &StepExecutionContext<'_>) -> Result<()> 
       "-f".to_string(),
       NGINX_SITE_ENABLED.to_string(),
       NGINX_SITE_AVAILABLE.to_string(),
-      NGINX_SITE_INCLUDE.to_string(),
       NGINX_STREAM_ENABLED.to_string(),
       NGINX_STREAM_AVAILABLE.to_string(),
     ],
@@ -353,16 +343,40 @@ fn cleanup_external_nginx_gateway(ctx: &StepExecutionContext<'_>) -> Result<()> 
   Ok(())
 }
 
-fn render_nginx_http_site(http_port: u16) -> String {
-  format!(
-    "server {{\n  listen 80 default_server;\n  listen [::]:80 default_server;\n\n  location / {{\n    proxy_http_version 1.1;\n    proxy_set_header Host $host;\n    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n    proxy_set_header X-Forwarded-Proto $scheme;\n    proxy_pass http://127.0.0.1:{http_port};\n  }}\n}}\n"
-  )
+fn render_nginx_http_site(http_port: u16) -> Result<String> {
+  resources::load_utf8("templates/nginx/ret2shell.conf.tmpl")
+    .map(|template| template.replace("{{BACKEND_HTTP_PORT}}", &http_port.to_string()))
 }
 
-fn render_nginx_stream_site(https_port: u16) -> String {
-  format!(
-    "stream {{\n  server {{\n    listen 443;\n    listen [::]:443;\n    proxy_pass 127.0.0.1:{https_port};\n    ssl_preread on;\n  }}\n}}\n"
-  )
+fn render_nginx_stream_site(https_port: u16) -> Result<String> {
+  resources::load_utf8("templates/nginx/ret2shell-stream.conf.tmpl")
+    .map(|template| template.replace("{{BACKEND_HTTPS_PORT}}", &https_port.to_string()))
+}
+
+fn ensure_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  let contents = fs::read_to_string(NGINX_MAIN_CONF)
+    .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))?;
+
+  if contents.contains(NGINX_SITE_INCLUDE_MARKER) {
+    return Ok(());
+  }
+
+  let http_index = contents
+    .find("http {")
+    .ok_or_else(|| anyhow!("unable to locate the http block in `{NGINX_MAIN_CONF}`"))?;
+  let updated = format!(
+    "{}{}\n    {}\n{}",
+    &contents[..http_index],
+    "http {",
+    NGINX_SITE_INCLUDE_MARKER,
+    &contents[http_index..]
+      .strip_prefix("http {")
+      .expect("http block exists")
+  );
+  let staged = stage_text_file("nginx-main", "conf", updated)?;
+  install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
+  let _ = fs::remove_file(&staged);
+  Ok(())
 }
 
 fn ensure_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
@@ -386,14 +400,6 @@ fn ensure_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
   install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
   let _ = fs::remove_file(&staged);
   Ok(())
-}
-
-fn nginx_http_sites_enabled_already_included() -> Result<bool> {
-  Ok(
-    fs::read_to_string(NGINX_MAIN_CONF)
-      .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))?
-      .contains("/etc/nginx/sites-enabled"),
-  )
 }
 
 fn remove_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {

@@ -1,0 +1,8 @@
+stream {
+    server {
+        listen 443;
+        listen [::]:443;
+        proxy_pass 127.0.0.1:{{BACKEND_HTTPS_PORT}};
+        ssl_preread on;
+    }
+}

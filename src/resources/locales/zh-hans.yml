@@ -89,7 +89,7 @@ install.platform.namespaces: "将创建的命名空间：%{platform}、%{challen
 install.platform.service_account: "共享 ServiceAccount：%{namespace} 中的 %{name}"
 install.platform.rbac: "共享 RBAC：ClusterRole %{role}，ClusterRoleBinding %{binding}"
 install.platform.configmaps: 后续会准备 ret2shell-config、ret2shell-blocked 等共享 ConfigMap。
-install.platform.storage_notice: 平台服务的存储必须使用 local-path，其他本地服务可以改用别的存储后端。
+install.platform.storage_notice: 所有本地服务都必须使用 StorageClass，其中核心平台服务只能使用 local-path。
 install.platform.remaining_disk.prompt: 当前服务器还能为 Ret2Shell 提供多少可用磁盘空间？（GiB）
 install.platform.detected_remaining_disk: "已自动探测到剩余可用磁盘空间：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望 Ret2Shell 总共划分多少磁盘空间？（GiB）
@@ -100,6 +100,7 @@ install.platform.service_platform_fixed: 核心平台服务必须本地部署，
 install.platform.service_deployment.prompt: 这个服务希望如何部署？
 install.platform.service_storage.prompt: 这个本地服务希望使用哪一种存储后端？
 install.platform.service_storage_class.prompt: 请输入这个服务要使用的 StorageClass 名称
+install.platform.external_intro: 这个服务已标记为外部提供，请补充后续部署步骤需要复用的连接参数。
 install.platform.disk_budget_too_small: 当前选择的 local-path 本地服务数量，已经超过了你预留的总磁盘预算下限。
 install.platform.disk_plan_intro: 请检查并调整使用 local-path 的本地服务磁盘划分
 install.platform.service_disk.prompt: "%{service} 的磁盘划分（GiB）"
@@ -125,6 +126,22 @@ install.platform.service_desc.cache: 用于热点状态缓存的 Valkey。
 install.platform.service_desc.queue: 用于内部事件投递的 NATS 与 JetStream。
 install.platform.service_desc.registry: 用于 challenge 镜像分发的 OCI Registry，也可以替换为外部镜像仓库。
 install.platform.service_desc.logs: 可选的 VictoriaLogs 日志与观测组件。
+install.platform.external.database.host: 外部数据库主机
+install.platform.external.database.port: 外部数据库端口
+install.platform.external.database.name: 外部数据库名称
+install.platform.external.database.username: 外部数据库用户名
+install.platform.external.database.password: 外部数据库密码
+install.platform.external.database.ssl_mode: 外部数据库 SSL 模式
+install.platform.external.cache.url: 外部缓存 URL
+install.platform.external.queue.host: 外部队列主机
+install.platform.external.queue.port: 外部队列端口
+install.platform.external.queue.token: 外部队列 token
+install.platform.external.registry.external: 提供给集群拉取的外部镜像仓库地址
+install.platform.external.registry.server: 提供给平台推送的内部镜像仓库地址
+install.platform.external.registry.insecure: 镜像仓库是否不校验证书（true/false）
+install.platform.external.registry.username: 镜像仓库用户名
+install.platform.external.registry.password: 镜像仓库密码
+install.platform.external.logs.endpoint: 外部日志服务地址
 install.exposure.prompt: 当前集群希望使用哪一种应用出口模式？
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx
