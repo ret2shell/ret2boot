@@ -25,6 +25,7 @@ pub struct InstallConfig {
   pub questionnaire: InstallQuestionnaire,
   pub review: InstallReview,
   pub execution: InstallExecution,
+  pub last_failure: Option<InstallFailureRecord>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -80,6 +81,58 @@ pub struct InstallReview {
 pub struct InstallExecution {
   pub phase: InstallExecutionPhase,
   pub steps: Vec<InstallStepProgress>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InstallFailureRecord {
+  pub stage: InstallFailureStage,
+  pub step_id: Option<InstallStepId>,
+  pub message: String,
+  pub causes: Vec<String>,
+  pub occurred_at_unix: u64,
+}
+
+impl Default for InstallFailureRecord {
+  fn default() -> Self {
+    Self {
+      stage: InstallFailureStage::Startup,
+      step_id: None,
+      message: String::new(),
+      causes: Vec::new(),
+      occurred_at_unix: 0,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallFailureStage {
+  Startup,
+  Preflight,
+  Questionnaire,
+  Review,
+  Planning,
+  Preparation,
+  Install,
+  Rollback,
+  Completion,
+}
+
+impl InstallFailureStage {
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::Startup => "startup",
+      Self::Preflight => "preflight",
+      Self::Questionnaire => "questionnaire",
+      Self::Review => "review",
+      Self::Planning => "planning",
+      Self::Preparation => "preparation",
+      Self::Install => "install",
+      Self::Rollback => "rollback",
+      Self::Completion => "completion",
+    }
+  }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -659,6 +712,19 @@ impl Ret2BootConfig {
     true
   }
 
+  pub fn set_install_failure(&mut self, failure: InstallFailureRecord) -> bool {
+    if self.install.last_failure.as_ref() == Some(&failure) {
+      return false;
+    }
+
+    self.install.last_failure = Some(failure);
+    true
+  }
+
+  pub fn clear_install_failure(&mut self) -> bool {
+    self.install.last_failure.take().is_some()
+  }
+
   pub fn sync_install_steps(&mut self, step_ids: &[InstallStepId]) -> bool {
     let current_ids: Vec<InstallStepId> = self
       .install
@@ -780,6 +846,7 @@ impl Ret2BootConfig {
   fn invalidate_install_pipeline(&mut self) {
     self.install.review.confirmed = false;
     self.install.execution = InstallExecution::default();
+    self.install.last_failure = None;
   }
 
   fn ensure_platform_service_config(

@@ -36,6 +36,10 @@ pub fn warning(message: impl AsRef<str>) -> String {
   format!("{} {}", paint("warning:", "1;33"), message.as_ref())
 }
 
+pub fn error(message: impl AsRef<str>) -> String {
+  format!("{} {}", paint("error:", "1;31"), message.as_ref())
+}
+
 pub fn success(message: impl AsRef<str>) -> String {
   format!("{} {}", paint("done:", "1;32"), message.as_ref())
 }

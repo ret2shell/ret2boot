@@ -13,8 +13,11 @@ use self::{
   },
 };
 use crate::{
-  config::{InstallExecutionPhase, InstallStepStatus, InstallTargetRole, Ret2BootConfig},
-  l10n,
+  config::{
+    InstallExecutionPhase, InstallFailureStage, InstallStepId, InstallStepStatus,
+    InstallTargetRole, Ret2BootConfig,
+  },
+  errors, l10n,
   startup::RuntimeState,
   telemetry,
   ui::{self, BadgeTone},
@@ -29,21 +32,37 @@ pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
   );
 
   let mut flow = InstallFlow::new(config, runtime)?;
+  flow.clear_recorded_failure()?;
   flow.greet();
-  flow.run_preflight()?;
-  flow.collect_questionnaire()?;
-  flow.enter_review_phase()?;
+  flow.capture_stage(InstallFailureStage::Preflight, None, |flow| {
+    flow.run_preflight()
+  })?;
+  flow.capture_stage(InstallFailureStage::Questionnaire, None, |flow| {
+    flow.collect_questionnaire()
+  })?;
+  flow.capture_stage(InstallFailureStage::Review, None, |flow| {
+    flow.enter_review_phase()
+  })?;
 
-  let plan = flow.build_plan()?;
+  let plan = flow.capture_stage(InstallFailureStage::Planning, None, |flow| {
+    flow.build_plan()
+  })?;
   flow.print_plan(&plan);
 
-  if !flow.ensure_install_confirmation()? {
+  if !flow.capture_stage(InstallFailureStage::Review, None, |flow| {
+    flow.ensure_install_confirmation()
+  })? {
     return Ok(());
   }
 
-  flow.prepare_installation(&plan)?;
-  flow.execute_installation(&plan)?;
+  flow.capture_stage(InstallFailureStage::Preparation, None, |flow| {
+    flow.prepare_installation(&plan)
+  })?;
+  flow.capture_stage(InstallFailureStage::Install, None, |flow| {
+    flow.execute_installation(&plan)
+  })?;
   flow.print_progress(&plan);
+  flow.clear_recorded_failure()?;
 
   Ok(())
 }
@@ -388,6 +407,7 @@ impl<'a> InstallFlow<'a> {
           self.persist_change("install.execution.step", &error_text, |config| {
             config.mark_install_step_failed(step_id, error_text.clone())
           })?;
+          let _ = self.record_failure(InstallFailureStage::Install, Some(step_id), &error);
 
           println!(
             "{}",
@@ -439,6 +459,7 @@ impl<'a> InstallFlow<'a> {
         self.persist_change("install.execution.rollback", &error_text, |config| {
           config.mark_install_step_failed(failed_step_id, error_text.clone())
         })?;
+        let _ = self.record_failure(InstallFailureStage::Rollback, Some(failed_step_id), &error);
         failed_step_rollback_error = Some(error_text);
       } else {
         self.persist_change(
@@ -483,6 +504,7 @@ impl<'a> InstallFlow<'a> {
           self.persist_change("install.execution.rollback", &error_text, |config| {
             config.mark_install_step_failed(step_id, error_text.clone())
           })?;
+          let _ = self.record_failure(InstallFailureStage::Rollback, Some(step_id), &error);
 
           return Err(anyhow!(
             "rollback failed for `{}` after installation error: {}",
@@ -543,6 +565,43 @@ impl<'a> InstallFlow<'a> {
     );
 
     Ok(changed)
+  }
+
+  fn capture_stage<T, F>(
+    &mut self, stage: InstallFailureStage, step_id: Option<InstallStepId>, action: F,
+  ) -> Result<T>
+  where
+    F: FnOnce(&mut Self) -> Result<T>, {
+    match action(self) {
+      Ok(value) => Ok(value),
+      Err(error) => {
+        let _ = self.record_failure(stage, step_id, &error);
+        Err(error.context(format!(
+          "installer failed during {}",
+          stage.as_config_value()
+        )))
+      }
+    }
+  }
+
+  fn record_failure(
+    &mut self, stage: InstallFailureStage, step_id: Option<InstallStepId>, error: &anyhow::Error,
+  ) -> Result<()> {
+    errors::record_install_failure(self.config, stage, step_id, error)?;
+
+    debug!(
+      config_path = %self.config_path,
+      stage = stage.as_config_value(),
+      step_id = step_id.map(InstallStepId::as_config_value),
+      error = %error,
+      "captured installer failure"
+    );
+
+    Ok(())
+  }
+
+  fn clear_recorded_failure(&mut self) -> Result<()> {
+    errors::clear_install_failure(self.config)
   }
 }
 
