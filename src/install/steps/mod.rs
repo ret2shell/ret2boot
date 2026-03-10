@@ -13,8 +13,11 @@ pub use self::context::{
   StepQuestionContext, SystemPackageManager,
 };
 use self::{
-  cluster::ClusterBootstrapStep, gateway::ApplicationGatewayStep, helm::HelmCliStep,
-  platform::PlatformDeploymentStep, preflight::PreflightValidationStep,
+  cluster::ClusterBootstrapStep,
+  gateway::ApplicationGatewayStep,
+  helm::HelmCliStep,
+  platform::{PlatformDeploymentStep, WorkerPlatformProbeStep},
+  preflight::PreflightValidationStep,
 };
 use crate::config::InstallStepId;
 
@@ -62,5 +65,6 @@ pub fn registry() -> Vec<Box<dyn AtomicInstallStep>> {
     Box::new(HelmCliStep),
     Box::new(ApplicationGatewayStep),
     Box::new(PlatformDeploymentStep),
+    Box::new(WorkerPlatformProbeStep),
   ]
 }

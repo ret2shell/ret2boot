@@ -10,6 +10,18 @@ metadata:
   name: {{PLATFORM_NAMESPACE}}
 
 ---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{PLATFORM_STORAGE_CLASS_NAME}}
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

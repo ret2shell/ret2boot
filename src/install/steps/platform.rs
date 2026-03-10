@@ -5,12 +5,15 @@ use rust_i18n::t;
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
-  support::{install_directory, install_staged_file, stage_text_file, yaml_quote},
+  support::{
+    command_exists, find_existing_path, install_directory, install_staged_file, stage_text_file,
+    yaml_quote,
+  },
 };
 use crate::{
   config::{
-    InstallStepId, InstallTargetRole, PlatformServiceDeploymentMode, PlatformServiceId,
-    PlatformStorageMode,
+    InstallStepId, InstallTargetRole, KubernetesDistribution, PlatformServiceDeploymentMode,
+    PlatformServiceId, PlatformStorageMode,
   },
   install::collectors::{Collector, InputCollector, SingleSelectCollector},
   resources, ui,
@@ -43,7 +46,7 @@ const PLATFORM_SERVICE_DEFINITIONS: [PlatformServiceDefinition; 6] = [
     allow_disabled: false,
     fixed_local_path: true,
     legacy_local_disk_gib: 420,
-    legacy_storage_class: "local-path",
+    legacy_storage_class: "ret2shell-storage-platform",
   },
   PlatformServiceDefinition {
     id: PlatformServiceId::Database,
@@ -100,6 +103,7 @@ struct ExternalFieldDefinition {
 }
 
 pub struct PlatformDeploymentStep;
+pub struct WorkerPlatformProbeStep;
 
 impl AtomicInstallStep for PlatformDeploymentStep {
   fn id(&self) -> InstallStepId {
@@ -266,6 +270,138 @@ impl AtomicInstallStep for PlatformDeploymentStep {
   }
 }
 
+impl AtomicInstallStep for WorkerPlatformProbeStep {
+  fn id(&self) -> InstallStepId {
+    InstallStepId::WorkerPlatformProbe
+  }
+
+  fn should_include(&self, ctx: &StepPlanContext<'_>) -> bool {
+    ctx.node_role() == Some(InstallTargetRole::Worker)
+  }
+
+  fn describe(&self, _ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
+    Ok(InstallStepPlan {
+      id: self.id(),
+      title: t!("install.steps.worker_probe.title").to_string(),
+      details: vec![t!("install.steps.worker_probe.detail").to_string()],
+    })
+  }
+
+  fn install(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    let distribution = ctx
+      .as_plan_context()
+      .kubernetes_distribution()
+      .ok_or_else(|| {
+        anyhow!("kubernetes distribution is required before probing platform status")
+      })?;
+
+    println!();
+    println!("{}", ui::section(t!("install.worker_probe.title")));
+    println!("{}", ui::note(t!("install.worker_probe.intro")));
+
+    match distribution {
+      KubernetesDistribution::K3s => {
+        if !command_exists("k3s") {
+          println!("{}", ui::warning(t!("install.worker_probe.cli_missing")));
+          return Ok(());
+        }
+
+        run_worker_probe_command(
+          ctx,
+          "k3s",
+          &[
+            "kubectl".to_string(),
+            "-n".to_string(),
+            PLATFORM_NAMESPACE.to_string(),
+            "get".to_string(),
+            "deployment".to_string(),
+            "ret2shell-platform".to_string(),
+            "-o".to_string(),
+            "wide".to_string(),
+          ],
+          &[],
+        )?
+      }
+      KubernetesDistribution::Rke2 => {
+        let kubectl = find_existing_path(&[
+          std::path::PathBuf::from("/var/lib/rancher/rke2/bin/kubectl"),
+          std::path::PathBuf::from("/usr/local/bin/kubectl"),
+        ])
+        .ok_or_else(|| anyhow!("unable to locate the rke2 kubectl binary for worker probing"))?;
+        run_worker_probe_command(
+          ctx,
+          &kubectl.display().to_string(),
+          &[
+            "-n".to_string(),
+            PLATFORM_NAMESPACE.to_string(),
+            "get".to_string(),
+            "deployment".to_string(),
+            "ret2shell-platform".to_string(),
+            "-o".to_string(),
+            "wide".to_string(),
+          ],
+          &[(
+            "KUBECONFIG".to_string(),
+            "/etc/rancher/rke2/rke2.yaml".to_string(),
+          )],
+        )?;
+      }
+    }
+
+    match distribution {
+      KubernetesDistribution::K3s => run_worker_probe_command(
+        ctx,
+        "k3s",
+        &[
+          "kubectl".to_string(),
+          "-n".to_string(),
+          PLATFORM_NAMESPACE.to_string(),
+          "get".to_string(),
+          "pods".to_string(),
+          "-l".to_string(),
+          "ret.sh.cn/workload=platform".to_string(),
+          "-o".to_string(),
+          "wide".to_string(),
+        ],
+        &[],
+      )?,
+      KubernetesDistribution::Rke2 => {
+        let kubectl = find_existing_path(&[
+          std::path::PathBuf::from("/var/lib/rancher/rke2/bin/kubectl"),
+          std::path::PathBuf::from("/usr/local/bin/kubectl"),
+        ])
+        .ok_or_else(|| anyhow!("unable to locate the rke2 kubectl binary for worker probing"))?;
+        run_worker_probe_command(
+          ctx,
+          &kubectl.display().to_string(),
+          &[
+            "-n".to_string(),
+            PLATFORM_NAMESPACE.to_string(),
+            "get".to_string(),
+            "pods".to_string(),
+            "-l".to_string(),
+            "ret.sh.cn/workload=platform".to_string(),
+            "-o".to_string(),
+            "wide".to_string(),
+          ],
+          &[(
+            "KUBECONFIG".to_string(),
+            "/etc/rancher/rke2/rke2.yaml".to_string(),
+          )],
+        )?;
+      }
+    }
+
+    println!("{}", ui::success(t!("install.worker_probe.done")));
+
+    Ok(())
+  }
+
+  fn uninstall(&self, _ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    Ok(())
+  }
+}
+
 struct PlatformPlanSummary {
   remaining_disk_gib: u32,
   requested_disk_gib: u32,
@@ -282,6 +418,7 @@ struct ResolvedPlatformServicePlan {
   storage_mode: Option<PlatformStorageMode>,
   storage_class_name: Option<String>,
   local_disk_gib: Option<u32>,
+  external_values: BTreeMap<String, String>,
   external_summary: Vec<(String, String)>,
 }
 
@@ -371,13 +508,18 @@ fn resolve_platform_service_plan(
     _ => None,
   };
 
+  let external_values = if deployment == PlatformServiceDeploymentMode::External {
+    stored.external.clone()
+  } else {
+    BTreeMap::new()
+  };
+
   let external_summary = if deployment == PlatformServiceDeploymentMode::External {
     external_field_definitions(definition.id)
       .iter()
       .filter(|field| !field.secret)
       .filter_map(|field| {
-        stored
-          .external
+        external_values
           .get(field.key)
           .filter(|value| !value.trim().is_empty())
           .map(|value| (t!(field.label_key).to_string(), value.clone()))
@@ -406,6 +548,7 @@ fn resolve_platform_service_plan(
     storage_mode,
     storage_class_name,
     local_disk_gib,
+    external_values,
     external_summary,
   })
 }
@@ -1054,6 +1197,21 @@ fn collect_u32_gib_input(
   }
 }
 
+fn run_worker_probe_command(
+  ctx: &StepExecutionContext<'_>, program: &str, args: &[String], envs: &[(String, String)],
+) -> Result<()> {
+  match ctx.run_privileged_command(program, args, envs) {
+    Ok(()) => Ok(()),
+    Err(error) => {
+      println!(
+        "{}",
+        ui::warning(t!("install.worker_probe.failed", error = error.to_string()))
+      );
+      Ok(())
+    }
+  }
+}
+
 fn render_platform_plan_yaml(summary: &PlatformPlanSummary) -> String {
   let mut lines = vec![
     "apiVersion: ret2boot.ret2shell/v1alpha1".to_string(),
@@ -1113,6 +1271,12 @@ fn render_platform_plan_yaml(summary: &PlatformPlanSummary) -> String {
     if let Some(local_disk_gib) = service.local_disk_gib {
       lines.push(format!("      localDiskGiB: {}", local_disk_gib));
     }
+    if !service.external_values.is_empty() {
+      lines.push("      external: ".to_string());
+      for (key, value) in &service.external_values {
+        lines.push(format!("        {}: {}", key, yaml_quote(value)));
+      }
+    }
   }
 
   lines.push(String::new());
@@ -1121,9 +1285,16 @@ fn render_platform_plan_yaml(summary: &PlatformPlanSummary) -> String {
 
 fn render_platform_bootstrap_manifest() -> Result<String> {
   resources::load_utf8("templates/k8s/platform-bootstrap.yaml.tmpl").map(|template| {
+    let platform_storage_class = PLATFORM_SERVICE_DEFINITIONS
+      .iter()
+      .find(|definition| definition.id == PlatformServiceId::Platform)
+      .map(|definition| definition.legacy_storage_class)
+      .unwrap_or("ret2shell-storage-platform");
+
     template
       .replace("{{CHALLENGE_NAMESPACE}}", CHALLENGE_NAMESPACE)
       .replace("{{PLATFORM_NAMESPACE}}", PLATFORM_NAMESPACE)
+      .replace("{{PLATFORM_STORAGE_CLASS_NAME}}", platform_storage_class)
       .replace("{{CLUSTER_ROLE_NAME}}", PLATFORM_CLUSTER_ROLE)
       .replace("{{SERVICE_ACCOUNT_NAME}}", PLATFORM_SERVICE_ACCOUNT)
       .replace(

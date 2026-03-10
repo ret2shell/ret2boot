@@ -8,7 +8,7 @@ use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   support::{find_command_path, stage_remote_script},
 };
-use crate::config::InstallStepId;
+use crate::config::{InstallStepId, InstallTargetRole};
 
 const HELM_INSTALL_SCRIPT_URL: &str =
   "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3";
@@ -19,6 +19,10 @@ pub struct HelmCliStep;
 impl AtomicInstallStep for HelmCliStep {
   fn id(&self) -> InstallStepId {
     InstallStepId::HelmCli
+  }
+
+  fn should_include(&self, ctx: &StepPlanContext<'_>) -> bool {
+    ctx.node_role() == Some(InstallTargetRole::ControlPlane)
   }
 
   fn collect(&self, _ctx: &mut StepQuestionContext<'_>) -> Result<()> {

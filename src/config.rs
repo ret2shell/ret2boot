@@ -139,6 +139,7 @@ pub enum InstallStepId {
   HelmCli,
   ApplicationGateway,
   PlatformDeployment,
+  WorkerPlatformProbe,
 }
 
 impl InstallStepId {
@@ -149,6 +150,7 @@ impl InstallStepId {
       Self::HelmCli => "helm-cli",
       Self::ApplicationGateway => "application-gateway",
       Self::PlatformDeployment => "platform-deployment",
+      Self::WorkerPlatformProbe => "worker-platform-probe",
     }
   }
 }

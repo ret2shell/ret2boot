@@ -96,7 +96,7 @@ install.platform.requested_disk.prompt: How much total disk space should Ret2She
 install.platform.services_intro: Planned Ret2Shell services
 install.platform.service_heading: "Configure service: %{service}"
 install.platform.service_release: "Release: %{release} in namespace %{namespace}"
-install.platform.service_platform_fixed: The core platform service is always deployed locally and always uses local-path storage.
+install.platform.service_platform_fixed: The core platform service is always deployed locally and always uses the ret2shell-storage-platform storage class backed by local-path.
 install.platform.service_deployment.prompt: How should this service be deployed?
 install.platform.service_storage.prompt: Which storage backend should this local service use?
 install.platform.service_storage_class.prompt: Enter the storage class name for this service
@@ -142,6 +142,11 @@ install.platform.external.registry.insecure: Registry insecure mode (true/false)
 install.platform.external.registry.username: Registry username
 install.platform.external.registry.password: Registry password
 install.platform.external.logs.endpoint: External logs endpoint
+install.worker_probe.title: Probe the master platform status
+install.worker_probe.intro: This worker node only joins the cluster. Ret2Boot will now probe the master-side ret2shell-platform status and then exit.
+install.worker_probe.done: Master-side platform probe completed.
+install.worker_probe.failed: "Unable to complete the master-side platform probe: %{error}"
+install.worker_probe.cli_missing: The required cluster CLI is not available on this worker, so the platform probe cannot continue automatically.
 install.exposure.prompt: Which application exposure mode should this cluster use?
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort plus external nginx
@@ -230,6 +235,8 @@ install.steps.platform_plan.service_account: "Shared service account: %{name} in
 install.steps.platform_plan.rbac: "Shared RBAC objects: role %{role}, binding %{binding}"
 install.steps.platform_plan.disk_budget: "Disk budget: %{allocated} GiB allocated out of %{requested} GiB requested (%{remaining} GiB physically available)"
 install.steps.platform_plan.unallocated_disk: "Unallocated disk budget: %{remaining} GiB"
+install.steps.worker_probe.title: Probe master platform status
+install.steps.worker_probe.detail: After this worker joins the cluster, inspect the master-side ret2shell-platform deployment and then stop the workflow.
 install.steps.platform.control_plane: Deploy core Ret2Shell platform services
 install.steps.platform.control_plane_detail: Install the central Ret2Shell services that must live on the primary node.
 install.steps.platform.worker: Configure worker-side Ret2Shell services
