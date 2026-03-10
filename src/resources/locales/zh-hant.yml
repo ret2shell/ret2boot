@@ -91,6 +91,7 @@ install.platform.rbac: "共用 RBAC：ClusterRole %{role}，ClusterRoleBinding %
 install.platform.configmaps: 後續會準備 ret2shell-config、ret2shell-blocked 等共用 ConfigMap。
 install.platform.storage_notice: 平台服務的儲存必須使用 local-path，其他本地服務可以改用其他儲存後端。
 install.platform.remaining_disk.prompt: 目前伺服器還能為 Ret2Shell 提供多少可用磁碟空間？（GiB）
+install.platform.detected_remaining_disk: "已自動偵測到剩餘可用磁碟空間：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望 Ret2Shell 總共劃分多少磁碟空間？（GiB）
 install.platform.services_intro: 計畫部署的 Ret2Shell 服務
 install.platform.service_heading: "設定服務：%{service}"

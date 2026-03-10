@@ -91,6 +91,7 @@ install.platform.rbac: "共有 RBAC: ClusterRole %{role}、ClusterRoleBinding %{
 install.platform.configmaps: 後続の手順で ret2shell-config や ret2shell-blocked などの共有 ConfigMap を準備します。
 install.platform.storage_notice: プラットフォームのストレージは local-path を使う必要があります。他のローカルサービスは別のストレージバックエンドも選べます。
 install.platform.remaining_disk.prompt: このサーバーで Ret2Shell に使える残りディスク容量はどのくらいですか？（GiB）
+install.platform.detected_remaining_disk: "自動検出された残りディスク容量: %{remaining} GiB"
 install.platform.requested_disk.prompt: Ret2Shell 用に合計どのくらいのディスク容量を割り当てますか？（GiB）
 install.platform.services_intro: デプロイ予定の Ret2Shell サービス
 install.platform.service_heading: "サービス設定: %{service}"

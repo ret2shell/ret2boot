@@ -91,6 +91,7 @@ install.platform.rbac: "Cluster RBAC: role %{role}, binding %{binding}"
 install.platform.configmaps: Shared configmaps such as ret2shell-config and ret2shell-blocked will be prepared later.
 install.platform.storage_notice: Platform storage must use the local-path storage class. Other local services may use a different storage backend.
 install.platform.remaining_disk.prompt: How much disk space remains available for Ret2Shell on this server? (GiB)
+install.platform.detected_remaining_disk: "Detected remaining disk capacity: %{remaining} GiB"
 install.platform.requested_disk.prompt: How much total disk space should Ret2Shell reserve? (GiB)
 install.platform.services_intro: Planned Ret2Shell services
 install.platform.service_heading: "Configure service: %{service}"
