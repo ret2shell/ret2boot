@@ -8,6 +8,11 @@ repository = "https://github.com/ret2shell/ret2boot"
 license = "GPL-3.0-only"
 readme = "README.md"
 
+[package.metadata.binstall]
+pkg-url = "https://github.com/ret2shell/ret2boot/releases/download/{ version }/{ name }-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
+
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive"] }
