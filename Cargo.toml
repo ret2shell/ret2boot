@@ -2,6 +2,11 @@
 name = "ret2boot"
 version = "0.1.0"
 edition = "2024"
+description = "Bootstrap and lifecycle management tool for Ret2Shell clusters"
+homepage = "https://ret.sh.cn/"
+repository = "https://github.com/ret2shell/ret2boot"
+license = "GPL-3.0-only"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.102"

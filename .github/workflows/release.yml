@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -leo pipefail {0}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Read package metadata
+        id: package
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          python <<'PY'
+          import os
+          import pathlib
+          import tomllib
+
+          cargo = tomllib.loads(pathlib.Path("Cargo.toml").read_text())
+          version = cargo["package"]["version"]
+          release_version = os.environ["RELEASE_VERSION"]
+
+          if version != release_version:
+              raise SystemExit(
+                  f"tag {release_version} does not match Cargo.toml version {version}"
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"version={version}", file=output)
+              print("target=x86_64-unknown-linux-musl", file=output)
+          PY
+
+      - name: Resolve release metadata
+        id: vars
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0 "${RELEASE_VERSION}^" 2>/dev/null || true)"
+          previous_display="${previous_tag:-n/a}"
+          prerelease=false
+
+          if [[ "${RELEASE_VERSION}" == *-* ]]; then
+            prerelease=true
+          fi
+
+          {
+            echo "release_version=${RELEASE_VERSION}"
+            echo "previous_tag=${previous_tag}"
+            echo "previous_display=${previous_display}"
+            echo "prerelease=${prerelease}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build release binary
+        env:
+          TARGET: ${{ steps.package.outputs.target }}
+        run: cargo build --release --locked --target "${TARGET}"
+
+      - name: Package release assets
+        id: bundle
+        env:
+          RELEASE_VERSION: ${{ steps.vars.outputs.release_version }}
+          TARGET: ${{ steps.package.outputs.target }}
+        run: |
+          dist_dir="${RUNNER_TEMP}/dist"
+          bundle_dir="${RUNNER_TEMP}/ret2boot-${RELEASE_VERSION}-${TARGET}"
+          archive="${dist_dir}/ret2boot-${RELEASE_VERSION}-${TARGET}.tar.gz"
+          checksum="${archive}.sha256"
+
+          rm -rf "${dist_dir}" "${bundle_dir}"
+          mkdir -p "${dist_dir}" "${bundle_dir}"
+
+          install -m 755 "target/${TARGET}/release/ret2boot" "${bundle_dir}/ret2boot"
+          install -m 644 README.md "${bundle_dir}/README.md"
+
+          tar -C "${RUNNER_TEMP}" -czf "${archive}" "$(basename "${bundle_dir}")"
+          sha256sum "${archive}" > "${checksum}"
+
+          {
+            echo "archive=${archive}"
+            echo "checksum=${checksum}"
+            echo "archive_name=$(basename "${archive}")"
+            echo "checksum_name=$(basename "${checksum}")"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Write release notes
+        id: notes
+        env:
+          ARCHIVE_NAME: ${{ steps.bundle.outputs.archive_name }}
+          CHECKSUM_NAME: ${{ steps.bundle.outputs.checksum_name }}
+          PREVIOUS_VERSION: ${{ steps.vars.outputs.previous_display }}
+          RELEASE_VERSION: ${{ steps.vars.outputs.release_version }}
+          TARGET: ${{ steps.package.outputs.target }}
+        run: |
+          notes_file="${RUNNER_TEMP}/release-notes.md"
+
+          {
+            echo "## Version Changes"
+            echo
+            echo "| Component | Previous | Current |"
+            echo "| --- | --- | --- |"
+            echo "| Release tag | ${PREVIOUS_VERSION} | ${RELEASE_VERSION} |"
+            echo "| Cargo package | ${PREVIOUS_VERSION} | ${RELEASE_VERSION} |"
+            echo
+            echo "## Assets"
+            echo
+            echo "- Target: \`${TARGET}\`"
+            echo "- Binary bundle: \`${ARCHIVE_NAME}\`"
+            echo "- SHA256: \`${CHECKSUM_NAME}\`"
+            echo
+            echo '```bash'
+            echo "curl -LO ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_VERSION}/${ARCHIVE_NAME}"
+            echo "curl -LO ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_VERSION}/${CHECKSUM_NAME}"
+            echo "sha256sum -c ${CHECKSUM_NAME}"
+            echo "tar -xzf ${ARCHIVE_NAME}"
+            echo '```'
+          } > "${notes_file}"
+
+          echo "notes_file=${notes_file}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify act bundle
+        if: ${{ env.ACT == 'true' }}
+        run: |
+          test -f '${{ steps.bundle.outputs.archive }}'
+          test -f '${{ steps.bundle.outputs.checksum }}'
+          test -f '${{ steps.notes.outputs.notes_file }}'
+
+      - name: Create GitHub release
+        if: ${{ env.ACT != 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.notes.outputs.notes_file }}
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.bundle.outputs.archive }}
+            ${{ steps.bundle.outputs.checksum }}
+          generate_release_notes: true
+          name: ${{ steps.vars.outputs.release_version }}
+          overwrite_files: true
+          prerelease: ${{ steps.vars.outputs.prerelease == 'true' }}
+          tag_name: ${{ steps.vars.outputs.release_version }}
