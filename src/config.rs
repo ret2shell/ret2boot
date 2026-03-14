@@ -57,7 +57,19 @@ pub struct WorkerJoinConfig {
 pub struct PlatformQuestionnaire {
   pub remaining_disk_gib: Option<u32>,
   pub requested_disk_gib: Option<u32>,
+  pub public_host: Option<String>,
+  pub signing_key: Option<String>,
+  pub blocked_content: Option<String>,
+  pub internal_credentials: PlatformInternalCredentials,
   pub services: BTreeMap<PlatformServiceId, PlatformServiceConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformInternalCredentials {
+  pub database_password: Option<String>,
+  pub cache_password: Option<String>,
+  pub queue_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -554,6 +566,124 @@ impl Ret2BootConfig {
     }
 
     self.install.questionnaire.platform.requested_disk_gib = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_public_host(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self.install.questionnaire.platform.public_host.as_deref() == Some(value.as_str()) {
+      return false;
+    }
+
+    self.install.questionnaire.platform.public_host = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_signing_key(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self.install.questionnaire.platform.signing_key.as_deref() == Some(value.as_str()) {
+      return false;
+    }
+
+    self.install.questionnaire.platform.signing_key = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_blocked_content(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .blocked_content
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self.install.questionnaire.platform.blocked_content = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_internal_database_password(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .database_password
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .database_password = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_internal_cache_password(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .cache_password
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .cache_password = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_internal_queue_token(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .queue_token
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .queue_token = Some(value);
     self.invalidate_install_pipeline();
     true
   }

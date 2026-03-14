@@ -15,11 +15,6 @@ server {
     client_max_body_size 256m;
 
     location / {
-        root /var/www/html/ret2shell;
-        try_files $uri $uri/ /index.html =404;
-    }
-
-    location /api {
         client_max_body_size 1024M;
         proxy_pass http://backend;
         proxy_set_header Host $host;

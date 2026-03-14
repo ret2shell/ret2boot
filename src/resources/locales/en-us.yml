@@ -86,6 +86,7 @@ install.platform.questionnaire_intro: Next, choose deployment and disk settings 
 install.platform.storage_notice: Services that use local disk need storage configuration. The core platform service always uses local-path.
 install.platform.detected_remaining_disk: "Detected available disk space: %{remaining} GiB"
 install.platform.requested_disk.prompt: How much disk space should be reserved for Ret2Shell? (GiB)
+install.platform.public_host.prompt: Enter the public domain or IPv4 address users will use to reach Ret2Shell
 install.platform.services_intro: Configure Ret2Shell services
 install.platform.service_heading: "Configure service: %{service}"
 install.platform.service_platform_fixed: The core platform service is always deployed locally, and its storage uses the default setting automatically.
@@ -217,8 +218,9 @@ install.steps.gateway.port_reservation: The cluster gateway will be moved off 80
 install.steps.gateway.nginx_reuse: "Reuse the existing nginx binary at %{path}."
 install.steps.gateway.nginx_service_reuse: Reuse the existing nginx service that is already present on this host.
 install.steps.gateway.nginx_install: Install nginx through the detected system package manager.
-install.steps.platform_plan.title: Prepare the Ret2Shell platform configuration
+install.steps.platform_plan.title: Deploy the Ret2Shell platform with Helm
 install.steps.platform_plan.namespaces: "Namespaces to prepare: %{platform}, %{challenge}"
+install.steps.platform_plan.public_host: "Public host: %{host}"
 install.steps.platform_plan.service_account: "Service account to prepare: %{name} in %{namespace}"
 install.steps.platform_plan.rbac: "Permissions to prepare: %{role}, %{binding}"
 install.steps.platform_plan.disk_budget: "Disk budget: %{allocated} GiB allocated / %{requested} GiB planned (%{remaining} GiB currently available)"

@@ -1,8 +1,8 @@
 use std::{
   env,
   fs::{self, File},
-  io,
-  path::PathBuf,
+  io::{self, Read},
+  path::{Path, PathBuf},
   time::Duration,
 };
 
@@ -14,10 +14,12 @@ use reqwest::{
 };
 use semver::Version;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 
 pub const DEFAULT_RELEASE_SOURCE_NAME: &str = "github";
 pub const DEFAULT_REPOSITORY_URL: &str = "https://github.com/ret2shell/ret2boot";
+pub const RET2SHELL_REPOSITORY_URL: &str = "https://github.com/ret2shell/ret2shell";
 
 pub enum UpdateCheckResult {
   UpToDate,
@@ -41,6 +43,25 @@ pub enum UpdateCheckResult {
     source: String,
     repository_url: String,
   },
+}
+
+pub struct Ret2ShellChartDownload {
+  pub version: String,
+  pub path: PathBuf,
+  pub download_url: String,
+  pub release_url: String,
+}
+
+pub fn download_ret2shell_chart() -> Result<Ret2ShellChartDownload> {
+  Ret2ShellChartManager::new_default()?.download_latest_chart()
+}
+
+pub fn cache_dir_path() -> Result<PathBuf> {
+  cache_dir()
+}
+
+pub fn system_cache_dir_path() -> PathBuf {
+  PathBuf::from("/var/cache/ret2shell/ret2boot")
 }
 
 pub fn check_for_updates() -> UpdateCheckResult {
@@ -219,6 +240,103 @@ struct DownloadedAsset {
   reused: bool,
 }
 
+struct Ret2ShellChartManager {
+  client: Client,
+  cache_dir: PathBuf,
+  source: GitHubReleaseSource,
+}
+
+impl Ret2ShellChartManager {
+  fn new_default() -> Result<Self> {
+    Ok(Self {
+      client: Client::builder()
+        .https_only(true)
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("failed to build ret2shell chart HTTP client")?,
+      cache_dir: cache_dir()?,
+      source: GitHubReleaseSource::ret2shell(),
+    })
+  }
+
+  fn download_latest_chart(&self) -> Result<Ret2ShellChartDownload> {
+    let release = self
+      .source
+      .fetch_latest_release(&self.client)?
+      .ok_or_else(|| anyhow!("no published ret2shell release chart is available"))?;
+    let version = release.version.to_string();
+    let chart_name = format!("ret2shell-{version}.tgz");
+    let checksum_name = format!("{chart_name}.sha256");
+    let chart_asset = release
+      .asset_named(&chart_name)
+      .ok_or_else(|| anyhow!("latest ret2shell release is missing chart asset `{chart_name}`"))?;
+    let checksum_asset = release.asset_named(&checksum_name).ok_or_else(|| {
+      anyhow!("latest ret2shell release is missing checksum asset `{checksum_name}`")
+    })?;
+    let release_dir = self
+      .cache_dir
+      .join("charts")
+      .join("ret2shell")
+      .join(&version);
+    fs::create_dir_all(&release_dir).with_context(|| {
+      format!(
+        "failed to create ret2shell chart cache `{}`",
+        release_dir.display()
+      )
+    })?;
+
+    let chart_path = release_dir.join(&chart_name);
+    let checksum_path = release_dir.join(&checksum_name);
+    let checksum = download_text_asset(&self.client, checksum_asset)?;
+    fs::write(&checksum_path, &checksum)
+      .with_context(|| format!("failed to write `{}`", checksum_path.display()))?;
+    let expected_checksum = parse_sha256sum_line(&checksum, &chart_name)?;
+
+    if chart_path.is_file() {
+      if compute_sha256(&chart_path)? == expected_checksum {
+        return Ok(Ret2ShellChartDownload {
+          version,
+          path: chart_path,
+          download_url: chart_asset.download_url.clone(),
+          release_url: release.html_url,
+        });
+      }
+
+      fs::remove_file(&chart_path).with_context(|| {
+        format!(
+          "failed to remove stale ret2shell chart cache `{}`",
+          chart_path.display()
+        )
+      })?;
+    }
+
+    let temp_path = chart_path.with_extension("tgz.download");
+    download_asset_to_path(&self.client, chart_asset, &temp_path)?;
+
+    let actual_checksum = compute_sha256(&temp_path)?;
+    if actual_checksum != expected_checksum {
+      let _ = fs::remove_file(&temp_path);
+      return Err(anyhow!(
+        "downloaded ret2shell chart checksum mismatch: expected {expected_checksum}, got {actual_checksum}"
+      ));
+    }
+
+    fs::rename(&temp_path, &chart_path).with_context(|| {
+      format!(
+        "failed to move downloaded chart into place at `{}`",
+        chart_path.display()
+      )
+    })?;
+
+    Ok(Ret2ShellChartDownload {
+      version,
+      path: chart_path,
+      download_url: chart_asset.download_url.clone(),
+      release_url: release.html_url,
+    })
+  }
+}
+
 trait ReleaseSource {
   fn name(&self) -> &'static str;
   fn repository_url(&self) -> &str;
@@ -230,6 +348,12 @@ struct RemoteRelease {
   version_text: String,
   html_url: String,
   assets: Vec<RemoteAsset>,
+}
+
+impl RemoteRelease {
+  fn asset_named(&self, name: &str) -> Option<&RemoteAsset> {
+    self.assets.iter().find(|asset| asset.name == name)
+  }
 }
 
 struct RemoteAsset {
@@ -244,14 +368,17 @@ struct GitHubReleaseSource {
 
 impl GitHubReleaseSource {
   fn ret2boot() -> Self {
-    let repository_url = DEFAULT_REPOSITORY_URL.to_string();
+    Self::new("ret2shell", "ret2boot", DEFAULT_REPOSITORY_URL)
+  }
 
+  fn ret2shell() -> Self {
+    Self::new("ret2shell", "ret2shell", RET2SHELL_REPOSITORY_URL)
+  }
+
+  fn new(owner: &str, repo: &str, repository_url: &str) -> Self {
     Self {
-      latest_release_api: format!(
-        "https://api.github.com/repos/{}/{}/releases/latest",
-        "ret2shell", "ret2boot"
-      ),
-      repository_url,
+      latest_release_api: format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"),
+      repository_url: repository_url.to_string(),
     }
   }
 }
@@ -373,6 +500,85 @@ impl AssetSelector {
   }
 }
 
+fn download_text_asset(client: &Client, asset: &RemoteAsset) -> Result<String> {
+  client
+    .get(&asset.download_url)
+    .header(USER_AGENT, user_agent())
+    .send()
+    .with_context(|| format!("failed to request release asset `{}`", asset.download_url))?
+    .error_for_status()
+    .with_context(|| format!("release asset `{}` returned an error status", asset.name))?
+    .text()
+    .with_context(|| format!("failed to read release asset `{}`", asset.name))
+}
+
+fn download_asset_to_path(client: &Client, asset: &RemoteAsset, path: &Path) -> Result<()> {
+  let mut response = client
+    .get(&asset.download_url)
+    .header(USER_AGENT, user_agent())
+    .send()
+    .with_context(|| format!("failed to request release asset `{}`", asset.download_url))?
+    .error_for_status()
+    .with_context(|| format!("release asset `{}` returned an error status", asset.name))?;
+  let mut file =
+    File::create(path).with_context(|| format!("failed to create `{}`", path.display()))?;
+
+  io::copy(&mut response, &mut file)
+    .with_context(|| format!("failed to write `{}`", path.display()))?;
+
+  Ok(())
+}
+
+fn parse_sha256sum_line(contents: &str, expected_name: &str) -> Result<String> {
+  let line = contents
+    .lines()
+    .find(|line| !line.trim().is_empty())
+    .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is empty"))?;
+  let mut parts = line.split_whitespace();
+  let checksum = parts
+    .next()
+    .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is malformed"))?;
+  let file_name = parts
+    .next()
+    .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is missing the file name"))?
+    .trim_start_matches('*');
+
+  if file_name != expected_name {
+    return Err(anyhow!(
+      "checksum asset references `{file_name}` instead of `{expected_name}`"
+    ));
+  }
+
+  if checksum.len() != 64 || !checksum.chars().all(|ch| ch.is_ascii_hexdigit()) {
+    return Err(anyhow!(
+      "checksum asset for `{expected_name}` does not contain a valid sha256 digest"
+    ));
+  }
+
+  Ok(checksum.to_ascii_lowercase())
+}
+
+fn compute_sha256(path: &Path) -> Result<String> {
+  let mut file =
+    File::open(path).with_context(|| format!("failed to open `{}`", path.display()))?;
+  let mut digest = Sha256::new();
+  let mut buffer = [0_u8; 8192];
+
+  loop {
+    let read = file
+      .read(&mut buffer)
+      .with_context(|| format!("failed to read `{}`", path.display()))?;
+
+    if read == 0 {
+      break;
+    }
+
+    digest.update(&buffer[..read]);
+  }
+
+  Ok(format!("{:x}", digest.finalize()))
+}
+
 fn parse_release_version(raw: &str) -> Result<Version> {
   let normalized = raw
     .trim()
@@ -427,5 +633,39 @@ fn target_env() -> Option<&'static str> {
     Some("msvc")
   } else {
     None
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::parse_sha256sum_line;
+
+  #[test]
+  fn parses_standard_sha256sum_output() {
+    let checksum = parse_sha256sum_line(
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  ret2shell-3.10.4.tgz\n",
+      "ret2shell-3.10.4.tgz",
+    )
+    .expect("checksum should parse");
+
+    assert_eq!(
+      checksum,
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    );
+  }
+
+  #[test]
+  fn rejects_checksum_for_unexpected_file_name() {
+    let error = parse_sha256sum_line(
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  other.tgz\n",
+      "ret2shell-3.10.4.tgz",
+    )
+    .expect_err("checksum parser should reject mismatched asset names");
+
+    assert!(
+      error
+        .to_string()
+        .contains("checksum asset references `other.tgz` instead of `ret2shell-3.10.4.tgz`")
+    );
   }
 }

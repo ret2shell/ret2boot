@@ -1,9 +1,14 @@
-use anyhow::Result;
+use std::{
+  env, fs,
+  time::{SystemTime, UNIX_EPOCH},
+};
+
+use anyhow::{Context, Result};
 use rust_i18n::t;
 use tracing::{info, warn};
 
 use crate::{
-  config::Ret2BootConfig,
+  config::{ROOT_CONFIG_PATH, Ret2BootConfig},
   install::collectors::{Collector, ConfirmCollector, SingleSelectCollector},
   l10n,
   privilege::PrivilegeSession,
@@ -24,9 +29,56 @@ impl RuntimeState {
   ) -> Result<()> {
     self._privilege_session.run_command(program, args, envs)
   }
+
+  pub fn run_privileged_command_capture(
+    &self, program: &str, args: &[String], envs: &[(String, String)],
+  ) -> Result<String> {
+    self
+      ._privilege_session
+      .run_command_capture(program, args, envs)
+  }
+
+  pub fn persist_system_config_copy(&self, config: &Ret2BootConfig) -> Result<()> {
+    let stamp = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .map(|duration| duration.as_nanos())
+      .unwrap_or_default();
+    let temp_path = env::temp_dir().join(format!("ret2boot-system-config-{stamp}.toml"));
+    let contents = toml::to_string_pretty(config).context("failed to serialize app config")?;
+
+    fs::write(&temp_path, format!("{contents}\n"))
+      .with_context(|| format!("failed to write `{}`", temp_path.display()))?;
+
+    let install_result = self.run_privileged_command(
+      "install",
+      &[
+        "-D".to_string(),
+        "-m".to_string(),
+        "600".to_string(),
+        temp_path.display().to_string(),
+        ROOT_CONFIG_PATH.to_string(),
+      ],
+      &[],
+    );
+    let _ = fs::remove_file(&temp_path);
+
+    install_result
+  }
 }
 
 pub fn initialize(config: &mut Ret2BootConfig) -> Result<Option<RuntimeState>> {
+  initialize_with_safety_confirmation(config, true)
+}
+
+pub fn initialize_maintenance(config: &mut Ret2BootConfig) -> Result<RuntimeState> {
+  initialize_with_safety_confirmation(config, false)?.ok_or_else(|| {
+    anyhow::anyhow!("maintenance initialization exited before a runtime state was available")
+  })
+}
+
+fn initialize_with_safety_confirmation(
+  config: &mut Ret2BootConfig, require_safety_confirmation: bool,
+) -> Result<Option<RuntimeState>> {
   let config_path = Ret2BootConfig::path_display()?;
   let terminal_charset = TerminalCharset::detect();
   let mut needs_save = config.set_terminal_charset(terminal_charset.as_config_value());
@@ -55,16 +107,18 @@ pub fn initialize(config: &mut Ret2BootConfig) -> Result<Option<RuntimeState>> {
 
   handle_update_check(update::check_for_updates());
 
-  print_safety_notice(&config_path);
+  if require_safety_confirmation {
+    print_safety_notice(&config_path);
 
-  let should_continue =
-    ConfirmCollector::new(t!("startup.safety.continue_prompt"), false).collect()?;
+    let should_continue =
+      ConfirmCollector::new(t!("startup.safety.continue_prompt"), false).collect()?;
 
-  if !should_continue {
-    info!(config_path = %config_path, "user cancelled before deployment privileges");
-    println!();
-    println!("{}", ui::warning(t!("startup.safety.cancelled")));
-    return Ok(None);
+    if !should_continue {
+      info!(config_path = %config_path, "user cancelled before deployment privileges");
+      println!();
+      println!("{}", ui::warning(t!("startup.safety.cancelled")));
+      return Ok(None);
+    }
   }
 
   let already_root = PrivilegeSession::is_root_user();

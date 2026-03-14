@@ -1,7 +1,16 @@
-use std::collections::BTreeMap;
+use std::{
+  collections::{BTreeMap, BTreeSet},
+  fs::{self, File},
+  io::Read,
+  path::{Path, PathBuf},
+  thread,
+  time::Duration,
+};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use rust_i18n::t;
+use serde::Deserialize;
+use serde_yaml::{Deserializer, Value as YamlValue};
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
@@ -16,22 +25,23 @@ use crate::{
     PlatformServiceId, PlatformStorageMode,
   },
   install::collectors::{Collector, InputCollector, SingleSelectCollector},
-  resources, ui,
+  ui, update,
 };
 
-const PLATFORM_PLAN_DEST: &str = "/etc/ret2shell/ret2boot-platform-plan.yaml";
-const PLATFORM_BOOTSTRAP_DEST: &str = "/etc/ret2shell/ret2boot-platform-bootstrap.yaml";
+const PLATFORM_VALUES_DEST: &str = "/etc/ret2shell/ret2boot-platform-values.yaml";
+const PLATFORM_STORAGE_DEST: &str = "/etc/ret2shell/ret2boot-platform-storage.yaml";
 const PLATFORM_NAMESPACE: &str = "ret2shell-platform";
 const CHALLENGE_NAMESPACE: &str = "ret2shell-challenge";
-const PLATFORM_SERVICE_ACCOUNT: &str = "ret2shell-service";
-const PLATFORM_CLUSTER_ROLE: &str = "ret2shell-service";
-const PLATFORM_CLUSTER_ROLE_BINDING: &str = "ret2shell-service-global";
+const HELM_RELEASE_NAME: &str = "ret2shell";
+const HELM_RELEASE_TIMEOUT: &str = "15m0s";
+const PLATFORM_INGRESS_PATH: &str = "/";
+const PLATFORM_INGRESS_PATH_TYPE: &str = "Prefix";
+const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
+const LOCAL_PATH_PROVISIONER: &str = "rancher.io/local-path";
 
 #[derive(Clone, Copy)]
 struct PlatformServiceDefinition {
   id: PlatformServiceId,
-  release_name: &'static str,
-  namespace: &'static str,
   allow_disabled: bool,
   fixed_local_path: bool,
   legacy_local_disk_gib: u32,
@@ -41,8 +51,6 @@ struct PlatformServiceDefinition {
 const PLATFORM_SERVICE_DEFINITIONS: [PlatformServiceDefinition; 6] = [
   PlatformServiceDefinition {
     id: PlatformServiceId::Platform,
-    release_name: "ret2shell-platform",
-    namespace: PLATFORM_NAMESPACE,
     allow_disabled: false,
     fixed_local_path: true,
     legacy_local_disk_gib: 420,
@@ -50,8 +58,6 @@ const PLATFORM_SERVICE_DEFINITIONS: [PlatformServiceDefinition; 6] = [
   },
   PlatformServiceDefinition {
     id: PlatformServiceId::Database,
-    release_name: "ret2shell-database",
-    namespace: PLATFORM_NAMESPACE,
     allow_disabled: false,
     fixed_local_path: false,
     legacy_local_disk_gib: 140,
@@ -59,8 +65,6 @@ const PLATFORM_SERVICE_DEFINITIONS: [PlatformServiceDefinition; 6] = [
   },
   PlatformServiceDefinition {
     id: PlatformServiceId::Cache,
-    release_name: "ret2shell-cache",
-    namespace: PLATFORM_NAMESPACE,
     allow_disabled: false,
     fixed_local_path: false,
     legacy_local_disk_gib: 10,
@@ -68,8 +72,6 @@ const PLATFORM_SERVICE_DEFINITIONS: [PlatformServiceDefinition; 6] = [
   },
   PlatformServiceDefinition {
     id: PlatformServiceId::Queue,
-    release_name: "ret2shell-queue",
-    namespace: PLATFORM_NAMESPACE,
     allow_disabled: false,
     fixed_local_path: false,
     legacy_local_disk_gib: 10,
@@ -77,8 +79,6 @@ const PLATFORM_SERVICE_DEFINITIONS: [PlatformServiceDefinition; 6] = [
   },
   PlatformServiceDefinition {
     id: PlatformServiceId::Registry,
-    release_name: "ret2shell-registry",
-    namespace: PLATFORM_NAMESPACE,
     allow_disabled: true,
     fixed_local_path: false,
     legacy_local_disk_gib: 300,
@@ -86,8 +86,6 @@ const PLATFORM_SERVICE_DEFINITIONS: [PlatformServiceDefinition; 6] = [
   },
   PlatformServiceDefinition {
     id: PlatformServiceId::Logs,
-    release_name: "ret2shell-logs",
-    namespace: PLATFORM_NAMESPACE,
     allow_disabled: true,
     fixed_local_path: false,
     legacy_local_disk_gib: 3,
@@ -104,6 +102,63 @@ struct ExternalFieldDefinition {
 
 pub struct PlatformDeploymentStep;
 pub struct WorkerPlatformProbeStep;
+
+#[derive(Clone, Copy)]
+pub(crate) enum PlatformSyncMode {
+  InstallLatest,
+  SyncRecorded,
+  UpdateLatest,
+}
+
+pub(crate) struct PlatformSyncReport {
+  pub release_exists: bool,
+  pub chart_changed: bool,
+  pub values_changed: bool,
+  pub config_changed: bool,
+  pub blocked_changed: bool,
+  pub storage_changed: bool,
+}
+
+impl PlatformSyncReport {
+  pub(crate) fn has_changes(&self) -> bool {
+    !self.release_exists
+      || self.chart_changed
+      || self.values_changed
+      || self.config_changed
+      || self.blocked_changed
+      || self.storage_changed
+  }
+}
+
+struct ChartReference {
+  version: String,
+  path: PathBuf,
+  download_url: String,
+  release_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HelmReleaseSummary {
+  name: String,
+  chart: String,
+}
+
+#[derive(Default)]
+struct ClusterReleaseState {
+  release_exists: bool,
+  chart_version: Option<String>,
+  values: Option<YamlValue>,
+  config_toml: Option<String>,
+  blocked_content: Option<String>,
+}
+
+impl PlatformDeploymentStep {
+  pub(crate) fn sync_existing(
+    &self, ctx: &mut StepExecutionContext<'_>, mode: PlatformSyncMode,
+  ) -> Result<PlatformSyncReport> {
+    sync_platform_release(self, ctx, mode)
+  }
+}
 
 impl AtomicInstallStep for PlatformDeploymentStep {
   fn id(&self) -> InstallStepId {
@@ -160,12 +215,16 @@ impl AtomicInstallStep for PlatformDeploymentStep {
     }
 
     collect_platform_disk_plan(ctx)?;
+    collect_platform_public_host(ctx)?;
+    ensure_generated_platform_credentials(ctx)?;
 
     Ok(())
   }
 
   fn describe(&self, ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
     let summary = platform_plan_summary(ctx)?;
+    let _ = render_platform_values_yaml(&summary)?;
+    let _ = render_platform_storage_manifest(&summary);
     let mut details = vec![
       t!(
         "install.steps.platform_plan.namespaces",
@@ -174,15 +233,8 @@ impl AtomicInstallStep for PlatformDeploymentStep {
       )
       .to_string(),
       t!(
-        "install.steps.platform_plan.service_account",
-        name = PLATFORM_SERVICE_ACCOUNT,
-        namespace = PLATFORM_NAMESPACE
-      )
-      .to_string(),
-      t!(
-        "install.steps.platform_plan.rbac",
-        role = PLATFORM_CLUSTER_ROLE,
-        binding = PLATFORM_CLUSTER_ROLE_BINDING
+        "install.steps.platform_plan.public_host",
+        host = summary.public_host.as_str()
       )
       .to_string(),
       t!(
@@ -220,51 +272,56 @@ impl AtomicInstallStep for PlatformDeploymentStep {
   }
 
   fn install(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
-    let summary = platform_plan_summary(&ctx.as_plan_context())?;
-    install_directory(ctx, "/etc/ret2shell")?;
-
-    let bootstrap = render_platform_bootstrap_manifest()?;
-    let bootstrap_staged = stage_text_file("ret2boot-platform-bootstrap", "yaml", bootstrap)?;
-    install_staged_file(ctx, &bootstrap_staged, PLATFORM_BOOTSTRAP_DEST)?;
-    let _ = std::fs::remove_file(&bootstrap_staged);
-
-    let staged = stage_text_file(
-      "ret2boot-platform-plan",
-      "yaml",
-      render_platform_plan_yaml(&summary),
-    )?;
-    install_staged_file(ctx, &staged, PLATFORM_PLAN_DEST)?;
-    let _ = std::fs::remove_file(&staged);
-
-    ctx.persist_change(
-      "install.execution.platform.plan",
-      PLATFORM_PLAN_DEST,
-      |config| config.set_install_step_metadata(self.id(), "plan_path", PLATFORM_PLAN_DEST),
-    )?;
-    ctx.persist_change(
-      "install.execution.platform.bootstrap",
-      PLATFORM_BOOTSTRAP_DEST,
-      |config| {
-        config.set_install_step_metadata(self.id(), "bootstrap_path", PLATFORM_BOOTSTRAP_DEST)
-      },
-    )?;
-
-    Ok(())
+    self
+      .sync_existing(ctx, PlatformSyncMode::InstallLatest)
+      .map(|_| ())
   }
 
   fn uninstall(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    let helm_envs = helm_envs(&ctx.as_plan_context())?;
+    let storage_path = ctx
+      .config()
+      .install_step_metadata(self.id(), "storage_path")
+      .map(str::to_string);
+
+    ctx.run_privileged_command(
+      "helm",
+      &[
+        "uninstall".to_string(),
+        HELM_RELEASE_NAME.to_string(),
+        "-n".to_string(),
+        PLATFORM_NAMESPACE.to_string(),
+        "--ignore-not-found".to_string(),
+        "--wait".to_string(),
+        "--timeout".to_string(),
+        "5m0s".to_string(),
+      ],
+      &helm_envs,
+    )?;
+
+    if let Some(storage_path) = storage_path.filter(|path| PathBuf::from(path).is_file()) {
+      ClusterAccess::from_plan_context(&ctx.as_plan_context())?
+        .delete_manifest(ctx, &storage_path)?;
+    }
+
     ctx.run_privileged_command(
       "rm",
       &[
         "-f".to_string(),
-        PLATFORM_PLAN_DEST.to_string(),
-        PLATFORM_BOOTSTRAP_DEST.to_string(),
+        PLATFORM_VALUES_DEST.to_string(),
+        PLATFORM_STORAGE_DEST.to_string(),
       ],
       &[],
     )?;
-    ctx.persist_change("install.execution.platform.plan", "removed", |config| {
-      let changed = config.remove_install_step_metadata(self.id(), "plan_path");
-      config.remove_install_step_metadata(self.id(), "bootstrap_path") || changed
+    ctx.persist_change("install.execution.platform.release", "removed", |config| {
+      let changed = config.remove_install_step_metadata(self.id(), "values_path");
+      let changed = config.remove_install_step_metadata(self.id(), "storage_path") || changed;
+      let changed = config.remove_install_step_metadata(self.id(), "release_name") || changed;
+      let changed = config.remove_install_step_metadata(self.id(), "release_namespace") || changed;
+      let changed = config.remove_install_step_metadata(self.id(), "chart_version") || changed;
+      let changed = config.remove_install_step_metadata(self.id(), "chart_path") || changed;
+      let changed = config.remove_install_step_metadata(self.id(), "chart_download_url") || changed;
+      config.remove_install_step_metadata(self.id(), "chart_release_url") || changed
     })?;
     Ok(())
   }
@@ -359,7 +416,7 @@ impl AtomicInstallStep for WorkerPlatformProbeStep {
           "get".to_string(),
           "pods".to_string(),
           "-l".to_string(),
-          "ret.sh.cn/workload=platform".to_string(),
+          "app.kubernetes.io/component=platform".to_string(),
           "-o".to_string(),
           "wide".to_string(),
         ],
@@ -380,7 +437,7 @@ impl AtomicInstallStep for WorkerPlatformProbeStep {
             "get".to_string(),
             "pods".to_string(),
             "-l".to_string(),
-            "ret.sh.cn/workload=platform".to_string(),
+            "app.kubernetes.io/component=platform".to_string(),
             "-o".to_string(),
             "wide".to_string(),
           ],
@@ -407,17 +464,24 @@ struct PlatformPlanSummary {
   requested_disk_gib: u32,
   allocated_local_disk_gib: u32,
   unallocated_local_disk_gib: u32,
+  public_host: String,
+  ingress_class_name: String,
+  signing_key: String,
+  blocked_content: String,
+  internal_database_password: String,
+  internal_cache_password: String,
+  internal_queue_token: String,
+  internal_registry_host: String,
   services: Vec<ResolvedPlatformServicePlan>,
 }
 
 struct ResolvedPlatformServicePlan {
   id: PlatformServiceId,
-  release_name: &'static str,
-  namespace: &'static str,
   deployment: PlatformServiceDeploymentMode,
   storage_mode: Option<PlatformStorageMode>,
   storage_class_name: Option<String>,
   local_disk_gib: Option<u32>,
+  persistence_size_gib: Option<u32>,
   external_values: BTreeMap<String, String>,
   external_summary: Vec<(String, String)>,
 }
@@ -437,11 +501,85 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     .platform
     .requested_disk_gib
     .ok_or_else(|| anyhow!("requested disk budget is required before planning the platform"))?;
+  let public_host = normalize_public_host(
+    ctx
+      .config()
+      .install
+      .questionnaire
+      .platform
+      .public_host
+      .as_deref()
+      .ok_or_else(|| {
+        anyhow!("a public host is required before planning the platform deployment")
+      })?,
+  )?;
+  let ingress_class_name =
+    platform_ingress_class(ctx.kubernetes_distribution().ok_or_else(|| {
+      anyhow!("kubernetes distribution is required before planning the platform deployment")
+    })?)
+    .to_string();
+  let signing_key = required_platform_secret(
+    ctx
+      .config()
+      .install
+      .questionnaire
+      .platform
+      .signing_key
+      .as_deref(),
+    "platform signing key",
+  )?;
+  let blocked_content = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .blocked_content
+    .clone()
+    .unwrap_or_default();
 
   let services = PLATFORM_SERVICE_DEFINITIONS
     .iter()
     .map(|definition| resolve_platform_service_plan(ctx, definition))
     .collect::<Result<Vec<_>>>()?;
+  let internal_database_password = required_internal_secret(
+    &services,
+    PlatformServiceId::Database,
+    ctx
+      .config()
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .database_password
+      .as_deref(),
+    "internal postgresql password",
+  )?;
+  let internal_cache_password = required_internal_secret(
+    &services,
+    PlatformServiceId::Cache,
+    ctx
+      .config()
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .cache_password
+      .as_deref(),
+    "internal valkey password",
+  )?;
+  let internal_queue_token = required_internal_secret(
+    &services,
+    PlatformServiceId::Queue,
+    ctx
+      .config()
+      .install
+      .questionnaire
+      .platform
+      .internal_credentials
+      .queue_token
+      .as_deref(),
+    "internal nats token",
+  )?;
   let allocated_local_disk_gib = services
     .iter()
     .filter_map(|service| service.local_disk_gib)
@@ -456,6 +594,14 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     requested_disk_gib,
     allocated_local_disk_gib,
     unallocated_local_disk_gib: requested_disk_gib - allocated_local_disk_gib,
+    public_host: public_host.clone(),
+    ingress_class_name,
+    signing_key,
+    blocked_content,
+    internal_database_password,
+    internal_cache_password,
+    internal_queue_token,
+    internal_registry_host: derive_internal_registry_host(&public_host),
     services,
   })
 }
@@ -539,15 +685,29 @@ fn resolve_platform_service_plan(
   } else {
     None
   };
+  let persistence_size_gib = if deployment == PlatformServiceDeploymentMode::Local {
+    Some(match storage_mode {
+      Some(PlatformStorageMode::LocalPath) => local_disk_gib
+        .ok_or_else(|| anyhow!("local storage size is required before planning the platform"))?,
+      Some(PlatformStorageMode::CustomStorageClass) => definition.legacy_local_disk_gib,
+      None => {
+        bail!(
+          "storage mode for service `{}` is required before planning the platform",
+          definition.id.as_config_value()
+        )
+      }
+    })
+  } else {
+    None
+  };
 
   Ok(ResolvedPlatformServicePlan {
     id: definition.id,
-    release_name: definition.release_name,
-    namespace: definition.namespace,
     deployment,
     storage_mode,
     storage_class_name,
     local_disk_gib,
+    persistence_size_gib,
     external_values,
     external_summary,
   })
@@ -558,6 +718,144 @@ fn print_platform_bootstrap_notice() {
   println!("{}", ui::section(t!("install.platform.resources_intro")));
   println!("{}", ui::note(t!("install.platform.questionnaire_intro")));
   println!("{}", ui::note(t!("install.platform.storage_notice")));
+}
+
+fn collect_platform_public_host(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
+  let default_host = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .public_host
+    .clone()
+    .or_else(|| {
+      ctx
+        .preflight_state()
+        .public_network_ip()
+        .map(str::to_string)
+    })
+    .unwrap_or_else(|| "ret2shell.local".to_string());
+  let public_host = normalize_public_host(
+    &InputCollector::new(t!("install.platform.public_host.prompt"))
+      .with_default(default_host)
+      .collect()?,
+  )?;
+
+  ctx.persist_change(
+    "install.questionnaire.platform.public_host",
+    &public_host,
+    |config| config.set_platform_public_host(public_host.clone()),
+  )?;
+
+  Ok(())
+}
+
+fn ensure_generated_platform_credentials(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
+  let signing_key = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .signing_key
+    .clone();
+  let database_password = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .internal_credentials
+    .database_password
+    .clone();
+  let cache_password = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .internal_credentials
+    .cache_password
+    .clone();
+  let queue_token = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .internal_credentials
+    .queue_token
+    .clone();
+  let blocked_content = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .blocked_content
+    .clone();
+
+  ensure_generated_secret(
+    ctx,
+    "install.questionnaire.platform.signing_key",
+    signing_key.as_deref(),
+    32,
+    |config, value| config.set_platform_signing_key(value),
+  )?;
+  ensure_generated_secret(
+    ctx,
+    "install.questionnaire.platform.database_password",
+    database_password.as_deref(),
+    24,
+    |config, value| config.set_platform_internal_database_password(value),
+  )?;
+  ensure_generated_secret(
+    ctx,
+    "install.questionnaire.platform.cache_password",
+    cache_password.as_deref(),
+    24,
+    |config, value| config.set_platform_internal_cache_password(value),
+  )?;
+  ensure_generated_secret(
+    ctx,
+    "install.questionnaire.platform.queue_token",
+    queue_token.as_deref(),
+    24,
+    |config, value| config.set_platform_internal_queue_token(value),
+  )?;
+
+  if blocked_content.is_none() {
+    ctx.persist_change(
+      "install.questionnaire.platform.blocked_content",
+      "",
+      |config| config.set_platform_blocked_content(String::new()),
+    )?;
+  }
+
+  Ok(())
+}
+
+fn ensure_generated_secret<F>(
+  ctx: &mut StepQuestionContext<'_>, field: &'static str, current: Option<&str>, bytes: usize,
+  update: F,
+) -> Result<()>
+where
+  F: FnOnce(&mut crate::config::Ret2BootConfig, String) -> bool, {
+  if current.is_some_and(|value| !value.trim().is_empty()) {
+    return Ok(());
+  }
+
+  let generated = generate_secret_hex(bytes)?;
+  ctx.persist_change(field, "[generated]", |config| {
+    update(config, generated.clone())
+  })?;
+
+  Ok(())
+}
+
+fn generate_secret_hex(bytes: usize) -> Result<String> {
+  let mut file = File::open("/dev/urandom").context("failed to open /dev/urandom")?;
+  let mut buffer = vec![0_u8; bytes];
+  file
+    .read_exact(&mut buffer)
+    .context("failed to read random bytes from /dev/urandom")?;
+
+  Ok(buffer.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn collect_platform_service(
@@ -1185,96 +1483,1054 @@ fn run_worker_probe_command(
   }
 }
 
-fn render_platform_plan_yaml(summary: &PlatformPlanSummary) -> String {
-  let mut lines = vec![
-    "apiVersion: ret2boot.ret2shell/v1alpha1".to_string(),
-    "kind: PlatformPlan".to_string(),
-    "metadata:".to_string(),
-    "  name: ret2boot-platform".to_string(),
-    "spec:".to_string(),
-    format!("  platformNamespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
-    format!("  challengeNamespace: {}", yaml_quote(CHALLENGE_NAMESPACE)),
-    "  serviceAccount:".to_string(),
-    format!("    name: {}", yaml_quote(PLATFORM_SERVICE_ACCOUNT)),
-    format!("    namespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
-    "  clusterRbac:".to_string(),
-    format!("    role: {}", yaml_quote(PLATFORM_CLUSTER_ROLE)),
-    format!("    binding: {}", yaml_quote(PLATFORM_CLUSTER_ROLE_BINDING)),
-    "  configMaps:".to_string(),
-    "    - ret2shell-config".to_string(),
-    "    - ret2shell-blocked".to_string(),
-    "  disk:".to_string(),
-    format!("    remainingGiB: {}", summary.remaining_disk_gib),
-    format!("    requestedGiB: {}", summary.requested_disk_gib),
-    format!(
-      "    allocatedLocalGiB: {}",
-      summary.allocated_local_disk_gib
-    ),
-    format!("    unallocatedGiB: {}", summary.unallocated_local_disk_gib),
-    "  services:".to_string(),
-  ];
+fn sync_platform_release(
+  step: &PlatformDeploymentStep, ctx: &mut StepExecutionContext<'_>, mode: PlatformSyncMode,
+) -> Result<PlatformSyncReport> {
+  let summary = platform_plan_summary(&ctx.as_plan_context())?;
+  let cluster_access = ClusterAccess::from_plan_context(&ctx.as_plan_context())?;
+  let helm_envs = helm_envs(&ctx.as_plan_context())?;
+  let chart = resolve_chart_reference(ctx, step, mode)?;
 
-  for service in &summary.services {
-    lines.push(format!("    - id: {}", service.id.as_config_value()));
-    lines.push(format!(
-      "      releaseName: {}",
-      yaml_quote(service.release_name)
-    ));
-    lines.push(format!(
-      "      namespace: {}",
-      yaml_quote(service.namespace)
-    ));
-    lines.push(format!(
-      "      deployment: {}",
-      service.deployment.as_config_value()
-    ));
+  install_directory(ctx, "/etc/ret2shell")?;
+  cluster_access.wait_for_nodes_ready(ctx)?;
 
-    if let Some(storage_mode) = service.storage_mode {
+  let desired_values = render_platform_values_yaml(&summary)?;
+  let _ = sync_managed_file(ctx, PLATFORM_VALUES_DEST, &desired_values)?;
+  let storage_changed = sync_storage_manifest(
+    ctx,
+    step,
+    &cluster_access,
+    render_platform_storage_manifest(&summary),
+  )?;
+
+  let rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
+  let cluster_state = query_cluster_release_state(ctx, &cluster_access, &helm_envs)?;
+  let report = PlatformSyncReport {
+    release_exists: cluster_state.release_exists,
+    chart_changed: cluster_state.chart_version.as_deref() != Some(chart.version.as_str()),
+    values_changed: cluster_state.values != Some(parse_yaml_value(&desired_values)?),
+    config_changed: cluster_state.config_toml.as_deref()
+      != Some(rendered_artifacts.config_toml.as_str()),
+    blocked_changed: cluster_state.blocked_content.as_deref()
+      != Some(rendered_artifacts.blocked_content.as_str()),
+    storage_changed,
+  };
+
+  persist_platform_chart_metadata(step, ctx, &chart)?;
+
+  if !report.has_changes() {
+    return Ok(report);
+  }
+
+  ctx.run_privileged_command(
+    "helm",
+    &[
+      "upgrade".to_string(),
+      "--install".to_string(),
+      HELM_RELEASE_NAME.to_string(),
+      chart.path.display().to_string(),
+      "-n".to_string(),
+      PLATFORM_NAMESPACE.to_string(),
+      "--create-namespace".to_string(),
+      "-f".to_string(),
+      PLATFORM_VALUES_DEST.to_string(),
+      "--wait".to_string(),
+      "--timeout".to_string(),
+      HELM_RELEASE_TIMEOUT.to_string(),
+    ],
+    &helm_envs,
+  )?;
+
+  if report.release_exists {
+    cluster_access.restart_release_workloads(ctx)?;
+  }
+
+  Ok(report)
+}
+
+fn resolve_chart_reference(
+  ctx: &StepExecutionContext<'_>, step: &PlatformDeploymentStep, mode: PlatformSyncMode,
+) -> Result<ChartReference> {
+  match mode {
+    PlatformSyncMode::InstallLatest | PlatformSyncMode::UpdateLatest => {
+      let chart = update::download_ret2shell_chart()?;
+      copy_chart_to_system_cache(
+        ctx,
+        ChartReference {
+          version: chart.version,
+          path: chart.path,
+          download_url: chart.download_url,
+          release_url: chart.release_url,
+        },
+      )
+    }
+    PlatformSyncMode::SyncRecorded => {
+      let chart_version = ctx
+        .config()
+        .install_step_metadata(step.id(), "chart_version")
+        .map(str::to_string)
+        .ok_or_else(|| {
+          anyhow!("the installed ret2shell chart version is unknown; run `ret2boot update` first")
+        })?;
+      let configured_chart_path = ctx
+        .config()
+        .install_step_metadata(step.id(), "chart_path")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+          anyhow!("the cached ret2shell chart path is missing; run `ret2boot update` first")
+        })?;
+      let chart_path = if configured_chart_path.is_file() {
+        configured_chart_path
+      } else {
+        let system_chart_path = system_chart_cache_path(&chart_version);
+
+        if system_chart_path.is_file() {
+          system_chart_path
+        } else {
+          bail!(
+            "the cached ret2shell chart `{}` is missing; run `ret2boot update` first",
+            configured_chart_path.display()
+          );
+        }
+      };
+
+      Ok(ChartReference {
+        version: chart_version,
+        path: chart_path,
+        download_url: ctx
+          .config()
+          .install_step_metadata(step.id(), "chart_download_url")
+          .unwrap_or_default()
+          .to_string(),
+        release_url: ctx
+          .config()
+          .install_step_metadata(step.id(), "chart_release_url")
+          .unwrap_or_default()
+          .to_string(),
+      })
+    }
+  }
+}
+
+fn copy_chart_to_system_cache(
+  ctx: &StepExecutionContext<'_>, chart: ChartReference,
+) -> Result<ChartReference> {
+  let system_chart_path = system_chart_cache_path(&chart.version);
+  let system_chart_dir = system_chart_path.parent().expect("chart cache has parent");
+
+  install_directory(ctx, &system_chart_dir.display().to_string())?;
+  ctx.run_privileged_command(
+    "install",
+    &[
+      "-m".to_string(),
+      "644".to_string(),
+      chart.path.display().to_string(),
+      system_chart_path.display().to_string(),
+    ],
+    &[],
+  )?;
+
+  Ok(ChartReference {
+    path: system_chart_path,
+    ..chart
+  })
+}
+
+fn system_chart_cache_path(version: &str) -> PathBuf {
+  update::system_cache_dir_path()
+    .join("charts")
+    .join("ret2shell")
+    .join(version)
+    .join(format!("ret2shell-{version}.tgz"))
+}
+
+fn persist_platform_chart_metadata(
+  step: &PlatformDeploymentStep, ctx: &mut StepExecutionContext<'_>, chart: &ChartReference,
+) -> Result<()> {
+  ctx.persist_change(
+    "install.execution.platform.values",
+    PLATFORM_VALUES_DEST,
+    |config| config.set_install_step_metadata(step.id(), "values_path", PLATFORM_VALUES_DEST),
+  )?;
+  ctx.persist_change(
+    "install.execution.platform.release",
+    HELM_RELEASE_NAME,
+    |config| {
+      let changed = config.set_install_step_metadata(step.id(), "release_name", HELM_RELEASE_NAME);
+      let changed =
+        config.set_install_step_metadata(step.id(), "release_namespace", PLATFORM_NAMESPACE)
+          || changed;
+      let changed =
+        config.set_install_step_metadata(step.id(), "chart_version", chart.version.clone())
+          || changed;
+      let changed =
+        config.set_install_step_metadata(step.id(), "chart_path", chart.path.display().to_string())
+          || changed;
+      let changed = config.set_install_step_metadata(
+        step.id(),
+        "chart_download_url",
+        chart.download_url.clone(),
+      ) || changed;
+      config.set_install_step_metadata(step.id(), "chart_release_url", chart.release_url.clone())
+        || changed
+    },
+  )?;
+
+  Ok(())
+}
+
+fn sync_managed_file(ctx: &StepExecutionContext<'_>, dest: &str, contents: &str) -> Result<bool> {
+  if read_privileged_text_file(ctx, dest)?.as_deref() == Some(contents) {
+    return Ok(false);
+  }
+
+  let staged = stage_text_file("ret2boot-managed", "yaml", contents.to_string())?;
+  install_staged_file(ctx, &staged, dest)?;
+  let _ = fs::remove_file(&staged);
+
+  Ok(true)
+}
+
+fn sync_storage_manifest(
+  ctx: &mut StepExecutionContext<'_>, step: &PlatformDeploymentStep,
+  cluster_access: &ClusterAccess, desired_storage_manifest: Option<String>,
+) -> Result<bool> {
+  let previous_storage_path = ctx
+    .config()
+    .install_step_metadata(step.id(), "storage_path")
+    .map(str::to_string);
+  let previous_storage_contents = previous_storage_path
+    .as_deref()
+    .filter(|path| Path::new(path).is_file())
+    .map(|path| read_privileged_text_file(ctx, path))
+    .transpose()?
+    .flatten();
+  let desired_storage_classes = desired_storage_manifest
+    .as_deref()
+    .map(extract_storage_class_names)
+    .transpose()?
+    .unwrap_or_default();
+  let mut missing_storage_classes = false;
+  for storage_class in &desired_storage_classes {
+    if !cluster_access.storage_class_exists(ctx, storage_class)? {
+      missing_storage_classes = true;
+      break;
+    }
+  }
+  let manifest_changed =
+    previous_storage_contents.as_deref() != desired_storage_manifest.as_deref();
+
+  if manifest_changed
+    && let Some(previous_storage_path) = previous_storage_path
+      .as_deref()
+      .filter(|path| Path::new(path).is_file())
+  {
+    cluster_access.delete_manifest(ctx, previous_storage_path)?;
+  }
+
+  match desired_storage_manifest {
+    Some(storage_manifest) => {
+      let file_changed = sync_managed_file(ctx, PLATFORM_STORAGE_DEST, &storage_manifest)?;
+
+      if manifest_changed || file_changed || missing_storage_classes {
+        cluster_access.apply_manifest(ctx, PLATFORM_STORAGE_DEST)?;
+      }
+
+      ctx.persist_change(
+        "install.execution.platform.storage",
+        PLATFORM_STORAGE_DEST,
+        |config| config.set_install_step_metadata(step.id(), "storage_path", PLATFORM_STORAGE_DEST),
+      )?;
+
+      Ok(manifest_changed || file_changed || missing_storage_classes)
+    }
+    None => {
+      if let Some(previous_storage_path) = previous_storage_path
+        .as_deref()
+        .filter(|path| Path::new(path).is_file())
+      {
+        cluster_access.delete_manifest(ctx, previous_storage_path)?;
+      }
+
+      let removed_file = if Path::new(PLATFORM_STORAGE_DEST).is_file() {
+        ctx.run_privileged_command(
+          "rm",
+          &["-f".to_string(), PLATFORM_STORAGE_DEST.to_string()],
+          &[],
+        )?;
+        true
+      } else {
+        false
+      };
+
+      ctx.persist_change("install.execution.platform.storage", "removed", |config| {
+        config.remove_install_step_metadata(step.id(), "storage_path")
+      })?;
+
+      Ok(manifest_changed || removed_file)
+    }
+  }
+}
+
+fn extract_storage_class_names(manifest: &str) -> Result<Vec<String>> {
+  let documents = Deserializer::from_str(manifest)
+    .map(YamlValue::deserialize)
+    .collect::<std::result::Result<Vec<_>, _>>()
+    .context("failed to parse the rendered storage manifest")?;
+
+  Ok(
+    documents
+      .into_iter()
+      .filter(|document| document["kind"].as_str() == Some("StorageClass"))
+      .filter_map(|document| document["metadata"]["name"].as_str().map(str::to_string))
+      .collect(),
+  )
+}
+
+fn read_privileged_text_file(ctx: &StepExecutionContext<'_>, path: &str) -> Result<Option<String>> {
+  if !Path::new(path).is_file() {
+    return Ok(None);
+  }
+
+  ctx
+    .run_privileged_command_capture("cat", &[path.to_string()], &[])
+    .map(Some)
+}
+
+fn query_cluster_release_state(
+  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess, helm_envs: &[(String, String)],
+) -> Result<ClusterReleaseState> {
+  let Some(release) = current_helm_release(ctx, helm_envs)? else {
+    return Ok(ClusterReleaseState::default());
+  };
+
+  Ok(ClusterReleaseState {
+    release_exists: true,
+    chart_version: parse_release_chart_version(&release.chart),
+    values: Some(current_release_values(ctx, helm_envs)?),
+    config_toml: cluster_access.capture_namespaced_object_template(
+      ctx,
+      PLATFORM_NAMESPACE,
+      "secret",
+      "ret2shell-config",
+      "{{index .data \"config.toml\" | base64decode}}",
+    )?,
+    blocked_content: cluster_access.capture_namespaced_object_template(
+      ctx,
+      PLATFORM_NAMESPACE,
+      "configmap",
+      "ret2shell-blocked",
+      "{{index .data \"blocked.txt\"}}",
+    )?,
+  })
+}
+
+fn current_helm_release(
+  ctx: &StepExecutionContext<'_>, helm_envs: &[(String, String)],
+) -> Result<Option<HelmReleaseSummary>> {
+  let output = ctx.run_privileged_command_capture(
+    "helm",
+    &[
+      "list".to_string(),
+      "-n".to_string(),
+      PLATFORM_NAMESPACE.to_string(),
+      "--filter".to_string(),
+      format!("^{HELM_RELEASE_NAME}$"),
+      "-o".to_string(),
+      "json".to_string(),
+    ],
+    helm_envs,
+  )?;
+  let releases: Vec<HelmReleaseSummary> =
+    serde_json::from_str(output.trim()).context("failed to parse `helm list` output")?;
+
+  Ok(
+    releases
+      .into_iter()
+      .find(|release| release.name == HELM_RELEASE_NAME),
+  )
+}
+
+fn current_release_values(
+  ctx: &StepExecutionContext<'_>, helm_envs: &[(String, String)],
+) -> Result<YamlValue> {
+  let output = ctx.run_privileged_command_capture(
+    "helm",
+    &[
+      "get".to_string(),
+      "values".to_string(),
+      HELM_RELEASE_NAME.to_string(),
+      "-n".to_string(),
+      PLATFORM_NAMESPACE.to_string(),
+      "-o".to_string(),
+      "yaml".to_string(),
+    ],
+    helm_envs,
+  )?;
+
+  parse_yaml_value(&output)
+}
+
+struct RenderedChartArtifacts {
+  config_toml: String,
+  blocked_content: String,
+}
+
+fn render_chart_artifacts(
+  ctx: &StepExecutionContext<'_>, chart: &ChartReference, helm_envs: &[(String, String)],
+) -> Result<RenderedChartArtifacts> {
+  let output = ctx.run_privileged_command_capture(
+    "helm",
+    &[
+      "template".to_string(),
+      HELM_RELEASE_NAME.to_string(),
+      chart.path.display().to_string(),
+      "-n".to_string(),
+      PLATFORM_NAMESPACE.to_string(),
+      "-f".to_string(),
+      PLATFORM_VALUES_DEST.to_string(),
+    ],
+    helm_envs,
+  )?;
+  let documents = Deserializer::from_str(&output)
+    .map(YamlValue::deserialize)
+    .collect::<std::result::Result<Vec<_>, _>>()
+    .context("failed to parse `helm template` output")?;
+  let mut config_toml = None;
+  let mut blocked_content = None;
+
+  for document in documents {
+    let kind = document["kind"].as_str();
+    let name = document["metadata"]["name"].as_str();
+
+    match (kind, name) {
+      (Some("Secret"), Some("ret2shell-config")) => {
+        config_toml = document["stringData"]["config.toml"]
+          .as_str()
+          .map(str::to_string);
+      }
+      (Some("ConfigMap"), Some("ret2shell-blocked")) => {
+        blocked_content = Some(
+          document["data"]["blocked.txt"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        );
+      }
+      _ => {}
+    }
+  }
+
+  Ok(RenderedChartArtifacts {
+    config_toml: config_toml.ok_or_else(|| {
+      anyhow!("the rendered ret2shell chart did not contain the generated platform config secret")
+    })?,
+    blocked_content: blocked_content.ok_or_else(|| {
+      anyhow!("the rendered ret2shell chart did not contain the generated blocked configmap")
+    })?,
+  })
+}
+
+fn parse_yaml_value(contents: &str) -> Result<YamlValue> {
+  if contents.trim().is_empty() {
+    return Ok(YamlValue::Null);
+  }
+
+  serde_yaml::from_str(contents).context("failed to parse yaml content")
+}
+
+fn parse_release_chart_version(chart: &str) -> Option<String> {
+  chart.strip_prefix("ret2shell-").map(str::to_string)
+}
+
+fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> {
+  let platform = planned_service(summary, PlatformServiceId::Platform)?;
+  let database = planned_service(summary, PlatformServiceId::Database)?;
+  let cache = planned_service(summary, PlatformServiceId::Cache)?;
+  let queue = planned_service(summary, PlatformServiceId::Queue)?;
+  let registry = planned_service(summary, PlatformServiceId::Registry)?;
+  let logs = planned_service(summary, PlatformServiceId::Logs)?;
+
+  let mut lines = vec!["platform:".to_string()];
+  lines.push("  exposure:".to_string());
+  lines.push("    type: ingress".to_string());
+  lines.push("  ingress:".to_string());
+  lines.push(format!(
+    "    className: {}",
+    yaml_quote(&summary.ingress_class_name)
+  ));
+  lines.push("    hosts:".to_string());
+  lines.push(format!(
+    "      - host: {}",
+    yaml_quote(&summary.public_host)
+  ));
+  lines.push("        paths:".to_string());
+  lines.push(format!(
+    "          - path: {}",
+    yaml_quote(PLATFORM_INGRESS_PATH)
+  ));
+  lines.push(format!(
+    "            pathType: {PLATFORM_INGRESS_PATH_TYPE}"
+  ));
+  lines.push("  config:".to_string());
+  lines.push("    auth:".to_string());
+  lines.push(format!(
+    "      signingKey: {}",
+    yaml_quote(&summary.signing_key)
+  ));
+  lines.push("    server:".to_string());
+  lines.push(format!(
+    "      externalDomain: {}",
+    yaml_quote(&summary.public_host)
+  ));
+  lines.push("      externalHttps: false".to_string());
+  lines.push("  blocked:".to_string());
+  push_yaml_string_field(&mut lines, "    ", "content", &summary.blocked_content);
+  append_local_persistence(&mut lines, "  ", platform)?;
+
+  lines.push(String::new());
+  lines.push("postgresql:".to_string());
+  match database.deployment {
+    PlatformServiceDeploymentMode::Local => {
+      lines.push("  mode: internal".to_string());
+      lines.push("  auth:".to_string());
       lines.push(format!(
-        "      storageMode: {}",
-        storage_mode.as_config_value()
+        "    password: {}",
+        yaml_quote(&summary.internal_database_password)
+      ));
+      append_local_persistence(&mut lines, "  ", database)?;
+    }
+    PlatformServiceDeploymentMode::External => {
+      lines.push("  mode: external".to_string());
+      lines.push("  external:".to_string());
+      lines.push(format!(
+        "    host: {}",
+        yaml_quote(required_external_value(database, "host")?)
+      ));
+      lines.push(format!(
+        "    port: {}",
+        parse_external_u16(database, "port")?
+      ));
+      lines.push(format!(
+        "    database: {}",
+        yaml_quote(required_external_value(database, "database")?)
+      ));
+      lines.push(format!(
+        "    username: {}",
+        yaml_quote(required_external_value(database, "username")?)
+      ));
+      lines.push(format!(
+        "    password: {}",
+        yaml_quote(required_external_value(database, "password")?)
+      ));
+      lines.push(format!(
+        "    sslMode: {}",
+        yaml_quote(required_external_value(database, "ssl_mode")?)
       ));
     }
-    if let Some(storage_class_name) = &service.storage_class_name {
+    PlatformServiceDeploymentMode::Disabled => {
+      bail!("postgresql cannot be disabled in the ret2shell helm deployment")
+    }
+  }
+
+  lines.push(String::new());
+  lines.push("valkey:".to_string());
+  match cache.deployment {
+    PlatformServiceDeploymentMode::Local => {
+      lines.push("  mode: internal".to_string());
+      lines.push("  auth:".to_string());
+      lines.push("    enabled: true".to_string());
       lines.push(format!(
-        "      storageClassName: {}",
-        yaml_quote(storage_class_name)
+        "    password: {}",
+        yaml_quote(&summary.internal_cache_password)
+      ));
+      append_local_persistence(&mut lines, "  ", cache)?;
+    }
+    PlatformServiceDeploymentMode::External => {
+      lines.push("  mode: external".to_string());
+      lines.push("  external:".to_string());
+      lines.push(format!(
+        "    url: {}",
+        yaml_quote(required_external_value(cache, "url")?)
       ));
     }
-    if let Some(local_disk_gib) = service.local_disk_gib {
-      lines.push(format!("      localDiskGiB: {}", local_disk_gib));
+    PlatformServiceDeploymentMode::Disabled => {
+      bail!("valkey cannot be disabled in the ret2shell helm deployment")
     }
-    if !service.external_values.is_empty() {
-      lines.push("      external: ".to_string());
-      for (key, value) in &service.external_values {
-        lines.push(format!("        {}: {}", key, yaml_quote(value)));
+  }
+
+  lines.push(String::new());
+  lines.push("nats:".to_string());
+  match queue.deployment {
+    PlatformServiceDeploymentMode::Local => {
+      lines.push("  mode: internal".to_string());
+      lines.push("  auth:".to_string());
+      lines.push("    enabled: true".to_string());
+      lines.push(format!(
+        "    token: {}",
+        yaml_quote(&summary.internal_queue_token)
+      ));
+      append_local_persistence(&mut lines, "  ", queue)?;
+    }
+    PlatformServiceDeploymentMode::External => {
+      lines.push("  mode: external".to_string());
+      lines.push("  external:".to_string());
+      lines.push(format!(
+        "    host: {}",
+        yaml_quote(required_external_value(queue, "host")?)
+      ));
+      lines.push(format!("    port: {}", parse_external_u16(queue, "port")?));
+      if let Some(token) = optional_external_value(queue, "token") {
+        lines.push(format!("    token: {}", yaml_quote(token)));
+      }
+      lines.push("    tls: false".to_string());
+    }
+    PlatformServiceDeploymentMode::Disabled => {
+      bail!("nats cannot be disabled in the ret2shell helm deployment")
+    }
+  }
+
+  lines.push(String::new());
+  lines.push("registry:".to_string());
+  match registry.deployment {
+    PlatformServiceDeploymentMode::Disabled => {
+      lines.push("  mode: disabled".to_string());
+    }
+    PlatformServiceDeploymentMode::Local => {
+      lines.push("  mode: internal".to_string());
+      lines.push("  externalAccess:".to_string());
+      lines.push("    enabled: true".to_string());
+      lines.push("    serviceType: NodePort".to_string());
+      lines.push(format!("    nodePort: {INTERNAL_REGISTRY_NODE_PORT}"));
+      lines.push(format!(
+        "    host: {}",
+        yaml_quote(&summary.internal_registry_host)
+      ));
+      lines.push("    insecure: true".to_string());
+      append_local_persistence(&mut lines, "  ", registry)?;
+    }
+    PlatformServiceDeploymentMode::External => {
+      lines.push("  mode: external".to_string());
+      lines.push("  external:".to_string());
+      lines.push(format!(
+        "    server: {}",
+        yaml_quote(required_external_value(registry, "server")?)
+      ));
+      lines.push(format!(
+        "    external: {}",
+        yaml_quote(required_external_value(registry, "external")?)
+      ));
+      lines.push(format!(
+        "    insecure: {}",
+        parse_external_bool(registry, "insecure")?
+      ));
+      if let Some(username) = optional_external_value(registry, "username") {
+        lines.push(format!("    username: {}", yaml_quote(username)));
+      }
+      if let Some(password) = optional_external_value(registry, "password") {
+        lines.push(format!("    password: {}", yaml_quote(password)));
       }
     }
   }
 
   lines.push(String::new());
-  lines.join("\n")
+  lines.push("victoriaLogs:".to_string());
+  match logs.deployment {
+    PlatformServiceDeploymentMode::Disabled => {
+      lines.push("  mode: disabled".to_string());
+    }
+    PlatformServiceDeploymentMode::Local => {
+      lines.push("  mode: internal".to_string());
+      append_local_persistence(&mut lines, "  ", logs)?;
+    }
+    PlatformServiceDeploymentMode::External => {
+      lines.push("  mode: external".to_string());
+      lines.push("  external:".to_string());
+      lines.push(format!(
+        "    url: {}",
+        yaml_quote(required_external_value(logs, "endpoint")?)
+      ));
+    }
+  }
+
+  lines.push(String::new());
+  Ok(lines.join("\n"))
 }
 
-fn render_platform_bootstrap_manifest() -> Result<String> {
-  resources::load_utf8("templates/k8s/platform-bootstrap.yaml.tmpl").map(|template| {
-    let platform_storage_class = PLATFORM_SERVICE_DEFINITIONS
-      .iter()
-      .find(|definition| definition.id == PlatformServiceId::Platform)
-      .map(|definition| definition.legacy_storage_class)
-      .unwrap_or("ret2shell-storage-platform");
+fn render_platform_storage_manifest(summary: &PlatformPlanSummary) -> Option<String> {
+  let storage_classes = summary
+    .services
+    .iter()
+    .filter(|service| {
+      service.deployment == PlatformServiceDeploymentMode::Local
+        && service.storage_mode == Some(PlatformStorageMode::LocalPath)
+    })
+    .filter_map(|service| service.storage_class_name.clone())
+    .collect::<BTreeSet<_>>();
 
-    template
-      .replace("{{CHALLENGE_NAMESPACE}}", CHALLENGE_NAMESPACE)
-      .replace("{{PLATFORM_NAMESPACE}}", PLATFORM_NAMESPACE)
-      .replace("{{PLATFORM_STORAGE_CLASS_NAME}}", platform_storage_class)
-      .replace("{{CLUSTER_ROLE_NAME}}", PLATFORM_CLUSTER_ROLE)
-      .replace("{{SERVICE_ACCOUNT_NAME}}", PLATFORM_SERVICE_ACCOUNT)
-      .replace(
-        "{{CLUSTER_ROLE_BINDING_NAME}}",
-        PLATFORM_CLUSTER_ROLE_BINDING,
+  if storage_classes.is_empty() {
+    return None;
+  }
+
+  let mut lines = Vec::new();
+  for (index, storage_class) in storage_classes.iter().enumerate() {
+    if index > 0 {
+      lines.push("---".to_string());
+    }
+
+    lines.push("apiVersion: storage.k8s.io/v1".to_string());
+    lines.push("kind: StorageClass".to_string());
+    lines.push("metadata:".to_string());
+    lines.push(format!("  name: {}", yaml_quote(storage_class)));
+    lines.push("  annotations:".to_string());
+    lines.push("    storageclass.kubernetes.io/is-default-class: \"false\"".to_string());
+    lines.push(format!("provisioner: {LOCAL_PATH_PROVISIONER}"));
+    lines.push("reclaimPolicy: Retain".to_string());
+    lines.push("allowVolumeExpansion: true".to_string());
+    lines.push("volumeBindingMode: WaitForFirstConsumer".to_string());
+  }
+  lines.push(String::new());
+
+  Some(lines.join("\n"))
+}
+
+fn planned_service(
+  summary: &PlatformPlanSummary, service_id: PlatformServiceId,
+) -> Result<&ResolvedPlatformServicePlan> {
+  summary
+    .services
+    .iter()
+    .find(|service| service.id == service_id)
+    .ok_or_else(|| anyhow!("service plan `{}` is missing", service_id.as_config_value()))
+}
+
+fn append_local_persistence(
+  lines: &mut Vec<String>, indent: &str, service: &ResolvedPlatformServicePlan,
+) -> Result<()> {
+  let storage_class = service.storage_class_name.as_deref().ok_or_else(|| {
+    anyhow!(
+      "storage class for service `{}` is required before rendering helm values",
+      service.id.as_config_value()
+    )
+  })?;
+  let size = service.persistence_size_gib.ok_or_else(|| {
+    anyhow!(
+      "storage size for service `{}` is required before rendering helm values",
+      service.id.as_config_value()
+    )
+  })?;
+
+  lines.push(format!("{indent}persistence:"));
+  lines.push(format!(
+    "{indent}  storageClass: {}",
+    yaml_quote(storage_class)
+  ));
+  lines.push(format!("{indent}  size: {size}Gi"));
+
+  Ok(())
+}
+
+fn push_yaml_string_field(lines: &mut Vec<String>, indent: &str, key: &str, value: &str) {
+  if value.contains('\n') {
+    lines.push(format!("{indent}{key}: |-"));
+    for line in value.lines() {
+      lines.push(format!("{indent}  {line}"));
+    }
+  } else {
+    lines.push(format!("{indent}{key}: {}", yaml_quote(value)));
+  }
+}
+
+fn required_external_value<'a>(
+  service: &'a ResolvedPlatformServicePlan, key: &str,
+) -> Result<&'a str> {
+  service
+    .external_values
+    .get(key)
+    .map(String::as_str)
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| {
+      anyhow!(
+        "external value `{key}` for service `{}` is required before rendering helm values",
+        service.id.as_config_value()
       )
-  })
+    })
+}
+
+fn optional_external_value<'a>(
+  service: &'a ResolvedPlatformServicePlan, key: &str,
+) -> Option<&'a str> {
+  service
+    .external_values
+    .get(key)
+    .map(String::as_str)
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+}
+
+fn parse_external_u16(service: &ResolvedPlatformServicePlan, key: &str) -> Result<u16> {
+  required_external_value(service, key)?
+    .parse::<u16>()
+    .with_context(|| {
+      format!(
+        "external value `{key}` for service `{}` must be a valid port number",
+        service.id.as_config_value()
+      )
+    })
+}
+
+fn parse_external_bool(service: &ResolvedPlatformServicePlan, key: &str) -> Result<bool> {
+  match required_external_value(service, key)?
+    .to_ascii_lowercase()
+    .as_str()
+  {
+    "true" | "1" | "yes" | "y" | "on" => Ok(true),
+    "false" | "0" | "no" | "n" | "off" => Ok(false),
+    _ => Err(anyhow!(
+      "external value `{key}` for service `{}` must be a boolean",
+      service.id.as_config_value()
+    )),
+  }
+}
+
+fn required_platform_secret(value: Option<&str>, label: &str) -> Result<String> {
+  value
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+    .ok_or_else(|| anyhow!("{label} is required before rendering helm values"))
+}
+
+fn required_internal_secret(
+  services: &[ResolvedPlatformServicePlan], service_id: PlatformServiceId, value: Option<&str>,
+  label: &str,
+) -> Result<String> {
+  let deployment = services
+    .iter()
+    .find(|service| service.id == service_id)
+    .map(|service| service.deployment)
+    .ok_or_else(|| anyhow!("service plan `{}` is missing", service_id.as_config_value()))?;
+
+  if deployment == PlatformServiceDeploymentMode::Local {
+    return required_platform_secret(value, label);
+  }
+
+  Ok(String::new())
+}
+
+fn normalize_public_host(raw: &str) -> Result<String> {
+  let trimmed = raw.trim();
+  let trimmed = trimmed
+    .strip_prefix("https://")
+    .or_else(|| trimmed.strip_prefix("http://"))
+    .unwrap_or(trimmed);
+  let trimmed = trimmed.split('/').next().unwrap_or("").trim();
+
+  if trimmed.is_empty() {
+    bail!("the public host cannot be empty");
+  }
+  if trimmed.matches(':').count() > 1 {
+    bail!("the public host must be a domain name or IPv4 address");
+  }
+
+  Ok(
+    trimmed
+      .split_once(':')
+      .map(|(host, _)| host)
+      .unwrap_or(trimmed)
+      .to_string(),
+  )
+}
+
+fn derive_internal_registry_host(public_host: &str) -> String {
+  format!("{public_host}:{INTERNAL_REGISTRY_NODE_PORT}")
+}
+
+fn platform_ingress_class(distribution: KubernetesDistribution) -> &'static str {
+  match distribution {
+    KubernetesDistribution::K3s => "traefik",
+    KubernetesDistribution::Rke2 => "nginx",
+  }
+}
+
+fn helm_envs(ctx: &StepPlanContext<'_>) -> Result<Vec<(String, String)>> {
+  let distribution = ctx.kubernetes_distribution().ok_or_else(|| {
+    anyhow!("kubernetes distribution is required before rendering helm deployment access")
+  })?;
+
+  let kubeconfig = match distribution {
+    KubernetesDistribution::K3s => "/etc/rancher/k3s/k3s.yaml",
+    KubernetesDistribution::Rke2 => "/etc/rancher/rke2/rke2.yaml",
+  };
+
+  Ok(vec![("KUBECONFIG".to_string(), kubeconfig.to_string())])
+}
+
+struct ClusterAccess {
+  program: String,
+  prefix_args: Vec<String>,
+  envs: Vec<(String, String)>,
+}
+
+impl ClusterAccess {
+  fn from_plan_context(ctx: &StepPlanContext<'_>) -> Result<Self> {
+    let distribution = ctx.kubernetes_distribution().ok_or_else(|| {
+      anyhow!("kubernetes distribution is required before rendering cluster access")
+    })?;
+
+    match distribution {
+      KubernetesDistribution::K3s => {
+        if !command_exists("k3s") {
+          bail!("unable to locate the k3s binary required for cluster access");
+        }
+
+        Ok(Self {
+          program: "k3s".to_string(),
+          prefix_args: vec!["kubectl".to_string()],
+          envs: Vec::new(),
+        })
+      }
+      KubernetesDistribution::Rke2 => {
+        let kubectl = find_existing_path(&[
+          PathBuf::from("/var/lib/rancher/rke2/bin/kubectl"),
+          PathBuf::from("/usr/local/bin/kubectl"),
+        ])
+        .ok_or_else(|| anyhow!("unable to locate the rke2 kubectl binary for cluster access"))?;
+
+        Ok(Self {
+          program: kubectl.display().to_string(),
+          prefix_args: Vec::new(),
+          envs: helm_envs(ctx)?,
+        })
+      }
+    }
+  }
+
+  fn wait_for_nodes_ready(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
+    let args = [
+      "wait".to_string(),
+      "--for=condition=Ready".to_string(),
+      "node".to_string(),
+      "--all".to_string(),
+      "--timeout=5s".to_string(),
+    ];
+    let mut last_error = None;
+
+    for _ in 0..60 {
+      match self.run(ctx, &args) {
+        Ok(()) => return Ok(()),
+        Err(error) => last_error = Some(error),
+      }
+
+      thread::sleep(Duration::from_secs(5));
+    }
+
+    Err(
+      last_error
+        .unwrap_or_else(|| anyhow!("timed out waiting for kubernetes nodes to become ready")),
+    )
+  }
+
+  fn apply_manifest(&self, ctx: &StepExecutionContext<'_>, path: &str) -> Result<()> {
+    self.run(
+      ctx,
+      &["apply".to_string(), "-f".to_string(), path.to_string()],
+    )
+  }
+
+  fn delete_manifest(&self, ctx: &StepExecutionContext<'_>, path: &str) -> Result<()> {
+    self.run(
+      ctx,
+      &[
+        "delete".to_string(),
+        "--ignore-not-found".to_string(),
+        "-f".to_string(),
+        path.to_string(),
+      ],
+    )
+  }
+
+  fn storage_class_exists(&self, ctx: &StepExecutionContext<'_>, name: &str) -> Result<bool> {
+    let output = self.capture(
+      ctx,
+      &[
+        "get".to_string(),
+        "storageclass".to_string(),
+        name.to_string(),
+        "--ignore-not-found".to_string(),
+        "-o".to_string(),
+        "name".to_string(),
+      ],
+    )?;
+
+    Ok(!output.trim().is_empty())
+  }
+
+  fn capture_namespaced_object_template(
+    &self, ctx: &StepExecutionContext<'_>, namespace: &str, resource: &str, name: &str,
+    template: &str,
+  ) -> Result<Option<String>> {
+    let exists = self.capture(
+      ctx,
+      &[
+        "-n".to_string(),
+        namespace.to_string(),
+        "get".to_string(),
+        resource.to_string(),
+        name.to_string(),
+        "--ignore-not-found".to_string(),
+        "-o".to_string(),
+        "name".to_string(),
+      ],
+    )?;
+
+    if exists.trim().is_empty() {
+      return Ok(None);
+    }
+
+    self
+      .capture(
+        ctx,
+        &[
+          "-n".to_string(),
+          namespace.to_string(),
+          "get".to_string(),
+          resource.to_string(),
+          name.to_string(),
+          "-o".to_string(),
+          format!("go-template={template}"),
+        ],
+      )
+      .map(Some)
+  }
+
+  fn restart_release_workloads(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
+    self.run(
+      ctx,
+      &[
+        "-n".to_string(),
+        PLATFORM_NAMESPACE.to_string(),
+        "rollout".to_string(),
+        "restart".to_string(),
+        "deployment,statefulset".to_string(),
+        "-l".to_string(),
+        format!("app.kubernetes.io/instance={HELM_RELEASE_NAME}"),
+      ],
+    )
+  }
+
+  fn capture(&self, ctx: &StepExecutionContext<'_>, args: &[String]) -> Result<String> {
+    let mut command_args = self.prefix_args.clone();
+    command_args.extend_from_slice(args);
+    ctx.run_privileged_command_capture(&self.program, &command_args, &self.envs)
+  }
+
+  fn run(&self, ctx: &StepExecutionContext<'_>, args: &[String]) -> Result<()> {
+    let mut command_args = self.prefix_args.clone();
+    command_args.extend_from_slice(args);
+    ctx.run_privileged_command(&self.program, &command_args, &self.envs)
+  }
 }
 
 fn platform_service_summary_line(service: &ResolvedPlatformServicePlan) -> String {
@@ -1288,8 +2544,8 @@ fn platform_service_summary_line(service: &ResolvedPlatformServicePlan) -> Strin
     ));
   }
 
-  if let Some(local_disk_gib) = service.local_disk_gib {
-    parts.push(format!("{local_disk_gib} GiB"));
+  if let Some(persistence_size_gib) = service.persistence_size_gib {
+    parts.push(format!("{persistence_size_gib} GiB"));
   }
 
   for (label, value) in &service.external_summary {
@@ -1297,4 +2553,191 @@ fn platform_service_summary_line(service: &ResolvedPlatformServicePlan) -> Strin
   }
 
   parts.join(" / ")
+}
+
+#[cfg(test)]
+mod tests {
+  use std::collections::BTreeMap;
+
+  use serde::Deserialize;
+  use serde_yaml::{Deserializer, Value};
+
+  use super::*;
+
+  #[test]
+  fn normalize_public_host_strips_scheme_path_and_port() {
+    let host = normalize_public_host("https://ctf.example.com:8443/ui").expect("host parses");
+
+    assert_eq!(host, "ctf.example.com");
+  }
+
+  #[test]
+  fn render_platform_values_yaml_maps_chart_settings() {
+    let summary = sample_summary();
+    let rendered = render_platform_values_yaml(&summary).expect("values render");
+    let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
+
+    assert_eq!(
+      parsed["platform"]["ingress"]["hosts"][0]["host"],
+      Value::String("ctf.example.com".to_string())
+    );
+    assert_eq!(
+      parsed["platform"]["ingress"]["className"],
+      Value::String("traefik".to_string())
+    );
+    assert_eq!(
+      parsed["platform"]["config"]["auth"]["signingKey"],
+      Value::String("signing-key".to_string())
+    );
+    assert_eq!(
+      parsed["postgresql"]["mode"],
+      Value::String("external".to_string())
+    );
+    assert_eq!(
+      parsed["postgresql"]["external"]["host"],
+      Value::String("db.example.com".to_string())
+    );
+    assert_eq!(
+      parsed["valkey"]["auth"]["password"],
+      Value::String("cache-secret".to_string())
+    );
+    assert_eq!(
+      parsed["registry"]["externalAccess"]["host"],
+      Value::String("ctf.example.com:30310".to_string())
+    );
+    assert_eq!(
+      parsed["victoriaLogs"]["mode"],
+      Value::String("disabled".to_string())
+    );
+  }
+
+  #[test]
+  fn render_platform_storage_manifest_only_emits_local_path_classes() {
+    let summary = sample_summary();
+    let rendered = render_platform_storage_manifest(&summary).expect("storage manifest exists");
+    let documents = Deserializer::from_str(&rendered)
+      .map(Value::deserialize)
+      .collect::<std::result::Result<Vec<_>, _>>()
+      .expect("storage manifest parses as yaml");
+    let storage_classes = documents
+      .into_iter()
+      .map(|document| {
+        document["metadata"]["name"]
+          .as_str()
+          .unwrap_or_default()
+          .to_string()
+      })
+      .collect::<Vec<_>>();
+
+    assert_eq!(
+      storage_classes,
+      vec![
+        "ret2shell-storage-cache".to_string(),
+        "ret2shell-storage-platform".to_string(),
+        "ret2shell-storage-registry".to_string(),
+      ]
+    );
+  }
+
+  fn sample_summary() -> PlatformPlanSummary {
+    PlatformPlanSummary {
+      remaining_disk_gib: 900,
+      requested_disk_gib: 730,
+      allocated_local_disk_gib: 730,
+      unallocated_local_disk_gib: 0,
+      public_host: "ctf.example.com".to_string(),
+      ingress_class_name: "traefik".to_string(),
+      signing_key: "signing-key".to_string(),
+      blocked_content: String::new(),
+      internal_database_password: "database-secret".to_string(),
+      internal_cache_password: "cache-secret".to_string(),
+      internal_queue_token: "queue-secret".to_string(),
+      internal_registry_host: "ctf.example.com:30310".to_string(),
+      services: vec![
+        service_plan(
+          PlatformServiceId::Platform,
+          PlatformServiceDeploymentMode::Local,
+          Some(PlatformStorageMode::LocalPath),
+          Some("ret2shell-storage-platform"),
+          Some(420),
+          Some(420),
+          BTreeMap::new(),
+        ),
+        service_plan(
+          PlatformServiceId::Database,
+          PlatformServiceDeploymentMode::External,
+          None,
+          None,
+          None,
+          None,
+          BTreeMap::from([
+            ("host".to_string(), "db.example.com".to_string()),
+            ("port".to_string(), "5432".to_string()),
+            ("database".to_string(), "ret2shell".to_string()),
+            ("username".to_string(), "ret2shell".to_string()),
+            ("password".to_string(), "db-password".to_string()),
+            ("ssl_mode".to_string(), "disable".to_string()),
+          ]),
+        ),
+        service_plan(
+          PlatformServiceId::Cache,
+          PlatformServiceDeploymentMode::Local,
+          Some(PlatformStorageMode::LocalPath),
+          Some("ret2shell-storage-cache"),
+          Some(10),
+          Some(10),
+          BTreeMap::new(),
+        ),
+        service_plan(
+          PlatformServiceId::Queue,
+          PlatformServiceDeploymentMode::External,
+          None,
+          None,
+          None,
+          None,
+          BTreeMap::from([
+            ("host".to_string(), "nats.example.com".to_string()),
+            ("port".to_string(), "4222".to_string()),
+            ("token".to_string(), "queue-token".to_string()),
+          ]),
+        ),
+        service_plan(
+          PlatformServiceId::Registry,
+          PlatformServiceDeploymentMode::Local,
+          Some(PlatformStorageMode::LocalPath),
+          Some("ret2shell-storage-registry"),
+          Some(300),
+          Some(300),
+          BTreeMap::new(),
+        ),
+        service_plan(
+          PlatformServiceId::Logs,
+          PlatformServiceDeploymentMode::Disabled,
+          None,
+          None,
+          None,
+          None,
+          BTreeMap::new(),
+        ),
+      ],
+    }
+  }
+
+  fn service_plan(
+    id: PlatformServiceId, deployment: PlatformServiceDeploymentMode,
+    storage_mode: Option<PlatformStorageMode>, storage_class_name: Option<&str>,
+    local_disk_gib: Option<u32>, persistence_size_gib: Option<u32>,
+    external_values: BTreeMap<String, String>,
+  ) -> ResolvedPlatformServicePlan {
+    ResolvedPlatformServicePlan {
+      id,
+      deployment,
+      storage_mode,
+      storage_class_name: storage_class_name.map(str::to_string),
+      local_disk_gib,
+      persistence_size_gib,
+      external_summary: Vec::new(),
+      external_values,
+    }
+  }
 }

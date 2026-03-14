@@ -1,6 +1,6 @@
 use std::{
   io::ErrorKind,
-  process::Command,
+  process::{Command, Output},
   sync::mpsc::{self, Sender},
   thread::{self, JoinHandle},
   time::Duration,
@@ -66,8 +66,22 @@ impl PrivilegeSession {
   pub fn run_command(
     &self, program: &str, args: &[String], envs: &[(String, String)],
   ) -> Result<()> {
+    self.execute_command(program, args, envs).map(|_| ())
+  }
+
+  pub fn run_command_capture(
+    &self, program: &str, args: &[String], envs: &[(String, String)],
+  ) -> Result<String> {
+    let output = self.execute_command(program, args, envs)?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+  }
+
+  fn execute_command(
+    &self, program: &str, args: &[String], envs: &[(String, String)],
+  ) -> Result<Output> {
     let mut command = self.command_for(program, args, envs);
-    let status = command.status().with_context(|| {
+    let output = command.output().with_context(|| {
       format!(
         "failed to execute privileged command `{}` via {}",
         program,
@@ -75,15 +89,26 @@ impl PrivilegeSession {
       )
     })?;
 
-    if status.success() {
-      return Ok(());
+    if output.status.success() {
+      return Ok(output);
     }
 
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() {
+      stderr
+    } else if !stdout.is_empty() {
+      stdout
+    } else {
+      "no output".to_string()
+    };
+
     bail!(
-      "privileged command `{}` via {} exited with status {:?}",
+      "privileged command `{}` via {} exited with status {:?}: {}",
       program,
       self.backend_name(),
-      status.code()
+      output.status.code(),
+      detail
     )
   }
 

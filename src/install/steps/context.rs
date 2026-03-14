@@ -60,6 +60,10 @@ impl PreflightState {
       .map(PublicNetworkIdentity::display)
   }
 
+  pub fn public_network_ip(&self) -> Option<&str> {
+    self.public_network.as_ref().map(PublicNetworkIdentity::ip)
+  }
+
   pub fn package_manager(&self) -> Option<SystemPackageManager> {
     self.package_manager
   }
@@ -143,6 +147,10 @@ pub(crate) struct PublicNetworkIdentity {
 }
 
 impl PublicNetworkIdentity {
+  pub(crate) fn ip(&self) -> &str {
+    &self.ip
+  }
+
   pub(crate) fn is_mainland_china(&self) -> bool {
     self
       .country_code
@@ -437,6 +445,7 @@ impl<'a> StepQuestionContext<'a> {
 
     if changed {
       self.config.save()?;
+      self.runtime.persist_system_config_copy(self.config)?;
     }
 
     debug!(
@@ -544,6 +553,14 @@ impl<'a> StepExecutionContext<'a> {
     self.runtime.run_privileged_command(program, args, envs)
   }
 
+  pub fn run_privileged_command_capture(
+    &self, program: &str, args: &[String], envs: &[(String, String)],
+  ) -> Result<String> {
+    self
+      .runtime
+      .run_privileged_command_capture(program, args, envs)
+  }
+
   pub fn persist_change<F>(&mut self, field: &'static str, value: &str, update: F) -> Result<bool>
   where
     F: FnOnce(&mut Ret2BootConfig) -> bool, {
@@ -551,6 +568,7 @@ impl<'a> StepExecutionContext<'a> {
 
     if changed {
       self.config.save()?;
+      self.runtime.persist_system_config_copy(self.config)?;
     }
 
     debug!(

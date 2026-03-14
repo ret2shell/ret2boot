@@ -86,6 +86,7 @@ install.platform.questionnaire_intro: 接下來要確認各項平台服務的部
 install.platform.storage_notice: 使用本機磁碟的服務都需要設定儲存；核心平台服務固定使用 local-path。
 install.platform.detected_remaining_disk: "偵測到可用磁碟空間：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望為回歸終端預留多少磁碟空間？（GiB）
+install.platform.public_host.prompt: 請輸入使用者存取回歸終端時使用的公網網域名稱或 IPv4 位址
 install.platform.services_intro: 設定各項回歸終端服務
 install.platform.service_heading: "設定服務：%{service}"
 install.platform.service_platform_fixed: 核心平台服務固定為本地部署，儲存方式也會自動使用預設值。
@@ -217,8 +218,9 @@ install.steps.gateway.port_reservation: 安裝前會先把叢集閘道從 80 與
 install.steps.gateway.nginx_reuse: "重用目前主機上已存在的 nginx 二進位：%{path}。"
 install.steps.gateway.nginx_service_reuse: 重用目前主機上已經存在的 nginx 服務。
 install.steps.gateway.nginx_install: 透過目前偵測到的系統套件管理器安裝 nginx。
-install.steps.platform_plan.title: 準備回歸終端平台設定
+install.steps.platform_plan.title: 透過 Helm 部署回歸終端平台
 install.steps.platform_plan.namespaces: "將準備平台使用的命名空間：%{platform}、%{challenge}"
+install.steps.platform_plan.public_host: "公網存取位址：%{host}"
 install.steps.platform_plan.service_account: "將準備平台運行所需的服務帳號：%{namespace} 中的 %{name}"
 install.steps.platform_plan.rbac: "將準備平台運行所需的權限設定：%{role}、%{binding}"
 install.steps.platform_plan.disk_budget: "磁碟預算：已分配 %{allocated} GiB / 計畫 %{requested} GiB（目前可用 %{remaining} GiB）"

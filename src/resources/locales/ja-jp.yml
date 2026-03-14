@@ -86,6 +86,7 @@ install.platform.questionnaire_intro: ここから各プラットフォームサ
 install.platform.storage_notice: ローカルディスクを使うサービスにはストレージ設定が必要です。コア platform サービスは常に local-path を使います。
 install.platform.detected_remaining_disk: "検出した空きディスク容量: %{remaining} GiB"
 install.platform.requested_disk.prompt: Ret2Shell 用にどれだけのディスク容量を確保しますか？（GiB）
+install.platform.public_host.prompt: Ret2Shell にアクセスする際に使う公開ドメイン名または IPv4 アドレスを入力してください
 install.platform.services_intro: Ret2Shell サービスを設定する
 install.platform.service_heading: "サービス設定: %{service}"
 install.platform.service_platform_fixed: コア platform サービスは常にローカル配置され、ストレージも既定値が自動で使われます。
@@ -217,8 +218,9 @@ install.steps.gateway.port_reservation: system nginx が引き継ぐ前に、clu
 install.steps.gateway.nginx_reuse: "既存の nginx バイナリ %{path} を再利用します。"
 install.steps.gateway.nginx_service_reuse: このホストですでに存在する nginx サービスを再利用します。
 install.steps.gateway.nginx_install: 検出したシステムパッケージマネージャーで nginx をインストールします。
-install.steps.platform_plan.title: Ret2Shell プラットフォーム設定を準備する
+install.steps.platform_plan.title: Helm で Ret2Shell プラットフォームをデプロイする
 install.steps.platform_plan.namespaces: "準備する Namespace: %{platform}、%{challenge}"
+install.steps.platform_plan.public_host: "公開ホスト: %{host}"
 install.steps.platform_plan.service_account: "準備する ServiceAccount: %{namespace} の %{name}"
 install.steps.platform_plan.rbac: "準備する権限設定: %{role}、%{binding}"
 install.steps.platform_plan.disk_budget: "ディスク予算: %{allocated} GiB 割り当て済み / %{requested} GiB 予定（現在空き %{remaining} GiB）"

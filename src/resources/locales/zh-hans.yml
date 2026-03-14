@@ -86,6 +86,7 @@ install.platform.questionnaire_intro: 接下来要确认各项平台服务的部
 install.platform.storage_notice: 使用本机磁盘的服务都需要配置存储；核心平台服务固定使用 local-path。
 install.platform.detected_remaining_disk: "检测到可用磁盘空间：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望为回归终端预留多少磁盘空间？（GiB）
+install.platform.public_host.prompt: 请输入用户访问回归终端时使用的公网域名或 IPv4 地址
 install.platform.services_intro: 配置各项回归终端服务
 install.platform.service_heading: "配置服务：%{service}"
 install.platform.service_platform_fixed: 核心平台服务固定为本地部署，存储方式也会自动使用默认值。
@@ -217,8 +218,9 @@ install.steps.gateway.port_reservation: 安装前会先把集群网关从 80 和
 install.steps.gateway.nginx_reuse: "复用当前主机上已存在的 nginx 二进制：%{path}。"
 install.steps.gateway.nginx_service_reuse: 复用当前主机上已经存在的 nginx 服务。
 install.steps.gateway.nginx_install: 通过当前检测到的系统包管理器安装 nginx。
-install.steps.platform_plan.title: 准备回归终端平台配置
+install.steps.platform_plan.title: 通过 Helm 部署回归终端平台
 install.steps.platform_plan.namespaces: "将准备平台使用的命名空间：%{platform}、%{challenge}"
+install.steps.platform_plan.public_host: "公网访问地址：%{host}"
 install.steps.platform_plan.service_account: "将准备平台运行所需的服务账号：%{namespace} 中的 %{name}"
 install.steps.platform_plan.rbac: "将准备平台运行所需的权限配置：%{role}、%{binding}"
 install.steps.platform_plan.disk_budget: "磁盘预算：已分配 %{allocated} GiB / 计划 %{requested} GiB（当前可用 %{remaining} GiB）"
