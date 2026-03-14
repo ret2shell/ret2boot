@@ -44,6 +44,10 @@ impl AtomicInstallStep for PreflightValidationStep {
       details: vec![t!("install.steps.preflight_detail").to_string()],
     })
   }
+
+  fn uninstall(&self, _ctx: &mut super::StepExecutionContext<'_>) -> Result<()> {
+    Ok(())
+  }
 }
 
 enum PreflightStatus {

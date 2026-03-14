@@ -170,6 +170,10 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .or_else(SystemPackageManager::detect)
       .ok_or_else(|| anyhow!("no supported package manager is available for nginx installation"))?;
     let nginx_existed = detect_nginx_binary_path().is_some() || nginx_service_exists();
+    let installed_by_ret2boot = ctx
+      .config()
+      .install_step_metadata(self.id(), "installed_by_ret2boot")
+      .is_some_and(|value| value == "true");
 
     if !nginx_existed {
       package_manager.install_nginx(ctx)?;
@@ -215,7 +219,11 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       config.set_install_step_metadata(
         self.id(),
         "installed_by_ret2boot",
-        if nginx_existed { "false" } else { "true" },
+        if installed_by_ret2boot || !nginx_existed {
+          "true"
+        } else {
+          "false"
+        },
       ) || changed
     })?;
 
@@ -327,6 +335,7 @@ fn cleanup_external_nginx_gateway(ctx: &StepExecutionContext<'_>) -> Result<()> 
     ],
     &[],
   )?;
+  let _ = remove_nginx_site_include(ctx);
   let _ = remove_nginx_stream_include(ctx);
   let _ = ctx.run_privileged_command("rmdir", &["/etc/nginx/sites-enabled".to_string()], &[]);
   let _ = ctx.run_privileged_command("rmdir", &["/etc/nginx/sites-available".to_string()], &[]);
@@ -396,6 +405,21 @@ fn ensure_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
     NGINX_STREAM_INCLUDE_MARKER,
     &contents[http_index..]
   );
+  let staged = stage_text_file("nginx-main", "conf", updated)?;
+  install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
+  let _ = fs::remove_file(&staged);
+  Ok(())
+}
+
+fn remove_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  let contents = fs::read_to_string(NGINX_MAIN_CONF)
+    .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))?;
+
+  if !contents.contains(NGINX_SITE_INCLUDE_MARKER) {
+    return Ok(());
+  }
+
+  let updated = contents.replace(&format!("    {NGINX_SITE_INCLUDE_MARKER}\n"), "");
   let staged = stage_text_file("nginx-main", "conf", updated)?;
   install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
   let _ = fs::remove_file(&staged);

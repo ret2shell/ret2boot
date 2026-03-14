@@ -66,14 +66,27 @@ impl AtomicInstallStep for HelmCliStep {
 
   fn install(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
     if let Some(path) = find_command_path("helm") {
+      let path_display = path.display().to_string();
+      let owned = ctx
+        .config()
+        .install_step_metadata(self.id(), "owned_by_ret2boot")
+        .is_some_and(|value| value == "true")
+        && ctx
+          .config()
+          .install_step_metadata(self.id(), "binary_path")
+          .is_some_and(|value| value == path_display);
+
       ctx.persist_change(
         "install.execution.helm.owned_by_ret2boot",
-        "false",
+        if owned { "true" } else { "false" },
         |config| {
-          let changed = config.set_install_step_metadata(self.id(), "owned_by_ret2boot", "false");
+          let changed = config.set_install_step_metadata(
+            self.id(),
+            "owned_by_ret2boot",
+            if owned { "true" } else { "false" },
+          );
           let changed =
-            config.set_install_step_metadata(self.id(), "binary_path", path.display().to_string())
-              || changed;
+            config.set_install_step_metadata(self.id(), "binary_path", path_display) || changed;
           config.remove_install_step_metadata(self.id(), "install_source") || changed
         },
       )?;

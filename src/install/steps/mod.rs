@@ -8,15 +8,17 @@ mod support;
 
 use anyhow::{Result, bail};
 
-pub use self::context::{
-  InstallStepPlan, PreflightState, StepExecutionContext, StepPlanContext, StepPreflightContext,
-  StepQuestionContext, SystemPackageManager,
-};
-use self::{
+pub(crate) use self::{
   cluster::ClusterBootstrapStep,
+  context::{
+    InstallStepPlan, PreflightState, StepExecutionContext, StepPlanContext, StepPreflightContext,
+    StepQuestionContext, SystemPackageManager,
+  },
   gateway::ApplicationGatewayStep,
   helm::HelmCliStep,
-  platform::{PlatformDeploymentStep, WorkerPlatformProbeStep},
+  platform::{
+    PlatformDeploymentStep, PlatformSyncMode, PlatformSyncReport, WorkerPlatformProbeStep,
+  },
   preflight::PreflightValidationStep,
 };
 use crate::config::InstallStepId;

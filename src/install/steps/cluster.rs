@@ -40,6 +40,17 @@ const GATEWAY_HTTPS_PORT_CANDIDATES: [u16; 6] = [10443, 11443, 12443, 13443, 144
 
 pub struct ClusterBootstrapStep;
 
+impl ClusterBootstrapStep {
+  pub(crate) fn reconcile_existing(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    let spec = ClusterInstallSpec::from_plan_context(&ctx.as_plan_context())?;
+
+    match spec.distribution {
+      KubernetesDistribution::K3s => install_k3s(ctx, &spec),
+      KubernetesDistribution::Rke2 => install_rke2(ctx, &spec),
+    }
+  }
+}
+
 impl AtomicInstallStep for ClusterBootstrapStep {
   fn id(&self) -> InstallStepId {
     InstallStepId::ClusterBootstrap

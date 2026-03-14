@@ -1,6 +1,8 @@
 pub mod collectors;
 pub mod steps;
 
+use std::path::Path;
+
 use anyhow::{Result, anyhow};
 use rust_i18n::t;
 use tracing::{debug, info};
@@ -8,14 +10,15 @@ use tracing::{debug, info};
 use self::{
   collectors::{Collector, ConfirmCollector, SingleSelectCollector},
   steps::{
-    InstallStepPlan, PreflightState, StepExecutionContext, StepPlanContext, StepPreflightContext,
-    StepQuestionContext,
+    ApplicationGatewayStep, AtomicInstallStep, ClusterBootstrapStep, HelmCliStep, InstallStepPlan,
+    PlatformDeploymentStep, PlatformSyncMode, PlatformSyncReport, PreflightState,
+    StepExecutionContext, StepPlanContext, StepPreflightContext, StepQuestionContext,
   },
 };
 use crate::{
   config::{
     InstallExecutionPhase, InstallFailureStage, InstallStepId, InstallStepStatus,
-    InstallTargetRole, Ret2BootConfig,
+    InstallTargetRole, ROOT_CONFIG_PATH, Ret2BootConfig,
   },
   errors, l10n,
   startup::RuntimeState,
@@ -63,6 +66,91 @@ pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
   })?;
   flow.print_progress(&plan);
   flow.clear_recorded_failure()?;
+  flow.persist_system_config_copy()?;
+
+  Ok(())
+}
+
+pub fn sync_existing(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
+  let mut flow = InstallFlow::new(config, runtime)?;
+  flow.clear_recorded_failure()?;
+  telemetry::init()?;
+  flow.print_maintenance_header("Synchronizing installed platform");
+  flow.require_control_plane_command("sync")?;
+
+  let helm_step = HelmCliStep;
+  flow.run_maintenance_step(&helm_step, |ctx| helm_step.install(ctx))?;
+
+  let platform_step = PlatformDeploymentStep;
+  let report = flow.run_maintenance_step(&platform_step, |ctx| {
+    platform_step.sync_existing(ctx, PlatformSyncMode::SyncRecorded)
+  })?;
+  let gateway_step = ApplicationGatewayStep;
+  flow.run_maintenance_step(&gateway_step, |ctx| gateway_step.install(ctx))?;
+
+  flow.print_sync_report(&report);
+  flow.clear_recorded_failure()?;
+  flow.persist_system_config_copy()?;
+
+  Ok(())
+}
+
+pub fn update_existing(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
+  let mut flow = InstallFlow::new(config, runtime)?;
+  flow.clear_recorded_failure()?;
+  telemetry::init()?;
+  flow.print_maintenance_header("Updating installed platform");
+  flow.require_control_plane_command("update")?;
+
+  let cluster_step = ClusterBootstrapStep;
+  flow.run_maintenance_step(&cluster_step, |ctx| cluster_step.reconcile_existing(ctx))?;
+
+  let helm_step = HelmCliStep;
+  flow.run_maintenance_step(&helm_step, |ctx| helm_step.install(ctx))?;
+
+  let platform_step = PlatformDeploymentStep;
+  let report = flow.run_maintenance_step(&platform_step, |ctx| {
+    platform_step.sync_existing(ctx, PlatformSyncMode::UpdateLatest)
+  })?;
+  let gateway_step = ApplicationGatewayStep;
+  flow.run_maintenance_step(&gateway_step, |ctx| gateway_step.install(ctx))?;
+
+  flow.print_sync_report(&report);
+  flow.clear_recorded_failure()?;
+  flow.persist_system_config_copy()?;
+
+  Ok(())
+}
+
+pub fn uninstall_existing(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
+  let mut flow = InstallFlow::new(config, runtime)?;
+  flow.clear_recorded_failure()?;
+  telemetry::init()?;
+  flow.print_maintenance_header("Removing installed platform");
+  flow.require_configured_installation("uninstall")?;
+
+  let plan_context = StepPlanContext::new(flow.config, flow.runtime, &flow.config_path);
+  let steps_to_remove: Vec<_> = steps::registry()
+    .into_iter()
+    .filter(|step| {
+      step.should_include(&plan_context)
+        || flow.config.install_step_status(step.id()).is_some()
+        || flow
+          .config
+          .install_step_metadata(step.id(), "release_name")
+          .is_some()
+    })
+    .collect();
+
+  for step in steps_to_remove.into_iter().rev() {
+    flow.run_maintenance_uninstall_step(step.as_ref())?;
+  }
+
+  flow.remove_installer_state()?;
+  println!(
+    "{}",
+    ui::success("Removed installer state and cached artifacts.")
+  );
 
   Ok(())
 }
@@ -116,6 +204,236 @@ impl<'a> InstallFlow<'a> {
         path = self.config_path.as_str()
       ))
     );
+  }
+
+  fn print_maintenance_header(&self, title: &str) {
+    println!();
+    println!(
+      "{}",
+      ui::banner_startup("Ret 2 Boot", env!("CARGO_PKG_VERSION"))
+    );
+    println!("{}", ui::section(title));
+    println!(
+      "{}",
+      ui::note_value("language", l10n::locale_label(&self.runtime.locale))
+    );
+    println!("{}", ui::note_value("config path", &self.config_path));
+  }
+
+  fn require_configured_installation(&self, command: &str) -> Result<InstallTargetRole> {
+    self
+      .config
+      .install
+      .questionnaire
+      .node_role
+      .ok_or_else(|| anyhow!("`ret2boot {command}` requires an existing installation config"))
+  }
+
+  fn require_control_plane_command(&self, command: &str) -> Result<()> {
+    match self.require_configured_installation(command)? {
+      InstallTargetRole::ControlPlane => Ok(()),
+      InstallTargetRole::Worker => Err(anyhow!(
+        "`ret2boot {command}` is only supported on control-plane installations"
+      )),
+    }
+  }
+
+  fn run_maintenance_step<T, F>(&mut self, step: &dyn AtomicInstallStep, action: F) -> Result<T>
+  where
+    F: FnOnce(&mut StepExecutionContext<'_>) -> Result<T>, {
+    let step_id = step.id();
+    let step_title = self.step_title(step);
+
+    println!();
+    println!("{}", ui::section(format!("Running: {step_title}")));
+    self.persist_change(
+      "install.execution.step",
+      step_id.as_config_value(),
+      |config| config.mark_install_step_started(step_id),
+    )?;
+
+    let result = {
+      let mut execution_context = StepExecutionContext::new(
+        self.config,
+        self.runtime,
+        &self.config_path,
+        &self.preflight_state,
+      );
+      action(&mut execution_context)
+    };
+
+    match result {
+      Ok(value) => {
+        self.persist_change(
+          "install.execution.step",
+          step_id.as_config_value(),
+          |config| {
+            let changed = config.mark_install_step_completed(step_id);
+            config.set_install_phase(InstallExecutionPhase::Completed) || changed
+          },
+        )?;
+        println!("{}", ui::success(format!("Completed: {step_title}")));
+        Ok(value)
+      }
+      Err(error) => {
+        let error_text = error.to_string();
+        self.persist_change("install.execution.step", &error_text, |config| {
+          config.mark_install_step_failed(step_id, error_text.clone())
+        })?;
+        let _ = self.record_failure(InstallFailureStage::Install, Some(step_id), &error);
+        println!("{}", ui::warning(format!("Failed: {step_title}")));
+        println!("{}", ui::note(format!("error details: {error_text}")));
+        Err(error)
+      }
+    }
+  }
+
+  fn run_maintenance_uninstall_step(&mut self, step: &dyn AtomicInstallStep) -> Result<()> {
+    let step_id = step.id();
+    let step_title = self.step_title(step);
+
+    println!();
+    println!("{}", ui::section(format!("Removing: {step_title}")));
+
+    let result = {
+      let mut execution_context = StepExecutionContext::new(
+        self.config,
+        self.runtime,
+        &self.config_path,
+        &self.preflight_state,
+      );
+      step.uninstall(&mut execution_context)
+    };
+
+    match result {
+      Ok(()) => {
+        self.persist_change(
+          "install.execution.uninstall",
+          step_id.as_config_value(),
+          |config| config.reset_install_step(step_id),
+        )?;
+        println!("{}", ui::success(format!("Removed: {step_title}")));
+        Ok(())
+      }
+      Err(error) => {
+        let error_text = error.to_string();
+        self.persist_change("install.execution.uninstall", &error_text, |config| {
+          config.mark_install_step_failed(step_id, error_text.clone())
+        })?;
+        let _ = self.record_failure(InstallFailureStage::Rollback, Some(step_id), &error);
+        println!("{}", ui::warning(format!("Failed to remove: {step_title}")));
+        println!("{}", ui::note(format!("error details: {error_text}")));
+        Err(error)
+      }
+    }
+  }
+
+  fn print_sync_report(&self, report: &PlatformSyncReport) {
+    println!();
+
+    if !report.has_changes() {
+      println!("{}", ui::note("The installed platform is already in sync."));
+      return;
+    }
+
+    println!("{}", ui::success("Synchronized the installed platform."));
+
+    let mut details = Vec::new();
+    if !report.release_exists {
+      details.push("helm release was missing");
+    }
+    if report.chart_changed {
+      details.push("helm chart changed");
+    }
+    if report.values_changed {
+      details.push("helm values changed");
+    }
+    if report.config_changed {
+      details.push("platform config drift was corrected");
+    }
+    if report.blocked_changed {
+      details.push("blocked config drift was corrected");
+    }
+    if report.storage_changed {
+      details.push("storage class state changed");
+    }
+
+    for detail in details {
+      println!("{}", ui::note(detail));
+    }
+  }
+
+  fn step_title(&self, step: &dyn AtomicInstallStep) -> String {
+    let plan_context = StepPlanContext::new(self.config, self.runtime, &self.config_path);
+    step
+      .describe(&plan_context)
+      .map(|plan| plan.title)
+      .unwrap_or_else(|_| step.id().as_config_value().to_string())
+  }
+
+  fn persist_system_config_copy(&self) -> Result<()> {
+    self.runtime.persist_system_config_copy(self.config)
+  }
+
+  fn remove_installer_state(&mut self) -> Result<()> {
+    let config_path = Ret2BootConfig::path()?;
+    let config_parent = config_path.parent().map(|path| path.to_path_buf());
+    let root_config_parent = Path::new(ROOT_CONFIG_PATH)
+      .parent()
+      .map(|path| path.to_path_buf());
+    let cache_dir = crate::update::cache_dir_path()?;
+    let system_cache_dir = crate::update::system_cache_dir_path();
+    let cache_parent = cache_dir.parent().map(|path| path.to_path_buf());
+    let system_cache_parent = system_cache_dir.parent().map(|path| path.to_path_buf());
+
+    self.runtime.run_privileged_command(
+      "rm",
+      &[
+        "-f".to_string(),
+        config_path.display().to_string(),
+        ROOT_CONFIG_PATH.to_string(),
+      ],
+      &[],
+    )?;
+    self.runtime.run_privileged_command(
+      "rm",
+      &["-rf".to_string(), cache_dir.display().to_string()],
+      &[],
+    )?;
+    self.runtime.run_privileged_command(
+      "rm",
+      &["-rf".to_string(), system_cache_dir.display().to_string()],
+      &[],
+    )?;
+
+    if let Some(config_parent) = config_parent {
+      let _ =
+        self
+          .runtime
+          .run_privileged_command("rmdir", &[config_parent.display().to_string()], &[]);
+    }
+    if let Some(root_config_parent) = root_config_parent {
+      let _ = self.runtime.run_privileged_command(
+        "rmdir",
+        &[root_config_parent.display().to_string()],
+        &[],
+      );
+    }
+    if let Some(cache_parent) = cache_parent {
+      let _ =
+        self
+          .runtime
+          .run_privileged_command("rmdir", &[cache_parent.display().to_string()], &[]);
+    }
+    if let Some(system_cache_parent) = system_cache_parent {
+      let _ = self.runtime.run_privileged_command(
+        "rmdir",
+        &[system_cache_parent.display().to_string()],
+        &[],
+      );
+    }
+
+    Ok(())
   }
 
   fn collect_questionnaire(&mut self) -> Result<()> {
@@ -548,6 +866,7 @@ impl<'a> InstallFlow<'a> {
 
     if changed {
       self.config.save()?;
+      self.runtime.persist_system_config_copy(self.config)?;
     }
 
     debug!(
@@ -582,6 +901,7 @@ impl<'a> InstallFlow<'a> {
     &mut self, stage: InstallFailureStage, step_id: Option<InstallStepId>, error: &anyhow::Error,
   ) -> Result<()> {
     errors::record_install_failure(self.config, stage, step_id, error)?;
+    self.runtime.persist_system_config_copy(self.config)?;
 
     debug!(
       config_path = %self.config_path,
@@ -595,7 +915,8 @@ impl<'a> InstallFlow<'a> {
   }
 
   fn clear_recorded_failure(&mut self) -> Result<()> {
-    errors::clear_install_failure(self.config)
+    errors::clear_install_failure(self.config)?;
+    self.runtime.persist_system_config_copy(self.config)
   }
 }
 
