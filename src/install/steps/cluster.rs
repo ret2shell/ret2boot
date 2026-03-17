@@ -7,8 +7,8 @@ use tracing::info;
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   support::{
-    find_existing_path, install_staged_file, stage_remote_script, stage_text_file,
-    unique_temp_path, yaml_quote,
+    find_existing_path, install_staged_file, run_staged_script, stage_remote_script,
+    stage_text_file, unique_temp_path, yaml_quote,
   },
 };
 use crate::{
@@ -390,7 +390,7 @@ pub(crate) fn install_k3s(
     envs.push(("INSTALL_K3S_MIRROR".to_string(), "cn".to_string()));
   }
 
-  let result = ctx.run_privileged_command("sh", &[script_path.display().to_string()], &envs);
+  let result = run_staged_script(ctx, &script_path, &envs);
   let _ = fs::remove_file(&script_path);
   staged.cleanup();
   result
@@ -455,8 +455,7 @@ pub(crate) fn install_rke2(
     envs.push(("INSTALL_RKE2_MIRROR".to_string(), "cn".to_string()));
   }
 
-  let install_result =
-    ctx.run_privileged_command("sh", &[script_path.display().to_string()], &envs);
+  let install_result = run_staged_script(ctx, &script_path, &envs);
   let _ = fs::remove_file(&script_path);
   staged.cleanup();
   install_result?;

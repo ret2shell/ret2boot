@@ -35,6 +35,13 @@ pub(crate) fn stage_remote_script(url: &str, prefix: &str) -> Result<PathBuf> {
   Ok(path)
 }
 
+pub(crate) fn run_staged_script(
+  ctx: &StepExecutionContext<'_>, script_path: &Path, envs: &[(String, String)],
+) -> Result<()> {
+  let (program, args) = staged_script_invocation(script_path)?;
+  ctx.run_privileged_command(&program, &args, envs)
+}
+
 pub(crate) fn stage_text_file(prefix: &str, extension: &str, contents: String) -> Result<PathBuf> {
   let path = unique_temp_path(prefix, extension);
   fs::write(&path, contents).with_context(|| format!("failed to write `{}`", path.display()))?;
@@ -48,6 +55,36 @@ pub(crate) fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
     .unwrap_or_default();
 
   env::temp_dir().join(format!("{prefix}-{stamp}.{}", extension))
+}
+
+fn staged_script_invocation(script_path: &Path) -> Result<(String, Vec<String>)> {
+  let contents = fs::read_to_string(script_path)
+    .with_context(|| format!("failed to inspect staged script `{}`", script_path.display()))?;
+
+  Ok(script_invocation_from_contents(script_path, &contents))
+}
+
+fn script_invocation_from_contents(script_path: &Path, contents: &str) -> (String, Vec<String>) {
+  let script_arg = script_path.display().to_string();
+
+  if let Some((program, mut args)) = contents.lines().next().and_then(parse_shebang) {
+    args.push(script_arg);
+    return (program, args);
+  }
+
+  ("sh".to_string(), vec![script_arg])
+}
+
+fn parse_shebang(line: &str) -> Option<(String, Vec<String>)> {
+  let interpreter = line
+    .trim_start_matches('\u{feff}')
+    .strip_prefix("#!")?
+    .trim();
+  let mut parts = interpreter.split_whitespace();
+  let program = parts.next()?.to_string();
+  let args = parts.map(str::to_string).collect();
+
+  Some((program, args))
 }
 
 pub(crate) fn install_staged_file(
@@ -226,4 +263,30 @@ pub(crate) fn modprobe_can_load(module_name: &str) -> bool {
 
 pub(crate) fn yaml_quote(value: &str) -> String {
   format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(test)]
+mod tests {
+  use std::path::Path;
+
+  use super::script_invocation_from_contents;
+
+  #[test]
+  fn uses_script_shebang_when_present() {
+    let script_path = Path::new("staged-script.sh");
+    let (program, args) =
+      script_invocation_from_contents(script_path, "#!/usr/bin/env bash\nprintf 'ok'\n");
+
+    assert_eq!(program, "/usr/bin/env");
+    assert_eq!(args, vec!["bash".to_string(), "staged-script.sh".to_string()]);
+  }
+
+  #[test]
+  fn falls_back_to_sh_when_shebang_is_missing() {
+    let script_path = Path::new("staged-script.sh");
+    let (program, args) = script_invocation_from_contents(script_path, "printf 'ok'\n");
+
+    assert_eq!(program, "sh");
+    assert_eq!(args, vec!["staged-script.sh".to_string()]);
+  }
 }

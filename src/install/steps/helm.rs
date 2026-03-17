@@ -6,7 +6,7 @@ use tracing::info;
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
-  support::{find_command_path, stage_remote_script},
+  support::{find_command_path, run_staged_script, stage_remote_script},
 };
 use crate::config::{InstallStepId, InstallTargetRole};
 
@@ -105,8 +105,7 @@ impl AtomicInstallStep for HelmCliStep {
       ("HELM_INSTALL_DIR".to_string(), "/usr/local/bin".to_string()),
     ];
 
-    let install_result =
-      ctx.run_privileged_command("sh", &[script_path.display().to_string()], &envs);
+    let install_result = run_staged_script(ctx, &script_path, &envs);
     let _ = fs::remove_file(&script_path);
     install_result?;
 
