@@ -4,6 +4,10 @@ startup.language.options.zh_hans: 簡體中文
 startup.language.options.zh_hant: 繁體中文
 startup.language.options.en_us: English (US)
 startup.language.options.ja_jp: 日本語
+startup.license.title: 使用條款提示
+startup.license.ret2boot: "本工具 ret2boot 以 GPL-3.0 發布，完整 LICENSE：%{license_url}"
+startup.license.ret2shell: "ret2shell 採用自訂開源協議發布，完整 LICENSE：%{license_url}"
+startup.license.commercial_summary: "ret2shell 允許商業使用，但不得向使用者收取題目存取、驗證、組織加入或組織資源存取費用，也不得把平台存取或身分權益綁定到付費課程、訓練營、會員等產品。"
 startup.safety.title: 安裝前請先確認以下事項
 startup.safety.root_required: 安裝回歸終端需要 root 權限。
 startup.safety.clean_server: 建議在盡量乾淨的伺服器上安裝，避免和現有服務衝突。

@@ -4,6 +4,10 @@ startup.language.options.zh_hans: 简体中文
 startup.language.options.zh_hant: 繁體中文
 startup.language.options.en_us: English (US)
 startup.language.options.ja_jp: 日本語
+startup.license.title: License notice
+startup.license.ret2boot: "ret2boot is released under GPL-3.0. Full LICENSE: %{license_url}"
+startup.license.ret2shell: "ret2shell is released under its custom open-source license. Full LICENSE: %{license_url}"
+startup.license.commercial_summary: "ret2shell allows commercial use, but you may not charge users for challenge access, verification, organization membership, or organization resources, and you may not tie platform access or status to paid courses, bootcamps, memberships, or similar products."
 startup.safety.title: Review before installing
 startup.safety.root_required: Installing Ret2Shell requires root access.
 startup.safety.clean_server: A clean server is recommended to avoid conflicts with existing services.

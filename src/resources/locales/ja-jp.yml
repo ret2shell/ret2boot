@@ -4,6 +4,10 @@ startup.language.options.zh_hans: 简体中文
 startup.language.options.zh_hant: 繁體中文
 startup.language.options.en_us: English (US)
 startup.language.options.ja_jp: 日本語
+startup.license.title: ライセンス案内
+startup.license.ret2boot: "このツール ret2boot は GPL-3.0 で公開されています。完全な LICENSE: %{license_url}"
+startup.license.ret2shell: "ret2shell は独自のオープンソースライセンスで公開されています。完全な LICENSE: %{license_url}"
+startup.license.commercial_summary: "ret2shell は商用利用自体は認められますが、問題アクセス、認証、組織参加、組織リソースへのアクセスについて利用者に課金したり、プラットフォームの利用権やステータスを有料の講座、ブートキャンプ、会員制商品などに結び付けたりすることはできません。"
 startup.safety.title: インストール前に次の点を確認してください
 startup.safety.root_required: Ret2Shell のインストールには root 権限が必要です。
 startup.safety.clean_server: 既存サービスとの競合を避けるため、できるだけクリーンなサーバーでの実行を推奨します。

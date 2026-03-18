@@ -17,6 +17,9 @@ use crate::{
   update::{self, UpdateCheckResult},
 };
 
+const RET2BOOT_LICENSE_URL: &str = "https://github.com/ret2shell/ret2boot/blob/master/LICENSE";
+const RET2SHELL_LICENSE_URL: &str = "https://github.com/ret2shell/ret2shell/blob/main/LICENSE";
+
 pub struct RuntimeState {
   pub locale: String,
   pub privilege_backend: &'static str,
@@ -108,6 +111,7 @@ fn initialize_with_safety_confirmation(
   handle_update_check(update::check_for_updates());
 
   if require_safety_confirmation {
+    print_license_notice();
     print_safety_notice(&config_path);
 
     let should_continue =
@@ -241,6 +245,26 @@ fn print_safety_notice(config_path: &str) {
     "{}",
     ui::note(t!("startup.safety.user_config", path = config_path))
   );
+}
+
+fn print_license_notice() {
+  println!();
+  println!("{}", ui::section(t!("startup.license.title")));
+  println!(
+    "{}",
+    ui::note(t!(
+      "startup.license.ret2boot",
+      license_url = RET2BOOT_LICENSE_URL
+    ))
+  );
+  println!(
+    "{}",
+    ui::note(t!(
+      "startup.license.ret2shell",
+      license_url = RET2SHELL_LICENSE_URL
+    ))
+  );
+  println!("{}", ui::warning(t!("startup.license.commercial_summary")));
 }
 
 fn handle_update_check(report: UpdateCheckResult) {
