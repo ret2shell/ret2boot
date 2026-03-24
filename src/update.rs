@@ -628,16 +628,18 @@ fn parse_sha256sum_line(contents: &str, expected_name: &str) -> Result<String> {
     .lines()
     .find(|line| !line.trim().is_empty())
     .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is empty"))?;
-  let mut parts = line.split_whitespace();
+  let mut parts = line.splitn(2, char::is_whitespace);
   let checksum = parts
     .next()
     .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is malformed"))?;
   let file_name = parts
     .next()
     .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is missing the file name"))?
+    .trim()
     .trim_start_matches('*');
+  let referenced_name = checksum_entry_base_name(file_name);
 
-  if file_name != expected_name {
+  if referenced_name != expected_name {
     return Err(anyhow!(
       "checksum asset references `{file_name}` instead of `{expected_name}`"
     ));
@@ -650,6 +652,10 @@ fn parse_sha256sum_line(contents: &str, expected_name: &str) -> Result<String> {
   }
 
   Ok(checksum.to_ascii_lowercase())
+}
+
+fn checksum_entry_base_name(path: &str) -> &str {
+  path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
 fn compute_sha256(path: &Path) -> Result<String> {
@@ -732,7 +738,7 @@ fn target_env() -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-  use super::{parse_gh_auth_token, parse_sha256sum_line};
+  use super::{checksum_entry_base_name, parse_gh_auth_token, parse_sha256sum_line};
 
   #[test]
   fn parses_gh_auth_token_output() {
@@ -760,6 +766,46 @@ mod tests {
     assert_eq!(
       checksum,
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    );
+  }
+
+  #[test]
+  fn parses_sha256sum_output_with_path_prefix() {
+    let checksum = parse_sha256sum_line(
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  /home/runner1/_work/_temp/helm-dist/ret2shell-3.10.4.tgz\n",
+      "ret2shell-3.10.4.tgz",
+    )
+    .expect("checksum should parse when the checksum file includes a path prefix");
+
+    assert_eq!(
+      checksum,
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    );
+  }
+
+  #[test]
+  fn parses_binary_sha256sum_output_with_windows_path_prefix() {
+    let checksum = parse_sha256sum_line(
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef *C:\\artifacts\\ret2shell-3.10.4.tgz\n",
+      "ret2shell-3.10.4.tgz",
+    )
+    .expect("checksum should parse when the checksum file includes a binary-mode path");
+
+    assert_eq!(
+      checksum,
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    );
+  }
+
+  #[test]
+  fn extracts_checksum_entry_base_name_from_either_path_separator() {
+    assert_eq!(
+      checksum_entry_base_name("/home/runner1/_work/ret2shell-3.10.4.tgz"),
+      "ret2shell-3.10.4.tgz"
+    );
+    assert_eq!(
+      checksum_entry_base_name("C:\\artifacts\\ret2shell-3.10.4.tgz"),
+      "ret2shell-3.10.4.tgz"
     );
   }
 
