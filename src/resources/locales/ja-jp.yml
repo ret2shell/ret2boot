@@ -90,7 +90,7 @@ install.platform.questionnaire_intro: ここから各プラットフォームサ
 install.platform.storage_notice: ローカルディスクを使うサービスにはストレージ設定が必要です。コア platform サービスは常に local-path を使います。
 install.platform.detected_remaining_disk: "検出した空きディスク容量: %{remaining} GiB"
 install.platform.requested_disk.prompt: Ret2Shell 用にどれだけのディスク容量を確保しますか？（GiB）
-install.platform.public_host.prompt: Ret2Shell にアクセスする際に使う公開ドメイン名または IPv4 アドレスを入力してください
+install.platform.public_host.prompt: Ret2Shell にアクセスする際に使う公開ドメイン名を入力してください（裸の IPv4 アドレスは未対応です）
 install.platform.services_intro: Ret2Shell サービスを設定する
 install.platform.service_heading: "サービス設定: %{service}"
 install.platform.service_platform_fixed: コア platform サービスは常にローカル配置され、ストレージも既定値が自動で使われます。

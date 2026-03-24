@@ -1972,13 +1972,10 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
     yaml_quote(&summary.ingress_class_name)
   ));
   lines.push("    hosts:".to_string());
-  lines.push("      -".to_string());
-  if !public_host_uses_catch_all_ingress(&summary.public_host) {
-    lines.push(format!(
-      "        host: {}",
-      yaml_quote(&summary.public_host)
-    ));
-  }
+  lines.push(format!(
+    "      - host: {}",
+    yaml_quote(&summary.public_host)
+  ));
   lines.push("        paths:".to_string());
   lines.push(format!(
     "          - path: {}",
@@ -2348,21 +2345,25 @@ fn normalize_public_host(raw: &str) -> Result<String> {
   if trimmed.matches(':').count() > 1 {
     bail!("the public host must be a domain name or IPv4 address");
   }
+  let host = trimmed
+    .split_once(':')
+    .map(|(host, _)| host)
+    .unwrap_or(trimmed);
 
-  Ok(
-    trimmed
-      .split_once(':')
-      .map(|(host, _)| host)
-      .unwrap_or(trimmed)
-      .to_string(),
-  )
+  if public_host_is_ipv4(host) {
+    bail!(
+      "the public host must be a DNS name; the current ret2shell chart requires a valid ingress host and does not support a bare IPv4 address"
+    );
+  }
+
+  Ok(host.to_string())
 }
 
 fn derive_internal_registry_host(public_host: &str) -> String {
   format!("{public_host}:{INTERNAL_REGISTRY_NODE_PORT}")
 }
 
-fn public_host_uses_catch_all_ingress(public_host: &str) -> bool {
+fn public_host_is_ipv4(public_host: &str) -> bool {
   public_host.parse::<Ipv4Addr>().is_ok()
 }
 
@@ -2631,20 +2632,11 @@ mod tests {
   }
 
   #[test]
-  fn render_platform_values_yaml_omits_ingress_host_for_ipv4_public_host() {
-    let mut summary = sample_summary();
-    summary.public_host = "103.151.173.97".to_string();
-    summary.internal_registry_host = "103.151.173.97:30310".to_string();
+  fn normalize_public_host_rejects_ipv4_input() {
+    let error = normalize_public_host("103.151.173.97")
+      .expect_err("bare IPv4 input should be rejected before Helm rendering");
 
-    let rendered = render_platform_values_yaml(&summary).expect("values render");
-    let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
-    let ingress_rule = &parsed["platform"]["ingress"]["hosts"][0];
-
-    assert!(ingress_rule["host"].is_null());
-    assert_eq!(
-      parsed["platform"]["config"]["server"]["externalDomain"],
-      Value::String("103.151.173.97".to_string())
-    );
+    assert!(error.to_string().contains("must be a DNS name"));
   }
 
   #[test]
@@ -2691,9 +2683,9 @@ mod tests {
   }
 
   #[test]
-  fn public_host_uses_catch_all_ingress_for_ipv4_only() {
-    assert!(public_host_uses_catch_all_ingress("103.151.173.97"));
-    assert!(!public_host_uses_catch_all_ingress("ctf.example.com"));
+  fn public_host_is_ipv4_detects_bare_ipv4_only() {
+    assert!(public_host_is_ipv4("103.151.173.97"));
+    assert!(!public_host_is_ipv4("ctf.example.com"));
   }
 
   fn sample_summary() -> PlatformPlanSummary {
