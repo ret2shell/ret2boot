@@ -3,6 +3,7 @@ use std::{
   fs::{self, File},
   io::{self, Read},
   path::{Path, PathBuf},
+  process::Command,
   time::Duration,
 };
 
@@ -10,7 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::{
   StatusCode,
   blocking::Client,
-  header::{ACCEPT, USER_AGENT},
+  header::{ACCEPT, AUTHORIZATION, USER_AGENT},
 };
 use semver::Version;
 use serde::Deserialize;
@@ -20,6 +21,9 @@ use tracing::{debug, info, warn};
 pub const DEFAULT_RELEASE_SOURCE_NAME: &str = "github";
 pub const DEFAULT_REPOSITORY_URL: &str = "https://github.com/ret2shell/ret2boot";
 pub const RET2SHELL_REPOSITORY_URL: &str = "https://github.com/ret2shell/ret2shell";
+const GITHUB_HOSTNAME: &str = "github.com";
+const GITHUB_JSON_MEDIA_TYPE: &str = "application/vnd.github+json";
+const GITHUB_ASSET_MEDIA_TYPE: &str = "application/octet-stream";
 
 pub enum UpdateCheckResult {
   UpToDate,
@@ -99,7 +103,9 @@ impl UpdateManager {
         .context("failed to parse current package version")?,
       cache_dir: cache_dir()?,
       selector: AssetSelector::current(),
-      sources: vec![Box::new(GitHubReleaseSource::ret2boot())],
+      sources: vec![Box::new(GitHubReleaseSource::ret2boot(
+        GitHubAuth::from_gh(GITHUB_HOSTNAME)?,
+      ))],
     })
   }
 
@@ -206,12 +212,7 @@ impl UpdateManager {
     }
 
     let temp_path = final_path.with_extension("download");
-    let mut response = self
-      .client
-      .get(&asset.download_url)
-      .header(USER_AGENT, user_agent())
-      .send()
-      .with_context(|| format!("failed to request update asset `{}`", asset.download_url))?
+    let mut response = request_remote_asset(&self.client, asset)?
       .error_for_status()
       .with_context(|| format!("update asset `{}` returned an error status", asset.name))?;
 
@@ -255,7 +256,7 @@ impl Ret2ShellChartManager {
         .build()
         .context("failed to build ret2shell chart HTTP client")?,
       cache_dir: cache_dir()?,
-      source: GitHubReleaseSource::ret2shell(),
+      source: GitHubReleaseSource::ret2shell(GitHubAuth::from_gh(GITHUB_HOSTNAME)?),
     })
   }
 
@@ -359,26 +360,31 @@ impl RemoteRelease {
 struct RemoteAsset {
   name: String,
   download_url: String,
+  request_url: String,
+  auth: RequestAuth,
+  accept: RemoteAssetAccept,
 }
 
 struct GitHubReleaseSource {
   repository_url: String,
   latest_release_api: String,
+  auth: GitHubAuth,
 }
 
 impl GitHubReleaseSource {
-  fn ret2boot() -> Self {
-    Self::new("ret2shell", "ret2boot", DEFAULT_REPOSITORY_URL)
+  fn ret2boot(auth: GitHubAuth) -> Self {
+    Self::new("ret2shell", "ret2boot", DEFAULT_REPOSITORY_URL, auth)
   }
 
-  fn ret2shell() -> Self {
-    Self::new("ret2shell", "ret2shell", RET2SHELL_REPOSITORY_URL)
+  fn ret2shell(auth: GitHubAuth) -> Self {
+    Self::new("ret2shell", "ret2shell", RET2SHELL_REPOSITORY_URL, auth)
   }
 
-  fn new(owner: &str, repo: &str, repository_url: &str) -> Self {
+  fn new(owner: &str, repo: &str, repository_url: &str, auth: GitHubAuth) -> Self {
     Self {
       latest_release_api: format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"),
       repository_url: repository_url.to_string(),
+      auth,
     }
   }
 }
@@ -393,10 +399,14 @@ impl ReleaseSource for GitHubReleaseSource {
   }
 
   fn fetch_latest_release(&self, client: &Client) -> Result<Option<RemoteRelease>> {
-    let response = client
-      .get(&self.latest_release_api)
-      .header(USER_AGENT, user_agent())
-      .header(ACCEPT, "application/vnd.github+json")
+    let response = self
+      .auth
+      .apply(
+        client
+          .get(&self.latest_release_api)
+          .header(USER_AGENT, user_agent())
+          .header(ACCEPT, GITHUB_JSON_MEDIA_TYPE),
+      )
       .send()
       .with_context(|| format!("failed to request `{}`", self.latest_release_api))?;
 
@@ -420,9 +430,74 @@ impl ReleaseSource for GitHubReleaseSource {
         .map(|asset| RemoteAsset {
           name: asset.name,
           download_url: asset.browser_download_url,
+          request_url: asset.url,
+          auth: RequestAuth::GitHub(self.auth.clone()),
+          accept: RemoteAssetAccept::OctetStream,
         })
         .collect(),
     }))
+  }
+}
+
+#[derive(Clone)]
+struct GitHubAuth {
+  token: String,
+}
+
+impl GitHubAuth {
+  fn from_gh(hostname: &str) -> Result<Self> {
+    let output = Command::new("gh")
+      .args(["auth", "token", "--hostname", hostname])
+      .output()
+      .with_context(|| format!("failed to run `gh auth token --hostname {hostname}`"))?;
+
+    if !output.status.success() {
+      let stderr = String::from_utf8_lossy(&output.stderr);
+      let stderr = stderr.trim();
+      let detail = if stderr.is_empty() {
+        String::new()
+      } else {
+        format!(": {stderr}")
+      };
+
+      return Err(anyhow!(
+        "`gh auth token` did not return a usable token for `{hostname}`{detail}"
+      ));
+    }
+
+    Ok(Self {
+      token: parse_gh_auth_token(&output.stdout)?,
+    })
+  }
+
+  fn apply(&self, request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    request.header(AUTHORIZATION, format!("Bearer {}", self.token))
+  }
+}
+
+#[derive(Clone)]
+enum RequestAuth {
+  GitHub(GitHubAuth),
+}
+
+impl RequestAuth {
+  fn apply(&self, request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    match self {
+      Self::GitHub(auth) => auth.apply(request),
+    }
+  }
+}
+
+#[derive(Clone, Copy)]
+enum RemoteAssetAccept {
+  OctetStream,
+}
+
+impl RemoteAssetAccept {
+  fn apply(self, request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    match self {
+      Self::OctetStream => request.header(ACCEPT, GITHUB_ASSET_MEDIA_TYPE),
+    }
   }
 }
 
@@ -436,6 +511,7 @@ struct GitHubRelease {
 #[derive(Deserialize)]
 struct GitHubAsset {
   name: String,
+  url: String,
   browser_download_url: String,
 }
 
@@ -501,11 +577,7 @@ impl AssetSelector {
 }
 
 fn download_text_asset(client: &Client, asset: &RemoteAsset) -> Result<String> {
-  client
-    .get(&asset.download_url)
-    .header(USER_AGENT, user_agent())
-    .send()
-    .with_context(|| format!("failed to request release asset `{}`", asset.download_url))?
+  request_remote_asset(client, asset)?
     .error_for_status()
     .with_context(|| format!("release asset `{}` returned an error status", asset.name))?
     .text()
@@ -513,11 +585,7 @@ fn download_text_asset(client: &Client, asset: &RemoteAsset) -> Result<String> {
 }
 
 fn download_asset_to_path(client: &Client, asset: &RemoteAsset, path: &Path) -> Result<()> {
-  let mut response = client
-    .get(&asset.download_url)
-    .header(USER_AGENT, user_agent())
-    .send()
-    .with_context(|| format!("failed to request release asset `{}`", asset.download_url))?
+  let mut response = request_remote_asset(client, asset)?
     .error_for_status()
     .with_context(|| format!("release asset `{}` returned an error status", asset.name))?;
   let mut file =
@@ -527,6 +595,32 @@ fn download_asset_to_path(client: &Client, asset: &RemoteAsset, path: &Path) -> 
     .with_context(|| format!("failed to write `{}`", path.display()))?;
 
   Ok(())
+}
+
+fn request_remote_asset(
+  client: &Client, asset: &RemoteAsset,
+) -> Result<reqwest::blocking::Response> {
+  asset
+    .accept
+    .apply(
+      asset
+        .auth
+        .apply(client.get(&asset.request_url).header(USER_AGENT, user_agent())),
+    )
+    .send()
+    .with_context(|| format!("failed to request release asset `{}`", asset.request_url))
+}
+
+fn parse_gh_auth_token(stdout: &[u8]) -> Result<String> {
+  let token = std::str::from_utf8(stdout)
+    .context("`gh auth token` returned non-utf8 output")?
+    .trim();
+
+  if token.is_empty() {
+    return Err(anyhow!("`gh auth token` returned an empty token"));
+  }
+
+  Ok(token.to_string())
 }
 
 fn parse_sha256sum_line(contents: &str, expected_name: &str) -> Result<String> {
@@ -638,7 +732,22 @@ fn target_env() -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-  use super::parse_sha256sum_line;
+  use super::{parse_gh_auth_token, parse_sha256sum_line};
+
+  #[test]
+  fn parses_gh_auth_token_output() {
+    let token = parse_gh_auth_token(b"gho_example_token\r\n").expect("token should parse");
+
+    assert_eq!(token, "gho_example_token");
+  }
+
+  #[test]
+  fn rejects_empty_gh_auth_token_output() {
+    let error =
+      parse_gh_auth_token(b" \n").expect_err("empty `gh auth token` output should fail");
+
+    assert!(error.to_string().contains("returned an empty token"));
+  }
 
   #[test]
   fn parses_standard_sha256sum_output() {
