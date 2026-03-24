@@ -2,6 +2,7 @@ use std::{
   collections::{BTreeMap, BTreeSet},
   fs::{self, File},
   io::Read,
+  net::Ipv4Addr,
   path::{Path, PathBuf},
   thread,
   time::Duration,
@@ -1971,10 +1972,13 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
     yaml_quote(&summary.ingress_class_name)
   ));
   lines.push("    hosts:".to_string());
-  lines.push(format!(
-    "      - host: {}",
-    yaml_quote(&summary.public_host)
-  ));
+  lines.push("      -".to_string());
+  if !public_host_uses_catch_all_ingress(&summary.public_host) {
+    lines.push(format!(
+      "        host: {}",
+      yaml_quote(&summary.public_host)
+    ));
+  }
   lines.push("        paths:".to_string());
   lines.push(format!(
     "          - path: {}",
@@ -2358,6 +2362,10 @@ fn derive_internal_registry_host(public_host: &str) -> String {
   format!("{public_host}:{INTERNAL_REGISTRY_NODE_PORT}")
 }
 
+fn public_host_uses_catch_all_ingress(public_host: &str) -> bool {
+  public_host.parse::<Ipv4Addr>().is_ok()
+}
+
 fn platform_ingress_class(distribution: KubernetesDistribution) -> &'static str {
   match distribution {
     KubernetesDistribution::K3s => "traefik",
@@ -2623,6 +2631,23 @@ mod tests {
   }
 
   #[test]
+  fn render_platform_values_yaml_omits_ingress_host_for_ipv4_public_host() {
+    let mut summary = sample_summary();
+    summary.public_host = "103.151.173.97".to_string();
+    summary.internal_registry_host = "103.151.173.97:30310".to_string();
+
+    let rendered = render_platform_values_yaml(&summary).expect("values render");
+    let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
+    let ingress_rule = &parsed["platform"]["ingress"]["hosts"][0];
+
+    assert!(ingress_rule["host"].is_null());
+    assert_eq!(
+      parsed["platform"]["config"]["server"]["externalDomain"],
+      Value::String("103.151.173.97".to_string())
+    );
+  }
+
+  #[test]
   fn render_platform_storage_manifest_only_emits_local_path_classes() {
     let summary = sample_summary();
     let rendered = render_platform_storage_manifest(&summary).expect("storage manifest exists");
@@ -2663,6 +2688,12 @@ mod tests {
       Path::new("/tmp/ret2shell-3.10.4.tgz"),
       Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.4/ret2shell-3.10.4.tgz")
     ));
+  }
+
+  #[test]
+  fn public_host_uses_catch_all_ingress_for_ipv4_only() {
+    assert!(public_host_uses_catch_all_ingress("103.151.173.97"));
+    assert!(!public_host_uses_catch_all_ingress("ctf.example.com"));
   }
 
   fn sample_summary() -> PlatformPlanSummary {
