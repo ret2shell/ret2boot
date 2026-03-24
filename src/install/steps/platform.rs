@@ -1616,6 +1616,13 @@ fn copy_chart_to_system_cache(
   ctx: &StepExecutionContext<'_>, chart: ChartReference,
 ) -> Result<ChartReference> {
   let system_chart_path = system_chart_cache_path(&chart.version);
+  if !chart_cache_copy_required(&chart.path, &system_chart_path) {
+    return Ok(ChartReference {
+      path: system_chart_path,
+      ..chart
+    });
+  }
+
   let system_chart_dir = system_chart_path.parent().expect("chart cache has parent");
 
   install_directory(ctx, &system_chart_dir.display().to_string())?;
@@ -1634,6 +1641,10 @@ fn copy_chart_to_system_cache(
     path: system_chart_path,
     ..chart
   })
+}
+
+fn chart_cache_copy_required(source_path: &Path, target_path: &Path) -> bool {
+  source_path != target_path
 }
 
 fn system_chart_cache_path(version: &str) -> PathBuf {
@@ -2637,6 +2648,21 @@ mod tests {
         "ret2shell-storage-registry".to_string(),
       ]
     );
+  }
+
+  #[test]
+  fn chart_cache_copy_is_skipped_when_source_is_already_in_system_cache() {
+    let path = Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.4/ret2shell-3.10.4.tgz");
+
+    assert!(!chart_cache_copy_required(path, path));
+  }
+
+  #[test]
+  fn chart_cache_copy_runs_when_source_and_target_differ() {
+    assert!(chart_cache_copy_required(
+      Path::new("/tmp/ret2shell-3.10.4.tgz"),
+      Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.4/ret2shell-3.10.4.tgz")
+    ));
   }
 
   fn sample_summary() -> PlatformPlanSummary {
