@@ -267,6 +267,21 @@ impl SystemPackageManager {
     }
   }
 
+  pub fn ensure_nginx_stream_module(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
+    match self {
+      Self::Apt => ctx.run_privileged_command(
+        "apt-get",
+        &[
+          "install".to_string(),
+          "-y".to_string(),
+          "libnginx-mod-stream".to_string(),
+        ],
+        &[("DEBIAN_FRONTEND".to_string(), "noninteractive".to_string())],
+      ),
+      _ => Ok(()),
+    }
+  }
+
   pub fn remove_nginx(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
     match self {
       Self::Apt => ctx.run_privileged_command(
