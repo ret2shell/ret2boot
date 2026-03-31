@@ -90,7 +90,8 @@ install.platform.questionnaire_intro: 接下来要确认各项平台服务的部
 install.platform.storage_notice: 使用本机磁盘的服务都需要配置存储；核心平台服务固定使用 local-path。
 install.platform.detected_remaining_disk: "检测到可用磁盘空间：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望为回归终端预留多少磁盘空间？（GiB）
-install.platform.public_host.prompt: 请输入用户访问回归终端时使用的公网域名（当前版本不支持裸 IPv4 地址）
+install.platform.public_host.prompt: 请输入用户访问回归终端时使用的公网域名。如果你目前只有裸 IPv4 地址，ret2boot 会自动派生一个可用的 nip.io 域名。
+install.platform.public_host.derived_note: "已根据 IPv4 %{input} 自动派生公网访问域名：%{host}。后续请通过这个域名访问回归终端。"
 install.platform.services_intro: 配置各项回归终端服务
 install.platform.service_heading: "配置服务：%{service}"
 install.platform.service_platform_fixed: 核心平台服务固定为本地部署，存储方式也会自动使用默认值。

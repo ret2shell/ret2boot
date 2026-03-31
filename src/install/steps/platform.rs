@@ -39,6 +39,7 @@ const PLATFORM_INGRESS_PATH: &str = "/";
 const PLATFORM_INGRESS_PATH_TYPE: &str = "Prefix";
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
 const LOCAL_PATH_PROVISIONER: &str = "rancher.io/local-path";
+const DERIVED_PUBLIC_HOST_SUFFIX: &str = "nip.io";
 
 #[derive(Clone, Copy)]
 struct PlatformServiceDefinition {
@@ -736,11 +737,22 @@ fn collect_platform_public_host(ctx: &mut StepQuestionContext<'_>) -> Result<()>
         .map(str::to_string)
     })
     .unwrap_or_else(|| "ret2shell.local".to_string());
-  let public_host = normalize_public_host(
-    &InputCollector::new(t!("install.platform.public_host.prompt"))
-      .with_default(default_host)
-      .collect()?,
-  )?;
+  let raw_public_host = InputCollector::new(t!("install.platform.public_host.prompt"))
+    .with_default(default_host)
+    .collect()?;
+  let input_host = canonical_public_host_input(&raw_public_host)?;
+  let public_host = normalize_public_host(&raw_public_host)?;
+
+  if public_host_is_ipv4(input_host) {
+    println!(
+      "{}",
+      ui::note(t!(
+        "install.platform.public_host.derived_note",
+        input = input_host,
+        host = public_host.as_str()
+      ))
+    );
+  }
 
   ctx.persist_change(
     "install.questionnaire.platform.public_host",
@@ -2332,6 +2344,16 @@ fn required_internal_secret(
 }
 
 fn normalize_public_host(raw: &str) -> Result<String> {
+  let host = canonical_public_host_input(raw)?;
+
+  if public_host_is_ipv4(host) {
+    return Ok(derive_public_host_from_ipv4(host));
+  }
+
+  Ok(host.to_string())
+}
+
+fn canonical_public_host_input(raw: &str) -> Result<&str> {
   let trimmed = raw.trim();
   let trimmed = trimmed
     .strip_prefix("https://")
@@ -2345,18 +2367,11 @@ fn normalize_public_host(raw: &str) -> Result<String> {
   if trimmed.matches(':').count() > 1 {
     bail!("the public host must be a domain name or IPv4 address");
   }
-  let host = trimmed
+
+  Ok(trimmed
     .split_once(':')
     .map(|(host, _)| host)
-    .unwrap_or(trimmed);
-
-  if public_host_is_ipv4(host) {
-    bail!(
-      "the public host must be a DNS name; the current ret2shell chart requires a valid ingress host and does not support a bare IPv4 address"
-    );
-  }
-
-  Ok(host.to_string())
+    .unwrap_or(trimmed))
 }
 
 fn derive_internal_registry_host(public_host: &str) -> String {
@@ -2365,6 +2380,12 @@ fn derive_internal_registry_host(public_host: &str) -> String {
 
 fn public_host_is_ipv4(public_host: &str) -> bool {
   public_host.parse::<Ipv4Addr>().is_ok()
+}
+
+fn derive_public_host_from_ipv4(public_host: &str) -> String {
+  let dashed = public_host.replace('.', "-");
+
+  format!("ret2shell-{dashed}.{DERIVED_PUBLIC_HOST_SUFFIX}")
 }
 
 fn platform_ingress_class(distribution: KubernetesDistribution) -> &'static str {
@@ -2632,11 +2653,11 @@ mod tests {
   }
 
   #[test]
-  fn normalize_public_host_rejects_ipv4_input() {
-    let error = normalize_public_host("103.151.173.97")
-      .expect_err("bare IPv4 input should be rejected before Helm rendering");
+  fn normalize_public_host_derives_nip_io_name_for_ipv4_input() {
+    let host = normalize_public_host("103.151.173.97")
+      .expect("bare IPv4 input should derive a DNS host before Helm rendering");
 
-    assert!(error.to_string().contains("must be a DNS name"));
+    assert_eq!(host, "ret2shell-103-151-173-97.nip.io");
   }
 
   #[test]
@@ -2686,6 +2707,14 @@ mod tests {
   fn public_host_is_ipv4_detects_bare_ipv4_only() {
     assert!(public_host_is_ipv4("103.151.173.97"));
     assert!(!public_host_is_ipv4("ctf.example.com"));
+  }
+
+  #[test]
+  fn derive_public_host_from_ipv4_formats_nip_io_host() {
+    assert_eq!(
+      derive_public_host_from_ipv4("103.151.173.97"),
+      "ret2shell-103-151-173-97.nip.io"
+    );
   }
 
   fn sample_summary() -> PlatformPlanSummary {
