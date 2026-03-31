@@ -226,7 +226,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .package_manager()
       .or_else(SystemPackageManager::detect)
       .ok_or_else(|| anyhow!("no supported package manager is available for nginx installation"))?;
-    let nginx_existed = detect_nginx_binary_path().is_some() || nginx_service_exists();
+    let nginx_existed = detect_nginx_binary_path().is_some();
     let installed_by_ret2boot = ctx
       .config()
       .install_step_metadata(self.id(), "installed_by_ret2boot")
@@ -255,8 +255,11 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       &endpoint.public_host,
       &endpoint.ingress_host,
     )?;
-    let nginx_binary =
-      detect_nginx_binary_path().unwrap_or_else(|| PathBuf::from(NGINX_BINARY_DEST));
+    let nginx_binary = detect_nginx_binary_path();
+    let nginx_command = nginx_binary
+      .as_ref()
+      .map(|path| path.display().to_string())
+      .unwrap_or_else(|| "nginx".to_string());
     ctx.run_privileged_command(
       "systemctl",
       &[
@@ -267,7 +270,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       &[],
     )?;
     ctx.run_privileged_command(
-      &nginx_binary.display().to_string(),
+      &nginx_command,
       &["-t".to_string()],
       &[],
     )?;
@@ -278,7 +281,9 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     )?;
 
     let package_manager_label = package_manager.label().to_string();
-    let binary_path = nginx_binary.display().to_string();
+    let binary_path = nginx_binary
+      .map(|path| path.display().to_string())
+      .unwrap_or_else(|| nginx_command.clone());
 
     ctx.persist_change("install.execution.gateway.nginx", &binary_path, |config| {
       let changed = config.set_install_step_metadata(
