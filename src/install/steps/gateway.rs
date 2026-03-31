@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::fs;
 
 use anyhow::{Context, Result, anyhow, bail};
 use rust_i18n::t;
@@ -18,7 +18,6 @@ use crate::{
   resources, ui,
 };
 
-const NGINX_BINARY_DEST: &str = "/usr/sbin/nginx";
 const NGINX_MAIN_CONF: &str = "/etc/nginx/nginx.conf";
 const NGINX_LOG_DIR: &str = "/var/log/nginx/ret2shell";
 const NGINX_SITE_AVAILABLE: &str = "/etc/nginx/sites-available/ret2shell.conf";
@@ -488,29 +487,6 @@ fn ensure_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
     &contents[http_index..]
       .strip_prefix("http {")
       .expect("http block exists")
-  );
-  let staged = stage_text_file("nginx-main", "conf", updated)?;
-  install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
-  let _ = fs::remove_file(&staged);
-  Ok(())
-}
-
-fn ensure_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let contents = fs::read_to_string(NGINX_MAIN_CONF)
-    .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))?;
-
-  if contents.contains(NGINX_STREAM_INCLUDE_MARKER) {
-    return Ok(());
-  }
-
-  let http_index = contents
-    .find("http {")
-    .ok_or_else(|| anyhow!("unable to locate the http block in `{NGINX_MAIN_CONF}`"))?;
-  let updated = format!(
-    "{}{}\n\n{}",
-    &contents[..http_index],
-    NGINX_STREAM_INCLUDE_MARKER,
-    &contents[http_index..]
   );
   let staged = stage_text_file("nginx-main", "conf", updated)?;
   install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
