@@ -22,8 +22,8 @@ use super::{
 };
 use crate::{
   config::{
-    ApplicationExposureMode, InstallStepId, InstallTargetRole, KubernetesDistribution,
-    PlatformServiceDeploymentMode, PlatformServiceId, PlatformStorageMode,
+    ApplicationExposureMode, DeploymentProfile, InstallStepId, InstallTargetRole,
+    KubernetesDistribution, PlatformServiceDeploymentMode, PlatformServiceId, PlatformStorageMode,
   },
   install::collectors::{Collector, InputCollector, SingleSelectCollector},
   ui, update,
@@ -233,7 +233,15 @@ impl AtomicInstallStep for PlatformDeploymentStep {
     let summary = platform_plan_summary(ctx)?;
     let _ = render_platform_values_yaml(&summary)?;
     let _ = render_platform_storage_manifest(&summary);
+    let profile = ctx.deployment_profile().ok_or_else(|| {
+      anyhow!("deployment profile is required before planning the platform deployment")
+    })?;
     let mut details = vec![
+      t!(
+        "install.steps.platform_plan.profile",
+        profile = deployment_profile_label(profile)
+      )
+      .to_string(),
       t!(
         "install.steps.platform_plan.namespaces",
         platform = PLATFORM_NAMESPACE,
@@ -518,10 +526,13 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     .public_host
     .as_deref()
     .ok_or_else(|| anyhow!("a public host is required before planning the platform deployment"))?;
+  let deployment_profile = ctx.deployment_profile().ok_or_else(|| {
+    anyhow!("deployment profile is required before planning the platform deployment")
+  })?;
   let application_exposure = ctx.application_exposure().ok_or_else(|| {
     anyhow!("application exposure mode is required before planning the platform deployment")
   })?;
-  let endpoint = resolve_public_endpoint(public_host, application_exposure)?;
+  let endpoint = resolve_public_endpoint(public_host, application_exposure, deployment_profile)?;
   let ingress_class_name =
     platform_ingress_class(ctx.kubernetes_distribution().ok_or_else(|| {
       anyhow!("kubernetes distribution is required before planning the platform deployment")
@@ -731,6 +742,9 @@ fn print_platform_bootstrap_notice() {
 }
 
 fn collect_platform_public_host(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
+  let profile = ctx.as_plan_context().deployment_profile().ok_or_else(|| {
+    anyhow!("deployment profile is required before collecting the platform public host")
+  })?;
   let exposure = ctx.as_plan_context().application_exposure().ok_or_else(|| {
     anyhow!("application exposure mode is required before collecting the platform public host")
   })?;
@@ -748,11 +762,11 @@ fn collect_platform_public_host(ctx: &mut StepQuestionContext<'_>) -> Result<()>
         .map(str::to_string)
     })
     .unwrap_or_else(|| "ret2shell.local".to_string());
-  let raw_public_host = InputCollector::new(t!("install.platform.public_host.prompt"))
+  let raw_public_host = InputCollector::new(public_host_prompt(profile))
     .with_default(default_host)
     .collect()?;
   let input_host = canonical_public_host_input(&raw_public_host)?.to_string();
-  let endpoint = resolve_public_endpoint(&input_host, exposure)?;
+  let endpoint = resolve_public_endpoint(&input_host, exposure, profile)?;
 
   if public_host_is_ipv4(&input_host) && endpoint.public_host != input_host {
     println!(
@@ -2365,9 +2379,10 @@ fn required_internal_secret(
 }
 
 pub(crate) fn resolve_public_endpoint(
-  raw: &str, exposure: ApplicationExposureMode,
+  raw: &str, exposure: ApplicationExposureMode, profile: DeploymentProfile,
 ) -> Result<ResolvedPublicEndpoint> {
   let host = canonical_public_host_input(raw)?;
+  validate_public_host_for_profile(host, profile)?;
 
   if public_host_is_ipv4(host) {
     return Ok(match exposure {
@@ -2390,6 +2405,33 @@ pub(crate) fn resolve_public_endpoint(
     public_host: host.to_string(),
     ingress_host: host.to_string(),
   })
+}
+
+fn validate_public_host_for_profile(host: &str, profile: DeploymentProfile) -> Result<()> {
+  match profile {
+    DeploymentProfile::LocalLab => Ok(()),
+    DeploymentProfile::CampusInternal => {
+      if public_host_is_ipv4(host) {
+        bail!(
+          "the campus-network internal profile requires an internal DNS hostname; use the local intranet debugging profile for temporary bare IPv4 access"
+        );
+      }
+
+      Ok(())
+    }
+    DeploymentProfile::PublicDomain => {
+      if public_host_is_ipv4(host) {
+        bail!("the public-domain profile requires a bound DNS hostname and does not accept a bare IPv4 address");
+      }
+      if host.ends_with(".nip.io") || host.ends_with(".sslip.io") {
+        bail!(
+          "the public-domain profile requires a bound DNS hostname and does not accept a derived wildcard DNS hostname"
+        );
+      }
+
+      Ok(())
+    }
+  }
 }
 
 fn canonical_public_host_input(raw: &str) -> Result<&str> {
@@ -2431,6 +2473,32 @@ fn derive_internal_ingress_host_from_ipv4(public_host: &str) -> String {
   let dashed = public_host.replace('.', "-");
 
   format!("ret2shell-{dashed}.{INTERNAL_INGRESS_HOST_SUFFIX}")
+}
+
+fn public_host_prompt(profile: DeploymentProfile) -> String {
+  match profile {
+    DeploymentProfile::LocalLab => {
+      t!("install.platform.public_host.prompt.local_lab").to_string()
+    }
+    DeploymentProfile::CampusInternal => {
+      t!("install.platform.public_host.prompt.campus_internal").to_string()
+    }
+    DeploymentProfile::PublicDomain => {
+      t!("install.platform.public_host.prompt.public_domain").to_string()
+    }
+  }
+}
+
+fn deployment_profile_label(profile: DeploymentProfile) -> String {
+  match profile {
+    DeploymentProfile::LocalLab => t!("install.deployment_profile.options.local_lab").to_string(),
+    DeploymentProfile::CampusInternal => {
+      t!("install.deployment_profile.options.campus_internal").to_string()
+    }
+    DeploymentProfile::PublicDomain => {
+      t!("install.deployment_profile.options.public_domain").to_string()
+    }
+  }
 }
 
 fn platform_ingress_class(distribution: KubernetesDistribution) -> &'static str {
@@ -2655,6 +2723,7 @@ mod tests {
     let endpoint = resolve_public_endpoint(
       "https://ctf.example.com:8443/ui",
       ApplicationExposureMode::Ingress,
+      DeploymentProfile::PublicDomain,
     )
     .expect("host parses");
 
@@ -2704,7 +2773,11 @@ mod tests {
 
   #[test]
   fn resolve_public_endpoint_derives_nip_io_name_for_ingress_ipv4_input() {
-    let endpoint = resolve_public_endpoint("103.151.173.97", ApplicationExposureMode::Ingress)
+    let endpoint = resolve_public_endpoint(
+      "103.151.173.97",
+      ApplicationExposureMode::Ingress,
+      DeploymentProfile::LocalLab,
+    )
       .expect("bare IPv4 input should derive a DNS host before Helm rendering");
 
     assert_eq!(endpoint.public_host, "ret2shell-103-151-173-97.nip.io");
@@ -2716,6 +2789,7 @@ mod tests {
     let endpoint = resolve_public_endpoint(
       "103.151.173.97",
       ApplicationExposureMode::NodePortExternalNginx,
+      DeploymentProfile::LocalLab,
     )
     .expect("bare IPv4 input should be supported through external nginx");
 
@@ -2789,6 +2863,30 @@ mod tests {
       derive_internal_ingress_host_from_ipv4("103.151.173.97"),
       "ret2shell-103-151-173-97.ret2boot.invalid"
     );
+  }
+
+  #[test]
+  fn campus_internal_profile_rejects_bare_ipv4_input() {
+    let error = resolve_public_endpoint(
+      "103.151.173.97",
+      ApplicationExposureMode::NodePortExternalNginx,
+      DeploymentProfile::CampusInternal,
+    )
+    .expect_err("campus internal deployments should require internal DNS hostnames");
+
+    assert!(error.to_string().contains("requires an internal DNS hostname"));
+  }
+
+  #[test]
+  fn public_domain_profile_rejects_bare_ipv4_input() {
+    let error = resolve_public_endpoint(
+      "103.151.173.97",
+      ApplicationExposureMode::Ingress,
+      DeploymentProfile::PublicDomain,
+    )
+    .expect_err("public deployments should require bound DNS hostnames");
+
+    assert!(error.to_string().contains("requires a bound DNS hostname"));
   }
 
   fn sample_summary() -> PlatformPlanSummary {

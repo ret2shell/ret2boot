@@ -90,7 +90,10 @@ install.platform.questionnaire_intro: Next, choose deployment and disk settings 
 install.platform.storage_notice: Services that use local disk need storage configuration. The core platform service always uses local-path.
 install.platform.detected_remaining_disk: "Detected available disk space: %{remaining} GiB"
 install.platform.requested_disk.prompt: How much disk space should be reserved for Ret2Shell? (GiB)
-install.platform.public_host.prompt: Enter the public domain users will use to reach Ret2Shell. With bare IPv4 input, ret2boot keeps the IP for NodePort plus external nginx mode and derives a nip.io hostname for ingress mode.
+install.platform.public_host.prompt: Enter the public address users will use to reach Ret2Shell.
+install.platform.public_host.prompt.local_lab: Enter the address users will use to reach Ret2Shell in this local lab deployment. You may use a local DNS hostname or a bare IPv4 address.
+install.platform.public_host.prompt.campus_internal: Enter the internal DNS hostname users will use to reach Ret2Shell on the campus or private network.
+install.platform.public_host.prompt.public_domain: Enter the bound public DNS hostname users will use to reach Ret2Shell.
 install.platform.public_host.derived_note: "Using %{host} as the public hostname derived from IPv4 %{input}. Users should access Ret2Shell through this hostname."
 install.platform.public_host.bare_ip_note: "Keeping %{input} as the user-facing address. ret2boot will route cluster ingress through internal host %{host}."
 install.platform.services_intro: Configure Ret2Shell services
@@ -148,6 +151,13 @@ install.worker_probe.failed: Primary platform status check failed.
 install.worker_probe.failed_detail: "Error details: %{error}"
 install.worker_probe.cli_missing: The required cluster CLI is missing on this worker, so the platform status check cannot continue automatically.
 install.exposure.prompt: How should applications be exposed?
+install.deployment_profile.prompt: Which deployment scenario best matches this installation?
+install.deployment_profile.options.local_lab: Local intranet debugging
+install.deployment_profile.options.campus_internal: Campus-network internal use
+install.deployment_profile.options.public_domain: Public deployment with a bound domain
+install.deployment_profile.notice.local_lab: Local intranet debugging mode is intended for trusted lab or classroom networks. Bare IPv4 access is allowed and NodePort plus external nginx is recommended.
+install.deployment_profile.notice.campus_internal: Campus-network internal mode is intended for stable internal use. Use an internal DNS hostname and prefer NodePort plus external nginx with internal DNS or hosts management.
+install.deployment_profile.notice.public_domain: Public-domain mode is intended for internet-facing deployments. Use a bound DNS hostname and prepare TLS for the final entry point.
 install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort plus external nginx
 install.exposure.ingress_notice: Ingress mode has been recorded and will be applied during installation.
@@ -217,6 +227,7 @@ install.steps.helm.detail: Install Helm for later Ret2Shell deployment steps.
 install.steps.helm.reuse: "Reuse the existing helm binary at %{path}."
 install.steps.helm.install_path: "Install helm into %{path}."
 install.steps.gateway.title: Configure application exposure
+install.steps.gateway.selected_profile: "Selected deployment profile: %{profile}"
 install.steps.gateway.selected_mode: "Selected application exposure: %{exposure}"
 install.steps.gateway.ingress_detail: Record the ingress requirement so it can be enabled during installation.
 install.steps.gateway.nodeport_detail: Install or reuse system nginx and let it take over ports 80 and 443 on this host.
@@ -226,6 +237,7 @@ install.steps.gateway.nginx_service_reuse: Reuse the existing nginx service that
 install.steps.gateway.nginx_install: Install nginx through the detected system package manager.
 install.steps.platform_plan.title: Deploy the Ret2Shell platform with Helm
 install.steps.platform_plan.namespaces: "Namespaces to prepare: %{platform}, %{challenge}"
+install.steps.platform_plan.profile: "Deployment profile: %{profile}"
 install.steps.platform_plan.public_host: "Public host: %{host}"
 install.steps.platform_plan.service_account: "Service account to prepare: %{name} in %{namespace}"
 install.steps.platform_plan.rbac: "Permissions to prepare: %{role}, %{binding}"

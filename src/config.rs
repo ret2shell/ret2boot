@@ -55,6 +55,7 @@ pub struct WorkerJoinConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlatformQuestionnaire {
+  pub deployment_profile: Option<DeploymentProfile>,
   pub remaining_disk_gib: Option<u32>,
   pub requested_disk_gib: Option<u32>,
   pub public_host: Option<String>,
@@ -323,6 +324,41 @@ impl ApplicationExposureMode {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeploymentProfile {
+  LocalLab,
+  CampusInternal,
+  PublicDomain,
+}
+
+impl DeploymentProfile {
+  pub const ALL: [Self; 3] = [Self::LocalLab, Self::CampusInternal, Self::PublicDomain];
+
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::LocalLab => "local-lab",
+      Self::CampusInternal => "campus-internal",
+      Self::PublicDomain => "public-domain",
+    }
+  }
+
+  pub fn default_index(self) -> usize {
+    match self {
+      Self::LocalLab => 0,
+      Self::CampusInternal => 1,
+      Self::PublicDomain => 2,
+    }
+  }
+
+  pub fn recommended_exposure(self) -> ApplicationExposureMode {
+    match self {
+      Self::LocalLab | Self::CampusInternal => ApplicationExposureMode::NodePortExternalNginx,
+      Self::PublicDomain => ApplicationExposureMode::Ingress,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PlatformServiceId {
@@ -497,6 +533,17 @@ impl Ret2BootConfig {
     }
 
     self.install.questionnaire.kubernetes.application_exposure = Some(exposure);
+    self.invalidate_install_pipeline();
+
+    true
+  }
+
+  pub fn set_platform_deployment_profile(&mut self, profile: DeploymentProfile) -> bool {
+    if self.install.questionnaire.platform.deployment_profile == Some(profile) {
+      return false;
+    }
+
+    self.install.questionnaire.platform.deployment_profile = Some(profile);
     self.invalidate_install_pipeline();
 
     true

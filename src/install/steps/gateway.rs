@@ -14,7 +14,7 @@ use super::{
   },
 };
 use crate::{
-  config::{ApplicationExposureMode, InstallStepId, InstallTargetRole},
+  config::{ApplicationExposureMode, DeploymentProfile, InstallStepId, InstallTargetRole},
   install::collectors::SingleSelectCollector,
   resources, ui,
 };
@@ -40,13 +40,42 @@ impl AtomicInstallStep for ApplicationGatewayStep {
   }
 
   fn collect(&self, ctx: &mut StepQuestionContext<'_>) -> Result<()> {
+    let default_profile = ctx
+      .config()
+      .install
+      .questionnaire
+      .platform
+      .deployment_profile
+      .unwrap_or(DeploymentProfile::LocalLab)
+      .default_index();
+    let profile_options = DeploymentProfile::ALL
+      .iter()
+      .copied()
+      .map(deployment_profile_label)
+      .collect::<Vec<_>>();
+    let profile = DeploymentProfile::ALL[SingleSelectCollector::new(
+      t!("install.deployment_profile.prompt"),
+      profile_options,
+    )
+    .with_default(default_profile)
+    .collect_index()?];
+
+    ctx.persist_change(
+      "install.questionnaire.platform.deployment_profile",
+      profile.as_config_value(),
+      |config| config.set_platform_deployment_profile(profile),
+    )?;
+
+    println!();
+    println!("{}", ui::note(deployment_profile_notice(profile)));
+
     let default = ctx
       .config()
       .install
       .questionnaire
       .kubernetes
       .application_exposure
-      .unwrap_or(ApplicationExposureMode::Ingress)
+      .unwrap_or(profile.recommended_exposure())
       .default_index();
     let options = ApplicationExposureMode::ALL
       .iter()
@@ -106,11 +135,19 @@ impl AtomicInstallStep for ApplicationGatewayStep {
   }
 
   fn describe(&self, ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
+    let profile = ctx.deployment_profile().ok_or_else(|| {
+      anyhow!("deployment profile is required before planning gateway setup")
+    })?;
     let exposure = ctx.application_exposure().ok_or_else(|| {
       anyhow!("application exposure mode is required before planning gateway setup")
     })?;
 
     let mut details = vec![
+      t!(
+        "install.steps.gateway.selected_profile",
+        profile = deployment_profile_label(profile)
+      )
+      .to_string(),
       t!(
         "install.steps.gateway.selected_mode",
         exposure = application_exposure_label(exposure)
@@ -190,7 +227,10 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .public_host
       .as_deref()
       .ok_or_else(|| anyhow!("platform public host is required before installing gateway"))?;
-    let endpoint = resolve_public_endpoint(public_host, exposure)?;
+    let profile = ctx.as_plan_context().deployment_profile().ok_or_else(|| {
+      anyhow!("deployment profile is required before installing gateway")
+    })?;
+    let endpoint = resolve_public_endpoint(public_host, exposure, profile)?;
 
     install_external_nginx_gateway(
       ctx,
@@ -469,6 +509,30 @@ fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
     ApplicationExposureMode::Ingress => t!("install.exposure.options.ingress").to_string(),
     ApplicationExposureMode::NodePortExternalNginx => {
       t!("install.exposure.options.nodeport_external_nginx").to_string()
+    }
+  }
+}
+
+fn deployment_profile_label(profile: DeploymentProfile) -> String {
+  match profile {
+    DeploymentProfile::LocalLab => t!("install.deployment_profile.options.local_lab").to_string(),
+    DeploymentProfile::CampusInternal => {
+      t!("install.deployment_profile.options.campus_internal").to_string()
+    }
+    DeploymentProfile::PublicDomain => {
+      t!("install.deployment_profile.options.public_domain").to_string()
+    }
+  }
+}
+
+fn deployment_profile_notice(profile: DeploymentProfile) -> String {
+  match profile {
+    DeploymentProfile::LocalLab => t!("install.deployment_profile.notice.local_lab").to_string(),
+    DeploymentProfile::CampusInternal => {
+      t!("install.deployment_profile.notice.campus_internal").to_string()
+    }
+    DeploymentProfile::PublicDomain => {
+      t!("install.deployment_profile.notice.public_domain").to_string()
     }
   }
 }
