@@ -248,6 +248,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       ctx,
       gateway_http_port,
       gateway_https_port,
+      &endpoint.public_host,
       &endpoint.ingress_host,
       https_gateway_enabled,
     )?;
@@ -375,8 +376,8 @@ impl AtomicInstallStep for ApplicationGatewayStep {
 }
 
 fn install_external_nginx_gateway(
-  ctx: &StepExecutionContext<'_>, http_port: u16, https_port: u16, upstream_host: &str,
-  enable_https_stream: bool,
+  ctx: &StepExecutionContext<'_>, http_port: u16, https_port: u16, server_name: &str,
+  upstream_host: &str, enable_https_stream: bool,
 ) -> Result<()> {
   install_directory(ctx, "/etc/nginx/sites-available")?;
   install_directory(ctx, "/etc/nginx/sites-enabled")?;
@@ -386,7 +387,7 @@ fn install_external_nginx_gateway(
   let site_path = stage_text_file(
     "nginx-ret2boot-site",
     "conf",
-    render_nginx_http_site(http_port, upstream_host)?,
+    render_nginx_http_site(http_port, upstream_host, server_name)?,
   )?;
   install_staged_file(ctx, &site_path, NGINX_SITE_AVAILABLE)?;
   let _ = fs::remove_file(&site_path);
@@ -462,11 +463,12 @@ fn cleanup_external_nginx_gateway(ctx: &StepExecutionContext<'_>) -> Result<()> 
   Ok(())
 }
 
-fn render_nginx_http_site(http_port: u16, upstream_host: &str) -> Result<String> {
+fn render_nginx_http_site(http_port: u16, upstream_host: &str, server_name: &str) -> Result<String> {
   resources::load_utf8("templates/nginx/ret2shell.conf.tmpl").map(|template| {
     template
       .replace("{{BACKEND_HTTP_PORT}}", &http_port.to_string())
       .replace("{{UPSTREAM_HOST}}", upstream_host)
+      .replace("{{SERVER_NAME}}", server_name)
   })
 }
 
@@ -693,10 +695,15 @@ mod tests {
 
   #[test]
   fn renders_nginx_site_with_rewritten_upstream_host() {
-    let rendered = render_nginx_http_site(10080, "ret2shell-103-151-173-97.ret2boot.invalid")
-      .expect("template should render");
+    let rendered = render_nginx_http_site(
+      10080,
+      "ret2shell-103-151-173-97.ret2boot.invalid",
+      "192.168.23.132",
+    )
+    .expect("template should render");
 
     assert!(rendered.contains("server 127.0.0.1:10080;"));
+    assert!(rendered.contains("server_name 192.168.23.132;"));
     assert!(rendered.contains(
       "proxy_set_header Host ret2shell-103-151-173-97.ret2boot.invalid;"
     ));

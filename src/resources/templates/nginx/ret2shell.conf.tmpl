@@ -3,8 +3,9 @@ upstream backend {
 }
 
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
+    listen 80;
+    listen [::]:80;
+    server_name {{SERVER_NAME}};
 
     gzip_static on;
 
