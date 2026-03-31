@@ -78,26 +78,32 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     println!();
     println!("{}", ui::note(deployment_profile_notice(profile)));
 
-    let default = ctx
-      .config()
-      .install
-      .questionnaire
-      .kubernetes
-      .application_exposure
-      .unwrap_or(profile.recommended_exposure())
-      .default_index();
-    let options = ApplicationExposureMode::ALL
-      .iter()
-      .copied()
-      .map(application_exposure_label)
-      .collect::<Vec<_>>();
+    let supported_exposures = supported_application_exposure_modes(profile);
+    let exposure = if supported_exposures.len() == 1 {
+      let exposure = supported_exposures[0];
+      println!();
+      println!("{}", ui::note(t!("install.exposure.local_lab_locked")));
+      exposure
+    } else {
+      let default = ctx
+        .config()
+        .install
+        .questionnaire
+        .kubernetes
+        .application_exposure
+        .filter(|exposure| supported_exposures.contains(exposure))
+        .unwrap_or(profile.recommended_exposure())
+        .default_index();
+      let options = supported_exposures
+        .iter()
+        .copied()
+        .map(application_exposure_label)
+        .collect::<Vec<_>>();
 
-    let exposure = ApplicationExposureMode::ALL[SingleSelectCollector::new(
-      t!("install.exposure.prompt"),
-      options,
-    )
-    .with_default(default)
-    .collect_index()?];
+      supported_exposures[SingleSelectCollector::new(t!("install.exposure.prompt"), options)
+        .with_default(default)
+        .collect_index()?]
+    };
 
     ctx.persist_change(
       "install.questionnaire.kubernetes.application_exposure",
@@ -150,6 +156,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     let exposure = ctx.application_exposure().ok_or_else(|| {
       anyhow!("application exposure mode is required before planning gateway setup")
     })?;
+    validate_profile_exposure(profile, exposure)?;
 
     let mut details = vec![
       t!(
@@ -196,10 +203,14 @@ impl AtomicInstallStep for ApplicationGatewayStep {
   }
 
   fn install(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+    let profile = ctx.as_plan_context().deployment_profile().ok_or_else(|| {
+      anyhow!("deployment profile is required before installing gateway")
+    })?;
     let exposure = ctx
       .as_plan_context()
       .application_exposure()
       .ok_or_else(|| anyhow!("application exposure mode is required before installing gateway"))?;
+    validate_profile_exposure(profile, exposure)?;
 
     ctx.persist_change(
       "install.execution.gateway.mode",
@@ -236,9 +247,6 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .public_host
       .as_deref()
       .ok_or_else(|| anyhow!("platform public host is required before installing gateway"))?;
-    let profile = ctx.as_plan_context().deployment_profile().ok_or_else(|| {
-      anyhow!("deployment profile is required before installing gateway")
-    })?;
     let endpoint = resolve_public_endpoint(public_host, exposure, profile)?;
 
     let nginx_binary =
@@ -684,6 +692,32 @@ fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
   }
 }
 
+fn supported_application_exposure_modes(
+  profile: DeploymentProfile,
+) -> &'static [ApplicationExposureMode] {
+  match profile {
+    DeploymentProfile::LocalLab => &[ApplicationExposureMode::NodePortExternalNginx],
+    DeploymentProfile::CampusInternal | DeploymentProfile::PublicDomain => {
+      &ApplicationExposureMode::ALL
+    }
+  }
+}
+
+fn validate_profile_exposure(
+  profile: DeploymentProfile, exposure: ApplicationExposureMode,
+) -> Result<()> {
+  if supported_application_exposure_modes(profile).contains(&exposure) {
+    return Ok(());
+  }
+
+  match profile {
+    DeploymentProfile::LocalLab => bail!(
+      "the local intranet debugging profile only supports `NodePort + external nginx` exposure"
+    ),
+    DeploymentProfile::CampusInternal | DeploymentProfile::PublicDomain => Ok(()),
+  }
+}
+
 fn deployment_profile_label(profile: DeploymentProfile) -> String {
   match profile {
     DeploymentProfile::LocalLab => t!("install.deployment_profile.options.local_lab").to_string(),
@@ -712,8 +746,9 @@ fn deployment_profile_notice(profile: DeploymentProfile) -> String {
 mod tests {
   use super::{
     nginx_has_built_in_stream, nginx_has_dynamic_stream, remove_custom_site_include_line,
-    render_nginx_http_site,
+    render_nginx_http_site, supported_application_exposure_modes, validate_profile_exposure,
   };
+  use crate::config::{ApplicationExposureMode, DeploymentProfile};
 
   #[test]
   fn renders_nginx_site_with_rewritten_upstream_host() {
@@ -750,5 +785,24 @@ mod tests {
 
     assert!(updated.contains("include /etc/nginx/sites-enabled/*;"));
     assert!(!updated.contains("include /etc/nginx/sites-enabled/*.conf;"));
+  }
+
+  #[test]
+  fn local_lab_profile_only_offers_nodeport_exposure() {
+    assert_eq!(
+      supported_application_exposure_modes(DeploymentProfile::LocalLab),
+      [ApplicationExposureMode::NodePortExternalNginx]
+    );
+  }
+
+  #[test]
+  fn local_lab_profile_rejects_ingress_exposure() {
+    let error = validate_profile_exposure(
+      DeploymentProfile::LocalLab,
+      ApplicationExposureMode::Ingress,
+    )
+    .expect_err("local lab should reject ingress exposure");
+
+    assert!(error.to_string().contains("only supports"));
   }
 }

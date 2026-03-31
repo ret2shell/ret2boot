@@ -162,6 +162,7 @@ install.exposure.options.ingress: Kubernetes ingress
 install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx
 install.exposure.ingress_notice: 已记录 ingress 模式，安装时会按此暴露服务。
 install.exposure.nodeport_notice: 已记录 NodePort + 外置 nginx 模式。安装时会把 Kubernetes 网关端口调整到 10080 和 10443，把 80 和 443 留给系统 nginx。
+install.exposure.local_lab_locked: 本地内网调试部署固定使用 NodePort + 外置 nginx，因此这里不会再提供其他对外访问方式选项。
 install.exposure.nodeport_https_degraded: 当前 nginx 安装暂不支持 stream 模块，因此未启用 443 的 HTTPS 透传入口；80 端口上的 HTTP 访问仍可正常使用。
 install.exposure.package_manager_notice: "如果主机还没有 nginx，会通过 %{package_manager} 自动安装。"
 install.exposure.nginx_reuse_notice: "检测到现有 nginx 二进制：%{path}，会尽量直接复用。"
