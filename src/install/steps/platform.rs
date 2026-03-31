@@ -22,8 +22,8 @@ use super::{
 };
 use crate::{
   config::{
-    InstallStepId, InstallTargetRole, KubernetesDistribution, PlatformServiceDeploymentMode,
-    PlatformServiceId, PlatformStorageMode,
+    ApplicationExposureMode, InstallStepId, InstallTargetRole, KubernetesDistribution,
+    PlatformServiceDeploymentMode, PlatformServiceId, PlatformStorageMode,
   },
   install::collectors::{Collector, InputCollector, SingleSelectCollector},
   ui, update,
@@ -40,6 +40,12 @@ const PLATFORM_INGRESS_PATH_TYPE: &str = "Prefix";
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
 const LOCAL_PATH_PROVISIONER: &str = "rancher.io/local-path";
 const DERIVED_PUBLIC_HOST_SUFFIX: &str = "nip.io";
+const INTERNAL_INGRESS_HOST_SUFFIX: &str = "ret2boot.invalid";
+
+pub(crate) struct ResolvedPublicEndpoint {
+  pub public_host: String,
+  pub ingress_host: String,
+}
 
 #[derive(Clone, Copy)]
 struct PlatformServiceDefinition {
@@ -467,6 +473,7 @@ struct PlatformPlanSummary {
   allocated_local_disk_gib: u32,
   unallocated_local_disk_gib: u32,
   public_host: String,
+  ingress_host: String,
   ingress_class_name: String,
   signing_key: String,
   blocked_content: String,
@@ -503,18 +510,18 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     .platform
     .requested_disk_gib
     .ok_or_else(|| anyhow!("requested disk budget is required before planning the platform"))?;
-  let public_host = normalize_public_host(
-    ctx
-      .config()
-      .install
-      .questionnaire
-      .platform
-      .public_host
-      .as_deref()
-      .ok_or_else(|| {
-        anyhow!("a public host is required before planning the platform deployment")
-      })?,
-  )?;
+  let public_host = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .public_host
+    .as_deref()
+    .ok_or_else(|| anyhow!("a public host is required before planning the platform deployment"))?;
+  let application_exposure = ctx.application_exposure().ok_or_else(|| {
+    anyhow!("application exposure mode is required before planning the platform deployment")
+  })?;
+  let endpoint = resolve_public_endpoint(public_host, application_exposure)?;
   let ingress_class_name =
     platform_ingress_class(ctx.kubernetes_distribution().ok_or_else(|| {
       anyhow!("kubernetes distribution is required before planning the platform deployment")
@@ -596,14 +603,15 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     requested_disk_gib,
     allocated_local_disk_gib,
     unallocated_local_disk_gib: requested_disk_gib - allocated_local_disk_gib,
-    public_host: public_host.clone(),
+    public_host: endpoint.public_host.clone(),
+    ingress_host: endpoint.ingress_host.clone(),
     ingress_class_name,
     signing_key,
     blocked_content,
     internal_database_password,
     internal_cache_password,
     internal_queue_token,
-    internal_registry_host: derive_internal_registry_host(&public_host),
+    internal_registry_host: derive_internal_registry_host(&endpoint.public_host),
     services,
   })
 }
@@ -723,6 +731,9 @@ fn print_platform_bootstrap_notice() {
 }
 
 fn collect_platform_public_host(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
+  let exposure = ctx.as_plan_context().application_exposure().ok_or_else(|| {
+    anyhow!("application exposure mode is required before collecting the platform public host")
+  })?;
   let default_host = ctx
     .config()
     .install
@@ -740,24 +751,34 @@ fn collect_platform_public_host(ctx: &mut StepQuestionContext<'_>) -> Result<()>
   let raw_public_host = InputCollector::new(t!("install.platform.public_host.prompt"))
     .with_default(default_host)
     .collect()?;
-  let input_host = canonical_public_host_input(&raw_public_host)?;
-  let public_host = normalize_public_host(&raw_public_host)?;
+  let input_host = canonical_public_host_input(&raw_public_host)?.to_string();
+  let endpoint = resolve_public_endpoint(&input_host, exposure)?;
 
-  if public_host_is_ipv4(input_host) {
+  if public_host_is_ipv4(&input_host) && endpoint.public_host != input_host {
     println!(
       "{}",
       ui::note(t!(
         "install.platform.public_host.derived_note",
-        input = input_host,
-        host = public_host.as_str()
+        input = input_host.as_str(),
+        host = endpoint.public_host.as_str()
+      ))
+    );
+  }
+  if public_host_is_ipv4(&input_host) && endpoint.ingress_host != endpoint.public_host {
+    println!(
+      "{}",
+      ui::note(t!(
+        "install.platform.public_host.bare_ip_note",
+        input = input_host.as_str(),
+        host = endpoint.ingress_host.as_str()
       ))
     );
   }
 
   ctx.persist_change(
     "install.questionnaire.platform.public_host",
-    &public_host,
-    |config| config.set_platform_public_host(public_host.clone()),
+    &input_host,
+    |config| config.set_platform_public_host(input_host.clone()),
   )?;
 
   Ok(())
@@ -1986,7 +2007,7 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
   lines.push("    hosts:".to_string());
   lines.push(format!(
     "      - host: {}",
-    yaml_quote(&summary.public_host)
+    yaml_quote(&summary.ingress_host)
   ));
   lines.push("        paths:".to_string());
   lines.push(format!(
@@ -2343,14 +2364,32 @@ fn required_internal_secret(
   Ok(String::new())
 }
 
-fn normalize_public_host(raw: &str) -> Result<String> {
+pub(crate) fn resolve_public_endpoint(
+  raw: &str, exposure: ApplicationExposureMode,
+) -> Result<ResolvedPublicEndpoint> {
   let host = canonical_public_host_input(raw)?;
 
   if public_host_is_ipv4(host) {
-    return Ok(derive_public_host_from_ipv4(host));
+    return Ok(match exposure {
+      ApplicationExposureMode::Ingress => {
+        let public_host = derive_public_host_from_ipv4(host);
+
+        ResolvedPublicEndpoint {
+          ingress_host: public_host.clone(),
+          public_host,
+        }
+      }
+      ApplicationExposureMode::NodePortExternalNginx => ResolvedPublicEndpoint {
+        public_host: host.to_string(),
+        ingress_host: derive_internal_ingress_host_from_ipv4(host),
+      },
+    });
   }
 
-  Ok(host.to_string())
+  Ok(ResolvedPublicEndpoint {
+    public_host: host.to_string(),
+    ingress_host: host.to_string(),
+  })
 }
 
 fn canonical_public_host_input(raw: &str) -> Result<&str> {
@@ -2386,6 +2425,12 @@ fn derive_public_host_from_ipv4(public_host: &str) -> String {
   let dashed = public_host.replace('.', "-");
 
   format!("ret2shell-{dashed}.{DERIVED_PUBLIC_HOST_SUFFIX}")
+}
+
+fn derive_internal_ingress_host_from_ipv4(public_host: &str) -> String {
+  let dashed = public_host.replace('.', "-");
+
+  format!("ret2shell-{dashed}.{INTERNAL_INGRESS_HOST_SUFFIX}")
 }
 
 fn platform_ingress_class(distribution: KubernetesDistribution) -> &'static str {
@@ -2606,10 +2651,15 @@ mod tests {
   use super::*;
 
   #[test]
-  fn normalize_public_host_strips_scheme_path_and_port() {
-    let host = normalize_public_host("https://ctf.example.com:8443/ui").expect("host parses");
+  fn resolve_public_endpoint_strips_scheme_path_and_port_for_dns_hosts() {
+    let endpoint = resolve_public_endpoint(
+      "https://ctf.example.com:8443/ui",
+      ApplicationExposureMode::Ingress,
+    )
+    .expect("host parses");
 
-    assert_eq!(host, "ctf.example.com");
+    assert_eq!(endpoint.public_host, "ctf.example.com");
+    assert_eq!(endpoint.ingress_host, "ctf.example.com");
   }
 
   #[test]
@@ -2653,11 +2703,27 @@ mod tests {
   }
 
   #[test]
-  fn normalize_public_host_derives_nip_io_name_for_ipv4_input() {
-    let host = normalize_public_host("103.151.173.97")
+  fn resolve_public_endpoint_derives_nip_io_name_for_ingress_ipv4_input() {
+    let endpoint = resolve_public_endpoint("103.151.173.97", ApplicationExposureMode::Ingress)
       .expect("bare IPv4 input should derive a DNS host before Helm rendering");
 
-    assert_eq!(host, "ret2shell-103-151-173-97.nip.io");
+    assert_eq!(endpoint.public_host, "ret2shell-103-151-173-97.nip.io");
+    assert_eq!(endpoint.ingress_host, "ret2shell-103-151-173-97.nip.io");
+  }
+
+  #[test]
+  fn resolve_public_endpoint_keeps_bare_ipv4_for_nodeport_nginx_mode() {
+    let endpoint = resolve_public_endpoint(
+      "103.151.173.97",
+      ApplicationExposureMode::NodePortExternalNginx,
+    )
+    .expect("bare IPv4 input should be supported through external nginx");
+
+    assert_eq!(endpoint.public_host, "103.151.173.97");
+    assert_eq!(
+      endpoint.ingress_host,
+      "ret2shell-103-151-173-97.ret2boot.invalid"
+    );
   }
 
   #[test]
@@ -2717,6 +2783,14 @@ mod tests {
     );
   }
 
+  #[test]
+  fn derive_internal_ingress_host_from_ipv4_formats_dns_safe_host() {
+    assert_eq!(
+      derive_internal_ingress_host_from_ipv4("103.151.173.97"),
+      "ret2shell-103-151-173-97.ret2boot.invalid"
+    );
+  }
+
   fn sample_summary() -> PlatformPlanSummary {
     PlatformPlanSummary {
       remaining_disk_gib: 900,
@@ -2724,6 +2798,7 @@ mod tests {
       allocated_local_disk_gib: 730,
       unallocated_local_disk_gib: 0,
       public_host: "ctf.example.com".to_string(),
+      ingress_host: "ctf.example.com".to_string(),
       ingress_class_name: "traefik".to_string(),
       signing_key: "signing-key".to_string(),
       blocked_content: String::new(),

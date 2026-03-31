@@ -90,8 +90,9 @@ install.platform.questionnaire_intro: 接下來要確認各項平台服務的部
 install.platform.storage_notice: 使用本機磁碟的服務都需要設定儲存；核心平台服務固定使用 local-path。
 install.platform.detected_remaining_disk: "偵測到可用磁碟空間：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望為回歸終端預留多少磁碟空間？（GiB）
-install.platform.public_host.prompt: 請輸入使用者存取回歸終端時使用的公網網域名稱。如果你目前只有裸 IPv4 位址，ret2boot 會自動派生一個可用的 nip.io 網域名稱。
+install.platform.public_host.prompt: 請輸入使用者存取回歸終端時使用的公網網域名稱。如果你目前只有裸 IPv4 位址，ret2boot 會在 ingress 模式下自動派生 nip.io 網域名稱，並在 NodePort + 外置 nginx 模式下保留裸 IP 存取。
 install.platform.public_host.derived_note: "已根據 IPv4 %{input} 自動派生公網存取網域名稱：%{host}。後續請透過這個網域名稱存取回歸終端。"
+install.platform.public_host.bare_ip_note: "已保留 %{input} 作為使用者存取位址，並使用內部 ingress host %{host} 完成叢集路由。"
 install.platform.services_intro: 設定各項回歸終端服務
 install.platform.service_heading: "設定服務：%{service}"
 install.platform.service_platform_fixed: 核心平台服務固定為本地部署，儲存方式也會自動使用預設值。

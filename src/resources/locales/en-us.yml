@@ -90,8 +90,9 @@ install.platform.questionnaire_intro: Next, choose deployment and disk settings 
 install.platform.storage_notice: Services that use local disk need storage configuration. The core platform service always uses local-path.
 install.platform.detected_remaining_disk: "Detected available disk space: %{remaining} GiB"
 install.platform.requested_disk.prompt: How much disk space should be reserved for Ret2Shell? (GiB)
-install.platform.public_host.prompt: Enter the public domain users will use to reach Ret2Shell. If you only have a bare IPv4 address, ret2boot will derive a nip.io hostname automatically.
+install.platform.public_host.prompt: Enter the public domain users will use to reach Ret2Shell. With bare IPv4 input, ret2boot keeps the IP for NodePort plus external nginx mode and derives a nip.io hostname for ingress mode.
 install.platform.public_host.derived_note: "Using %{host} as the public hostname derived from IPv4 %{input}. Users should access Ret2Shell through this hostname."
+install.platform.public_host.bare_ip_note: "Keeping %{input} as the user-facing address. ret2boot will route cluster ingress through internal host %{host}."
 install.platform.services_intro: Configure Ret2Shell services
 install.platform.service_heading: "Configure service: %{service}"
 install.platform.service_platform_fixed: The core platform service is always deployed locally, and its storage uses the default setting automatically.

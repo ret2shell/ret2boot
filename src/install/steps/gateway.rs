@@ -7,6 +7,7 @@ use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   SystemPackageManager,
   cluster::cluster_gateway_port_metadata,
+  platform::resolve_public_endpoint,
   support::{
     detect_nginx_binary_path, ensure_symlink, install_directory, install_staged_file,
     nginx_service_exists, stage_text_file,
@@ -181,8 +182,22 @@ impl AtomicInstallStep for ApplicationGatewayStep {
 
     let gateway_http_port = cluster_gateway_port_metadata(ctx, "gateway_http_port", 10080);
     let gateway_https_port = cluster_gateway_port_metadata(ctx, "gateway_https_port", 10443);
+    let public_host = ctx
+      .config()
+      .install
+      .questionnaire
+      .platform
+      .public_host
+      .as_deref()
+      .ok_or_else(|| anyhow!("platform public host is required before installing gateway"))?;
+    let endpoint = resolve_public_endpoint(public_host, exposure)?;
 
-    install_external_nginx_gateway(ctx, gateway_http_port, gateway_https_port)?;
+    install_external_nginx_gateway(
+      ctx,
+      gateway_http_port,
+      gateway_https_port,
+      &endpoint.ingress_host,
+    )?;
     ctx.run_privileged_command(
       "systemctl",
       &[
@@ -216,6 +231,9 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       );
       let changed =
         config.set_install_step_metadata(self.id(), "binary_path", binary_path.clone()) || changed;
+      let changed =
+        config.set_install_step_metadata(self.id(), "upstream_host", endpoint.ingress_host.clone())
+          || changed;
       config.set_install_step_metadata(
         self.id(),
         "installed_by_ret2boot",
@@ -285,6 +303,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       let changed = config.remove_install_step_metadata(self.id(), "mode");
       let changed = config.remove_install_step_metadata(self.id(), "package_manager") || changed;
       let changed = config.remove_install_step_metadata(self.id(), "binary_path") || changed;
+      let changed = config.remove_install_step_metadata(self.id(), "upstream_host") || changed;
       config.remove_install_step_metadata(self.id(), "installed_by_ret2boot") || changed
     })?;
 
@@ -293,7 +312,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
 }
 
 fn install_external_nginx_gateway(
-  ctx: &StepExecutionContext<'_>, http_port: u16, https_port: u16,
+  ctx: &StepExecutionContext<'_>, http_port: u16, https_port: u16, upstream_host: &str,
 ) -> Result<()> {
   install_directory(ctx, "/etc/nginx/sites-available")?;
   install_directory(ctx, "/etc/nginx/sites-enabled")?;
@@ -305,7 +324,7 @@ fn install_external_nginx_gateway(
   let site_path = stage_text_file(
     "nginx-ret2boot-site",
     "conf",
-    render_nginx_http_site(http_port)?,
+    render_nginx_http_site(http_port, upstream_host)?,
   )?;
   install_staged_file(ctx, &site_path, NGINX_SITE_AVAILABLE)?;
   let _ = fs::remove_file(&site_path);
@@ -352,9 +371,12 @@ fn cleanup_external_nginx_gateway(ctx: &StepExecutionContext<'_>) -> Result<()> 
   Ok(())
 }
 
-fn render_nginx_http_site(http_port: u16) -> Result<String> {
-  resources::load_utf8("templates/nginx/ret2shell.conf.tmpl")
-    .map(|template| template.replace("{{BACKEND_HTTP_PORT}}", &http_port.to_string()))
+fn render_nginx_http_site(http_port: u16, upstream_host: &str) -> Result<String> {
+  resources::load_utf8("templates/nginx/ret2shell.conf.tmpl").map(|template| {
+    template
+      .replace("{{BACKEND_HTTP_PORT}}", &http_port.to_string())
+      .replace("{{UPSTREAM_HOST}}", upstream_host)
+  })
 }
 
 fn render_nginx_stream_site(https_port: u16) -> Result<String> {
@@ -448,5 +470,22 @@ fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
     ApplicationExposureMode::NodePortExternalNginx => {
       t!("install.exposure.options.nodeport_external_nginx").to_string()
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::render_nginx_http_site;
+
+  #[test]
+  fn renders_nginx_site_with_rewritten_upstream_host() {
+    let rendered = render_nginx_http_site(10080, "ret2shell-103-151-173-97.ret2boot.invalid")
+      .expect("template should render");
+
+    assert!(rendered.contains("server 127.0.0.1:10080;"));
+    assert!(rendered.contains(
+      "proxy_set_header Host ret2shell-103-151-173-97.ret2boot.invalid;"
+    ));
+    assert!(rendered.contains("proxy_set_header X-Forwarded-Host $host;"));
   }
 }
