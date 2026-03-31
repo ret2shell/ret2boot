@@ -522,16 +522,6 @@ pub(crate) fn rollback_rke2(ctx: &StepExecutionContext<'_>) -> Result<()> {
   cleanup_rke2_gateway_manifests(ctx)
 }
 
-pub(crate) fn cluster_gateway_port_metadata(
-  ctx: &StepExecutionContext<'_>, key: &str, fallback: u16,
-) -> u16 {
-  ctx
-    .config()
-    .install_step_metadata(InstallStepId::ClusterBootstrap, key)
-    .and_then(|value| value.parse::<u16>().ok())
-    .unwrap_or(fallback)
-}
-
 fn selected_gateway_ports_for_cluster(
   ctx: &mut StepExecutionContext<'_>, spec: &ClusterInstallSpec,
 ) -> Result<Option<(u16, u16)>> {

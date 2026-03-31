@@ -307,8 +307,6 @@ pub enum ApplicationExposureMode {
 }
 
 impl ApplicationExposureMode {
-  pub const ALL: [Self; 2] = [Self::Ingress, Self::NodePortExternalNginx];
-
   pub fn as_config_value(self) -> &'static str {
     match self {
       Self::Ingress => "ingress",

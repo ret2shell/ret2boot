@@ -1,20 +1,15 @@
-use std::{
-  fs,
-  path::{Path, PathBuf},
-  process::Command,
-};
+use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use rust_i18n::t;
-use tracing::warn;
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   SystemPackageManager,
   platform::{PLATFORM_NODE_PORT, resolve_public_endpoint},
   support::{
-    detect_nginx_binary_path, ensure_symlink, file_contains, install_directory,
-    install_staged_file, nginx_service_exists, stage_text_file,
+    detect_nginx_binary_path, ensure_symlink, install_directory, install_staged_file,
+    nginx_service_exists, stage_text_file,
   },
 };
 use crate::{
@@ -34,7 +29,6 @@ const NGINX_STREAM_MODULE_RET2BOOT_CONF: &str = "/etc/nginx/modules-enabled/ret2
 const NGINX_SITE_INCLUDE_MARKER: &str = "include /etc/nginx/sites-enabled/*.conf;";
 const NGINX_SITE_INCLUDE_MARKER_DEFAULT: &str = "include /etc/nginx/sites-enabled/*;";
 const NGINX_STREAM_INCLUDE_MARKER: &str = "include /etc/nginx/ret2boot-stream-enabled/*.conf;";
-const NGINX_MODULES_INCLUDE_MARKER: &str = "include /etc/nginx/modules-enabled/*.conf;";
 
 pub struct ApplicationGatewayStep;
 
@@ -253,7 +247,6 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     let endpoint = resolve_public_endpoint(public_host, exposure, profile)?;
     let backend_host = endpoint.public_host.clone();
     let backend_http_port = PLATFORM_NODE_PORT;
-    let https_gateway_enabled = false;
 
     install_external_nginx_gateway(
       ctx,
@@ -261,7 +254,6 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       backend_http_port,
       &endpoint.public_host,
       &endpoint.ingress_host,
-      https_gateway_enabled,
     )?;
     let nginx_binary =
       detect_nginx_binary_path().unwrap_or_else(|| PathBuf::from(NGINX_BINARY_DEST));
@@ -274,11 +266,6 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       ],
       &[],
     )?;
-
-    if !https_gateway_enabled {
-      println!("{}", ui::warning(t!("install.exposure.nodeport_https_degraded")));
-    }
-
     ctx.run_privileged_command(
       &nginx_binary.display().to_string(),
       &["-t".to_string()],
@@ -304,11 +291,6 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       let changed =
         config.set_install_step_metadata(self.id(), "upstream_host", endpoint.ingress_host.clone())
           || changed;
-      let changed = config.set_install_step_metadata(
-        self.id(),
-        "https_gateway_enabled",
-        if https_gateway_enabled { "true" } else { "false" },
-      ) || changed;
       config.set_install_step_metadata(
         self.id(),
         "installed_by_ret2boot",
@@ -379,8 +361,6 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       let changed = config.remove_install_step_metadata(self.id(), "package_manager") || changed;
       let changed = config.remove_install_step_metadata(self.id(), "binary_path") || changed;
       let changed = config.remove_install_step_metadata(self.id(), "upstream_host") || changed;
-      let changed =
-        config.remove_install_step_metadata(self.id(), "https_gateway_enabled") || changed;
       config.remove_install_step_metadata(self.id(), "installed_by_ret2boot") || changed
     })?;
 
@@ -390,7 +370,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
 
 fn install_external_nginx_gateway(
   ctx: &StepExecutionContext<'_>, backend_host: &str, http_port: u16, server_name: &str,
-  upstream_host: &str, enable_https_stream: bool,
+  upstream_host: &str,
 ) -> Result<()> {
   install_directory(ctx, "/etc/nginx/sites-available")?;
   install_directory(ctx, "/etc/nginx/sites-enabled")?;
@@ -407,44 +387,29 @@ fn install_external_nginx_gateway(
   let _ = fs::remove_file(&site_path);
   ensure_symlink(ctx, NGINX_SITE_AVAILABLE, NGINX_SITE_ENABLED)?;
 
-  if !enable_https_stream {
-    let _ = ctx.run_privileged_command(
-      "rm",
-      &[
-        "-f".to_string(),
-        NGINX_STREAM_ENABLED.to_string(),
-        NGINX_STREAM_AVAILABLE.to_string(),
-        NGINX_STREAM_MODULE_RET2BOOT_CONF.to_string(),
-      ],
-      &[],
-    );
-    let _ = remove_nginx_stream_include(ctx);
-    let _ = ctx.run_privileged_command(
-      "rmdir",
-      &["/etc/nginx/ret2boot-stream-enabled".to_string()],
-      &[],
-    );
-    let _ = ctx.run_privileged_command(
-      "rmdir",
-      &["/etc/nginx/ret2boot-stream-available".to_string()],
-      &[],
-    );
-    return Ok(());
-  }
+  let _ = ctx.run_privileged_command(
+    "rm",
+    &[
+      "-f".to_string(),
+      NGINX_STREAM_ENABLED.to_string(),
+      NGINX_STREAM_AVAILABLE.to_string(),
+      NGINX_STREAM_MODULE_RET2BOOT_CONF.to_string(),
+    ],
+    &[],
+  );
+  let _ = remove_nginx_stream_include(ctx);
+  let _ = ctx.run_privileged_command(
+    "rmdir",
+    &["/etc/nginx/ret2boot-stream-enabled".to_string()],
+    &[],
+  );
+  let _ = ctx.run_privileged_command(
+    "rmdir",
+    &["/etc/nginx/ret2boot-stream-available".to_string()],
+    &[],
+  );
 
-  install_directory(ctx, "/etc/nginx/ret2boot-stream-available")?;
-  install_directory(ctx, "/etc/nginx/ret2boot-stream-enabled")?;
-
-  let stream_path = stage_text_file(
-    "nginx-ret2boot-stream",
-    "conf",
-    render_nginx_stream_site(http_port)?,
-  )?;
-  install_staged_file(ctx, &stream_path, NGINX_STREAM_AVAILABLE)?;
-  let _ = fs::remove_file(&stream_path);
-  ensure_symlink(ctx, NGINX_STREAM_AVAILABLE, NGINX_STREAM_ENABLED)?;
-
-  ensure_nginx_stream_include(ctx)
+  Ok(())
 }
 
 fn cleanup_external_nginx_gateway(ctx: &StepExecutionContext<'_>) -> Result<()> {
@@ -487,110 +452,6 @@ fn render_nginx_http_site(
       .replace("{{UPSTREAM_HOST}}", upstream_host)
       .replace("{{SERVER_NAME}}", server_name)
   })
-}
-
-fn render_nginx_stream_site(https_port: u16) -> Result<String> {
-  resources::load_utf8("templates/nginx/ret2shell-stream.conf.tmpl")
-    .map(|template| template.replace("{{BACKEND_HTTPS_PORT}}", &https_port.to_string()))
-}
-
-fn best_effort_enable_nginx_stream(
-  ctx: &StepExecutionContext<'_>, package_manager: SystemPackageManager, nginx_binary: &Path,
-) {
-  if nginx_supports_stream(nginx_binary) {
-    return;
-  }
-
-  if let Err(error) = package_manager.ensure_nginx_stream_module(ctx) {
-    warn!(error = %error, "failed to install optional nginx stream module");
-  }
-
-  if nginx_supports_stream(nginx_binary) {
-    return;
-  }
-
-  if let Err(error) = ensure_nginx_dynamic_stream_module_loaded(ctx) {
-    warn!(error = %error, "failed to enable optional nginx stream module");
-  }
-}
-
-fn nginx_supports_stream(nginx_binary: &Path) -> bool {
-  let Some(arguments) = nginx_compile_arguments(nginx_binary) else {
-    return false;
-  };
-
-  if nginx_has_built_in_stream(&arguments) {
-    return true;
-  }
-
-  nginx_has_dynamic_stream(&arguments) && nginx_stream_module_is_enabled()
-}
-
-fn nginx_compile_arguments(nginx_binary: &Path) -> Option<String> {
-  let output = Command::new(nginx_binary).arg("-V").output().ok()?;
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  let stderr = String::from_utf8_lossy(&output.stderr);
-
-  Some(format!("{stdout}\n{stderr}"))
-}
-
-fn nginx_has_built_in_stream(arguments: &str) -> bool {
-  arguments.contains("--with-stream") && !arguments.contains("--with-stream=dynamic")
-}
-
-fn nginx_has_dynamic_stream(arguments: &str) -> bool {
-  arguments.contains("--with-stream=dynamic")
-}
-
-fn nginx_stream_module_is_enabled() -> bool {
-  fs::read_dir("/etc/nginx/modules-enabled")
-    .ok()
-    .into_iter()
-    .flat_map(|entries| entries.filter_map(Result::ok))
-    .map(|entry| entry.path())
-    .filter(|path| path.is_file())
-    .any(|path| {
-      path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.contains("stream"))
-        || fs::read_to_string(&path)
-          .map(|contents| contents.contains("ngx_stream_module.so"))
-          .unwrap_or(false)
-    })
-}
-
-fn nginx_stream_module_path() -> Option<&'static str> {
-  [
-    "/usr/lib/nginx/modules/ngx_stream_module.so",
-    "/usr/lib64/nginx/modules/ngx_stream_module.so",
-  ]
-  .into_iter()
-  .find(|path| Path::new(path).is_file())
-}
-
-fn ensure_nginx_dynamic_stream_module_loaded(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let Some(module_path) = nginx_stream_module_path() else {
-    return Ok(());
-  };
-
-  if nginx_stream_module_is_enabled() {
-    return Ok(());
-  }
-
-  if !file_contains(NGINX_MAIN_CONF, NGINX_MODULES_INCLUDE_MARKER) {
-    return Ok(());
-  }
-
-  let staged = stage_text_file(
-    "nginx-stream-module",
-    "conf",
-    format!("load_module {module_path};\n"),
-  )?;
-  install_staged_file(ctx, &staged, NGINX_STREAM_MODULE_RET2BOOT_CONF)?;
-  let _ = fs::remove_file(&staged);
-
-  Ok(())
 }
 
 fn ensure_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
@@ -753,8 +614,8 @@ fn deployment_profile_notice(profile: DeploymentProfile) -> String {
 #[cfg(test)]
 mod tests {
   use super::{
-    nginx_has_built_in_stream, nginx_has_dynamic_stream, remove_custom_site_include_line,
-    render_nginx_http_site, supported_application_exposure_modes, validate_profile_exposure,
+    remove_custom_site_include_line, render_nginx_http_site,
+    supported_application_exposure_modes, validate_profile_exposure,
   };
   use crate::config::{ApplicationExposureMode, DeploymentProfile};
 
@@ -774,17 +635,6 @@ mod tests {
       "proxy_set_header Host ret2shell-103-151-173-97.ret2boot.invalid;"
     ));
     assert!(rendered.contains("proxy_set_header X-Forwarded-Host $host;"));
-  }
-
-  #[test]
-  fn detects_built_in_and_dynamic_stream_flags() {
-    assert!(nginx_has_built_in_stream("configure arguments: --with-stream --with-http_ssl_module"));
-    assert!(!nginx_has_built_in_stream(
-      "configure arguments: --with-stream=dynamic --with-http_ssl_module"
-    ));
-    assert!(nginx_has_dynamic_stream(
-      "configure arguments: --with-stream=dynamic --with-http_ssl_module"
-    ));
   }
 
   #[test]

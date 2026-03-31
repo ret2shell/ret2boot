@@ -163,7 +163,6 @@ install.exposure.options.nodeport_external_nginx: NodePort plus external nginx
 install.exposure.ingress_notice: Ingress mode has been recorded and will be applied during installation.
 install.exposure.nodeport_notice: NodePort plus external nginx mode has been recorded. During installation, the Kubernetes gateway will move to ports 10080 and 10443, leaving 80 and 443 for system nginx.
 install.exposure.profile_locked: "This deployment profile uses %{exposure} exposure, so no alternative exposure option is shown."
-install.exposure.nodeport_https_degraded: HTTPS passthrough was not enabled because this nginx installation does not currently support the stream module. HTTP access on port 80 remains available.
 install.exposure.package_manager_notice: "nginx will be installed through %{package_manager} if it is not already present."
 install.exposure.nginx_reuse_notice: "Existing nginx binary detected at %{path}; it will be reused if possible."
 install.exposure.nginx_service_reuse_notice: Existing nginx service detected; it will be reused if possible.
