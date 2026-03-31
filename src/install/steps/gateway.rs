@@ -26,6 +26,7 @@ use crate::{
 
 const NGINX_BINARY_DEST: &str = "/usr/sbin/nginx";
 const NGINX_MAIN_CONF: &str = "/etc/nginx/nginx.conf";
+const NGINX_LOG_DIR: &str = "/var/log/nginx/ret2shell";
 const NGINX_SITE_AVAILABLE: &str = "/etc/nginx/sites-available/ret2shell.conf";
 const NGINX_SITE_ENABLED: &str = "/etc/nginx/sites-enabled/ret2shell.conf";
 const NGINX_STREAM_AVAILABLE: &str = "/etc/nginx/ret2boot-stream-available/ret2shell.conf";
@@ -382,6 +383,7 @@ fn install_external_nginx_gateway(
 ) -> Result<()> {
   install_directory(ctx, "/etc/nginx/sites-available")?;
   install_directory(ctx, "/etc/nginx/sites-enabled")?;
+  install_directory(ctx, NGINX_LOG_DIR)?;
 
   ensure_nginx_site_include(ctx)?;
 
