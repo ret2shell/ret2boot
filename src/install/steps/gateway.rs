@@ -11,8 +11,7 @@ use tracing::warn;
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   SystemPackageManager,
-  cluster::cluster_gateway_port_metadata,
-  platform::resolve_public_endpoint,
+  platform::{PLATFORM_NODE_PORT, resolve_public_endpoint},
   support::{
     detect_nginx_binary_path, ensure_symlink, file_contains, install_directory,
     install_staged_file, nginx_service_exists, stage_text_file,
@@ -82,7 +81,13 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     let exposure = if supported_exposures.len() == 1 {
       let exposure = supported_exposures[0];
       println!();
-      println!("{}", ui::note(t!("install.exposure.local_lab_locked")));
+      println!(
+        "{}",
+        ui::note(t!(
+          "install.exposure.profile_locked",
+          exposure = application_exposure_label(exposure)
+        ))
+      );
       exposure
     } else {
       let default = ctx
@@ -237,8 +242,6 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       package_manager.install_nginx(ctx)?;
     }
 
-    let gateway_http_port = cluster_gateway_port_metadata(ctx, "gateway_http_port", 10080);
-    let gateway_https_port = cluster_gateway_port_metadata(ctx, "gateway_https_port", 10443);
     let public_host = ctx
       .config()
       .install
@@ -248,20 +251,20 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .as_deref()
       .ok_or_else(|| anyhow!("platform public host is required before installing gateway"))?;
     let endpoint = resolve_public_endpoint(public_host, exposure, profile)?;
-
-    let nginx_binary =
-      detect_nginx_binary_path().unwrap_or_else(|| PathBuf::from(NGINX_BINARY_DEST));
-    best_effort_enable_nginx_stream(ctx, package_manager, &nginx_binary);
-    let https_gateway_enabled = nginx_supports_stream(&nginx_binary);
+    let backend_host = endpoint.public_host.clone();
+    let backend_http_port = PLATFORM_NODE_PORT;
+    let https_gateway_enabled = false;
 
     install_external_nginx_gateway(
       ctx,
-      gateway_http_port,
-      gateway_https_port,
+      backend_host.as_str(),
+      backend_http_port,
       &endpoint.public_host,
       &endpoint.ingress_host,
       https_gateway_enabled,
     )?;
+    let nginx_binary =
+      detect_nginx_binary_path().unwrap_or_else(|| PathBuf::from(NGINX_BINARY_DEST));
     ctx.run_privileged_command(
       "systemctl",
       &[
@@ -386,7 +389,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
 }
 
 fn install_external_nginx_gateway(
-  ctx: &StepExecutionContext<'_>, http_port: u16, https_port: u16, server_name: &str,
+  ctx: &StepExecutionContext<'_>, backend_host: &str, http_port: u16, server_name: &str,
   upstream_host: &str, enable_https_stream: bool,
 ) -> Result<()> {
   install_directory(ctx, "/etc/nginx/sites-available")?;
@@ -395,11 +398,11 @@ fn install_external_nginx_gateway(
 
   ensure_nginx_site_include(ctx)?;
 
-  let site_path = stage_text_file(
-    "nginx-ret2boot-site",
-    "conf",
-    render_nginx_http_site(http_port, upstream_host, server_name)?,
-  )?;
+    let site_path = stage_text_file(
+      "nginx-ret2boot-site",
+      "conf",
+      render_nginx_http_site(backend_host, http_port, upstream_host, server_name)?,
+    )?;
   install_staged_file(ctx, &site_path, NGINX_SITE_AVAILABLE)?;
   let _ = fs::remove_file(&site_path);
   ensure_symlink(ctx, NGINX_SITE_AVAILABLE, NGINX_SITE_ENABLED)?;
@@ -435,7 +438,7 @@ fn install_external_nginx_gateway(
   let stream_path = stage_text_file(
     "nginx-ret2boot-stream",
     "conf",
-    render_nginx_stream_site(https_port)?,
+    render_nginx_stream_site(http_port)?,
   )?;
   install_staged_file(ctx, &stream_path, NGINX_STREAM_AVAILABLE)?;
   let _ = fs::remove_file(&stream_path);
@@ -474,9 +477,12 @@ fn cleanup_external_nginx_gateway(ctx: &StepExecutionContext<'_>) -> Result<()> 
   Ok(())
 }
 
-fn render_nginx_http_site(http_port: u16, upstream_host: &str, server_name: &str) -> Result<String> {
+fn render_nginx_http_site(
+  backend_host: &str, http_port: u16, upstream_host: &str, server_name: &str,
+) -> Result<String> {
   resources::load_utf8("templates/nginx/ret2shell.conf.tmpl").map(|template| {
     template
+      .replace("{{BACKEND_HOST}}", backend_host)
       .replace("{{BACKEND_HTTP_PORT}}", &http_port.to_string())
       .replace("{{UPSTREAM_HOST}}", upstream_host)
       .replace("{{SERVER_NAME}}", server_name)
@@ -698,7 +704,7 @@ fn supported_application_exposure_modes(
   match profile {
     DeploymentProfile::LocalLab => &[ApplicationExposureMode::NodePortExternalNginx],
     DeploymentProfile::CampusInternal | DeploymentProfile::PublicDomain => {
-      &ApplicationExposureMode::ALL
+      &[ApplicationExposureMode::Ingress]
     }
   }
 }
@@ -714,7 +720,9 @@ fn validate_profile_exposure(
     DeploymentProfile::LocalLab => bail!(
       "the local intranet debugging profile only supports `NodePort + external nginx` exposure"
     ),
-    DeploymentProfile::CampusInternal | DeploymentProfile::PublicDomain => Ok(()),
+    DeploymentProfile::CampusInternal | DeploymentProfile::PublicDomain => {
+      bail!("this deployment profile only supports `Kubernetes ingress` exposure")
+    }
   }
 }
 
@@ -753,13 +761,14 @@ mod tests {
   #[test]
   fn renders_nginx_site_with_rewritten_upstream_host() {
     let rendered = render_nginx_http_site(
+      "192.168.23.132",
       10080,
       "ret2shell-103-151-173-97.ret2boot.invalid",
       "192.168.23.132",
     )
     .expect("template should render");
 
-    assert!(rendered.contains("server 127.0.0.1:10080;"));
+    assert!(rendered.contains("server 192.168.23.132:10080;"));
     assert!(rendered.contains("server_name 192.168.23.132;"));
     assert!(rendered.contains(
       "proxy_set_header Host ret2shell-103-151-173-97.ret2boot.invalid;"
@@ -796,6 +805,18 @@ mod tests {
   }
 
   #[test]
+  fn campus_and_public_profiles_only_offer_ingress_exposure() {
+    assert_eq!(
+      supported_application_exposure_modes(DeploymentProfile::CampusInternal),
+      [ApplicationExposureMode::Ingress]
+    );
+    assert_eq!(
+      supported_application_exposure_modes(DeploymentProfile::PublicDomain),
+      [ApplicationExposureMode::Ingress]
+    );
+  }
+
+  #[test]
   fn local_lab_profile_rejects_ingress_exposure() {
     let error = validate_profile_exposure(
       DeploymentProfile::LocalLab,
@@ -804,5 +825,16 @@ mod tests {
     .expect_err("local lab should reject ingress exposure");
 
     assert!(error.to_string().contains("only supports"));
+  }
+
+  #[test]
+  fn campus_internal_profile_rejects_nodeport_exposure() {
+    let error = validate_profile_exposure(
+      DeploymentProfile::CampusInternal,
+      ApplicationExposureMode::NodePortExternalNginx,
+    )
+    .expect_err("campus internal should reject nodeport exposure");
+
+    assert!(error.to_string().contains("Kubernetes ingress"));
   }
 }

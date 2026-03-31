@@ -35,6 +35,7 @@ const PLATFORM_NAMESPACE: &str = "ret2shell-platform";
 const CHALLENGE_NAMESPACE: &str = "ret2shell-challenge";
 const HELM_RELEASE_NAME: &str = "ret2shell";
 const HELM_RELEASE_TIMEOUT: &str = "15m0s";
+pub(crate) const PLATFORM_NODE_PORT: u16 = 30307;
 const PLATFORM_INGRESS_PATH: &str = "/";
 const PLATFORM_INGRESS_PATH_TYPE: &str = "Prefix";
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
@@ -480,6 +481,7 @@ struct PlatformPlanSummary {
   requested_disk_gib: u32,
   allocated_local_disk_gib: u32,
   unallocated_local_disk_gib: u32,
+  application_exposure: ApplicationExposureMode,
   public_host: String,
   ingress_host: String,
   ingress_class_name: String,
@@ -614,6 +616,7 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     requested_disk_gib,
     allocated_local_disk_gib,
     unallocated_local_disk_gib: requested_disk_gib - allocated_local_disk_gib,
+    application_exposure,
     public_host: endpoint.public_host.clone(),
     ingress_host: endpoint.ingress_host.clone(),
     ingress_class_name,
@@ -2012,25 +2015,34 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
 
   let mut lines = vec!["platform:".to_string()];
   lines.push("  exposure:".to_string());
-  lines.push("    type: ingress".to_string());
-  lines.push("  ingress:".to_string());
-  lines.push(format!(
-    "    className: {}",
-    yaml_quote(&summary.ingress_class_name)
-  ));
-  lines.push("    hosts:".to_string());
-  lines.push(format!(
-    "      - host: {}",
-    yaml_quote(&summary.ingress_host)
-  ));
-  lines.push("        paths:".to_string());
-  lines.push(format!(
-    "          - path: {}",
-    yaml_quote(PLATFORM_INGRESS_PATH)
-  ));
-  lines.push(format!(
-    "            pathType: {PLATFORM_INGRESS_PATH_TYPE}"
-  ));
+  match summary.application_exposure {
+    ApplicationExposureMode::Ingress => {
+      lines.push("    type: ingress".to_string());
+      lines.push("  ingress:".to_string());
+      lines.push(format!(
+        "    className: {}",
+        yaml_quote(&summary.ingress_class_name)
+      ));
+      lines.push("    hosts:".to_string());
+      lines.push(format!(
+        "      - host: {}",
+        yaml_quote(&summary.ingress_host)
+      ));
+      lines.push("        paths:".to_string());
+      lines.push(format!(
+        "          - path: {}",
+        yaml_quote(PLATFORM_INGRESS_PATH)
+      ));
+      lines.push(format!(
+        "            pathType: {PLATFORM_INGRESS_PATH_TYPE}"
+      ));
+    }
+    ApplicationExposureMode::NodePortExternalNginx => {
+      lines.push("    type: nodePort".to_string());
+      lines.push("  service:".to_string());
+      lines.push(format!("    nodePort: {PLATFORM_NODE_PORT}"));
+    }
+  }
   lines.push("  config:".to_string());
   lines.push("    auth:".to_string());
   lines.push(format!(
@@ -2738,6 +2750,10 @@ mod tests {
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
+      parsed["platform"]["exposure"]["type"],
+      Value::String("ingress".to_string())
+    );
+    assert_eq!(
       parsed["platform"]["ingress"]["hosts"][0]["host"],
       Value::String("ctf.example.com".to_string())
     );
@@ -2768,6 +2784,27 @@ mod tests {
     assert_eq!(
       parsed["victoriaLogs"]["mode"],
       Value::String("disabled".to_string())
+    );
+  }
+
+  #[test]
+  fn render_platform_values_yaml_maps_local_lab_profile_to_nodeport() {
+    let mut summary = sample_summary();
+    summary.application_exposure = ApplicationExposureMode::NodePortExternalNginx;
+    summary.public_host = "192.168.23.132".to_string();
+    summary.ingress_host = "ret2shell-192-168-23-132.ret2boot.invalid".to_string();
+    summary.internal_registry_host = "192.168.23.132:30310".to_string();
+    let rendered = render_platform_values_yaml(&summary).expect("values render");
+    let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
+
+    assert_eq!(
+      parsed["platform"]["exposure"]["type"],
+      Value::String("nodePort".to_string())
+    );
+    assert_eq!(parsed["platform"]["service"]["nodePort"], Value::Number(30307.into()));
+    assert_eq!(
+      parsed["platform"]["config"]["server"]["externalDomain"],
+      Value::String("192.168.23.132".to_string())
     );
   }
 
@@ -2895,6 +2932,7 @@ mod tests {
       requested_disk_gib: 730,
       allocated_local_disk_gib: 730,
       unallocated_local_disk_gib: 0,
+      application_exposure: ApplicationExposureMode::Ingress,
       public_host: "ctf.example.com".to_string(),
       ingress_host: "ctf.example.com".to_string(),
       ingress_class_name: "traefik".to_string(),
