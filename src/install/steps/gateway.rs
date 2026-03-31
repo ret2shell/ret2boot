@@ -32,6 +32,7 @@ const NGINX_STREAM_AVAILABLE: &str = "/etc/nginx/ret2boot-stream-available/ret2s
 const NGINX_STREAM_ENABLED: &str = "/etc/nginx/ret2boot-stream-enabled/ret2shell.conf";
 const NGINX_STREAM_MODULE_RET2BOOT_CONF: &str = "/etc/nginx/modules-enabled/ret2boot-stream.conf";
 const NGINX_SITE_INCLUDE_MARKER: &str = "include /etc/nginx/sites-enabled/*.conf;";
+const NGINX_SITE_INCLUDE_MARKER_DEFAULT: &str = "include /etc/nginx/sites-enabled/*;";
 const NGINX_STREAM_INCLUDE_MARKER: &str = "include /etc/nginx/ret2boot-stream-enabled/*.conf;";
 const NGINX_MODULES_INCLUDE_MARKER: &str = "include /etc/nginx/modules-enabled/*.conf;";
 
@@ -580,7 +581,17 @@ fn ensure_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
   let contents = fs::read_to_string(NGINX_MAIN_CONF)
     .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))?;
 
-  if contents.contains(NGINX_SITE_INCLUDE_MARKER) {
+  if contents.contains(NGINX_SITE_INCLUDE_MARKER_DEFAULT) && contents.contains(NGINX_SITE_INCLUDE_MARKER) {
+    let updated = remove_custom_site_include_line(&contents);
+    let staged = stage_text_file("nginx-main", "conf", updated)?;
+    install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
+    let _ = fs::remove_file(&staged);
+    return Ok(());
+  }
+
+  if contents.contains(NGINX_SITE_INCLUDE_MARKER)
+    || contents.contains(NGINX_SITE_INCLUDE_MARKER_DEFAULT)
+  {
     return Ok(());
   }
 
@@ -633,11 +644,17 @@ fn remove_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
     return Ok(());
   }
 
-  let updated = contents.replace(&format!("    {NGINX_SITE_INCLUDE_MARKER}\n"), "");
+  let updated = remove_custom_site_include_line(&contents);
   let staged = stage_text_file("nginx-main", "conf", updated)?;
   install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
   let _ = fs::remove_file(&staged);
   Ok(())
+}
+
+fn remove_custom_site_include_line(contents: &str) -> String {
+  contents
+    .replace(&format!("    {NGINX_SITE_INCLUDE_MARKER}\n"), "")
+    .replace(&format!("{NGINX_SITE_INCLUDE_MARKER}\n"), "")
 }
 
 fn remove_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
@@ -691,7 +708,10 @@ fn deployment_profile_notice(profile: DeploymentProfile) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::{nginx_has_built_in_stream, nginx_has_dynamic_stream, render_nginx_http_site};
+  use super::{
+    nginx_has_built_in_stream, nginx_has_dynamic_stream, remove_custom_site_include_line,
+    render_nginx_http_site,
+  };
 
   #[test]
   fn renders_nginx_site_with_rewritten_upstream_host() {
@@ -719,5 +739,14 @@ mod tests {
     assert!(nginx_has_dynamic_stream(
       "configure arguments: --with-stream=dynamic --with-http_ssl_module"
     ));
+  }
+
+  #[test]
+  fn removes_custom_site_include_without_touching_default_include() {
+    let contents = "http {\n    include /etc/nginx/sites-enabled/*;\n    include /etc/nginx/sites-enabled/*.conf;\n}\n";
+    let updated = remove_custom_site_include_line(contents);
+
+    assert!(updated.contains("include /etc/nginx/sites-enabled/*;"));
+    assert!(!updated.contains("include /etc/nginx/sites-enabled/*.conf;"));
   }
 }
