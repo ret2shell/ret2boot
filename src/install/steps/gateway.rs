@@ -4,7 +4,7 @@ use std::{
   process::Command,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use rust_i18n::t;
 use tracing::warn;
 
