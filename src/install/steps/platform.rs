@@ -258,6 +258,30 @@ struct HelmReleaseSummary {
   chart: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ClusterNodeList {
+  items: Vec<ClusterNodeItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClusterNodeItem {
+  metadata: ClusterNodeMetadata,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClusterNodeMetadata {
+  name: String,
+  #[serde(default)]
+  labels: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+struct ClusterNodeIdentity {
+  name: String,
+  hostname_label: String,
+  is_control_plane: bool,
+}
+
 #[derive(Default)]
 struct ClusterReleaseState {
   release_exists: bool,
@@ -1636,7 +1660,7 @@ fn sync_platform_release(
   let cluster_access = ClusterAccess::from_plan_context(&ctx.as_plan_context())?;
   let helm_envs = helm_envs(&ctx.as_plan_context())?;
   let chart = resolve_chart_reference(ctx, step, mode)?;
-  let node_hostname = detect_node_hostname(ctx)?;
+  let node_hostname = detect_node_hostname_label(ctx, &cluster_access)?;
 
   install_directory(ctx, "/etc/ret2shell")?;
   ensure_platform_host_layout(ctx, &summary)?;
@@ -1911,17 +1935,102 @@ fn replace_first_block(
   ))
 }
 
-fn detect_node_hostname(ctx: &StepExecutionContext<'_>) -> Result<String> {
-  let hostname = ctx
+fn detect_node_hostname_label(
+  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess,
+) -> Result<String> {
+  let shell_hostname = ctx
     .run_privileged_command_capture("hostname", &[], &[])?
     .trim()
     .to_string();
 
-  if hostname.is_empty() {
-    bail!("failed to determine the kubernetes node hostname for local persistent volumes");
+  if shell_hostname.is_empty() {
+    bail!("failed to determine the local shell hostname for persistent volume planning");
   }
 
-  Ok(hostname)
+  let nodes_output = cluster_access.capture(
+    ctx,
+    &["get".to_string(), "nodes".to_string(), "-o".to_string(), "json".to_string()],
+  )?;
+  let nodes: ClusterNodeList =
+    serde_json::from_str(&nodes_output).context("failed to parse `kubectl get nodes -o json`")?;
+  let identities = nodes
+    .items
+    .into_iter()
+    .map(|node| {
+      let hostname_label = node
+        .metadata
+        .labels
+        .get("kubernetes.io/hostname")
+        .cloned()
+        .unwrap_or_else(|| node.metadata.name.clone());
+      let is_control_plane = node
+        .metadata
+        .labels
+        .contains_key("node-role.kubernetes.io/control-plane")
+        || node.metadata.labels.contains_key("node-role.kubernetes.io/master");
+
+      ClusterNodeIdentity {
+        name: node.metadata.name,
+        hostname_label,
+        is_control_plane,
+      }
+    })
+    .collect::<Vec<_>>();
+
+  resolve_local_node_hostname_label(&shell_hostname, &identities)
+}
+
+fn resolve_local_node_hostname_label(
+  shell_hostname: &str, nodes: &[ClusterNodeIdentity],
+) -> Result<String> {
+  if nodes.is_empty() {
+    bail!("the kubernetes cluster returned no nodes while preparing local persistent volumes");
+  }
+
+  if nodes.len() == 1 {
+    return Ok(nodes[0].hostname_label.clone());
+  }
+
+  let shell_short = short_hostname(shell_hostname);
+  let shell_matches = nodes
+    .iter()
+    .filter(|node| node_matches_shell_hostname(node, shell_hostname, shell_short))
+    .collect::<Vec<_>>();
+
+  if shell_matches.len() == 1 {
+    return Ok(shell_matches[0].hostname_label.clone());
+  }
+
+  let control_plane_nodes = nodes
+    .iter()
+    .filter(|node| node.is_control_plane)
+    .collect::<Vec<_>>();
+  if control_plane_nodes.len() == 1 {
+    return Ok(control_plane_nodes[0].hostname_label.clone());
+  }
+
+  let available = nodes
+    .iter()
+    .map(|node| format!("{} ({})", node.name, node.hostname_label))
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  bail!(
+    "unable to determine the local kubernetes node hostname label from shell hostname `{shell_hostname}`; available nodes: {available}"
+  )
+}
+
+fn node_matches_shell_hostname(
+  node: &ClusterNodeIdentity, shell_hostname: &str, shell_short: &str,
+) -> bool {
+  node.name == shell_hostname
+    || node.hostname_label == shell_hostname
+    || short_hostname(&node.name) == shell_short
+    || short_hostname(&node.hostname_label) == shell_short
+}
+
+fn short_hostname(hostname: &str) -> &str {
+  hostname.split('.').next().unwrap_or(hostname)
 }
 
 fn ensure_platform_host_layout(
@@ -3747,6 +3856,65 @@ spec:\n\
     .expect_err("public deployments should require bound DNS hostnames");
 
     assert!(error.to_string().contains("requires a bound DNS hostname"));
+  }
+
+  #[test]
+  fn resolve_local_node_hostname_label_prefers_exact_hostname_label_match() {
+    let nodes = vec![
+      ClusterNodeIdentity {
+        name: "k3s-master".to_string(),
+        hostname_label: "ret2shell-node-master".to_string(),
+        is_control_plane: true,
+      },
+      ClusterNodeIdentity {
+        name: "k3s-worker".to_string(),
+        hostname_label: "ret2shell-node-worker".to_string(),
+        is_control_plane: false,
+      },
+    ];
+
+    assert_eq!(
+      resolve_local_node_hostname_label("ret2shell-node-master", &nodes)
+        .expect("local label resolves"),
+      "ret2shell-node-master"
+    );
+  }
+
+  #[test]
+  fn resolve_local_node_hostname_label_matches_short_hostname() {
+    let nodes = vec![ClusterNodeIdentity {
+      name: "k3s-master.internal.example".to_string(),
+      hostname_label: "ret2shell-node-master.internal.example".to_string(),
+      is_control_plane: true,
+    }];
+
+    assert_eq!(
+      resolve_local_node_hostname_label("ret2shell-node-master", &nodes)
+        .expect("short hostname resolves"),
+      "ret2shell-node-master.internal.example"
+    );
+  }
+
+  #[test]
+  fn resolve_local_node_hostname_label_falls_back_to_single_control_plane_node() {
+    let nodes = vec![
+      ClusterNodeIdentity {
+        name: "worker-a".to_string(),
+        hostname_label: "worker-a".to_string(),
+        is_control_plane: false,
+      },
+      ClusterNodeIdentity {
+        name: "cp-a".to_string(),
+        hostname_label: "cp-label".to_string(),
+        is_control_plane: true,
+      },
+    ];
+
+    assert_eq!(
+      resolve_local_node_hostname_label("unknown-host", &nodes)
+        .expect("single control-plane node resolves"),
+      "cp-label"
+    );
   }
 
   fn sample_summary() -> PlatformPlanSummary {
