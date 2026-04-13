@@ -2254,22 +2254,14 @@ fn merge_runtime_config_with_reference(
     toml::from_str(reference).context("failed to parse reference runtime config TOML")?;
 
   for path in [
-    &["cluster", "try_default"][..],
-    &["cluster", "auto_infer"][..],
-    &["cluster", "kube_config_path"][..],
     &["cluster", "node_selector"][..],
     &["cluster", "enable_capture"][..],
     &["cluster", "capture_directory"][..],
     &["cluster", "traffic"][..],
     &["cluster", "lifecycle"][..],
-    &["email"][..],
-    &["logging"][..],
     &["media", "anti_theft"][..],
     &["media", "limit"][..],
-    &["server", "api_base_path"][..],
-    &["server", "cors_origins"][..],
-    &["server", "external_domain"][..],
-    &["server", "external_https"][..],
+    &["email"][..],
     &["server", "name"][..],
     &["server", "footer_info"][..],
     &["server", "footer_url"][..],
@@ -4151,6 +4143,7 @@ spec:\n\
 [cluster]
 try_default = true
 auto_infer = false
+kube_config_path = ""
 node_selector = ""
 capture_directory = "/var/lib/ret2shell/captures"
 
@@ -4169,6 +4162,10 @@ cors_origins = "*"
 [server.rate_limit]
 burst_limit = 32
 burst_restore_rate = 500
+
+[media]
+anti_theft = true
+limit = 100
 "#;
     let reference = r#"
 [cluster]
@@ -4193,31 +4190,38 @@ cors_origins = "https://ctf.example.com"
 [server.rate_limit]
 burst_limit = 128
 burst_restore_rate = 500
+
+[media]
+anti_theft = false
+limit = 5
 "#;
 
     let merged =
       merge_runtime_config_with_reference(generated, Some(reference)).expect("merge succeeds");
     let parsed: TomlValue = toml::from_str(&merged).expect("merged config parses");
 
-    assert_eq!(parsed["cluster"]["auto_infer"], TomlValue::Boolean(true));
-    assert_eq!(
-      parsed["cluster"]["kube_config_path"],
-      TomlValue::String("/etc/rancher/k3s.yaml".to_string())
-    );
+    assert_eq!(parsed["cluster"]["auto_infer"], TomlValue::Boolean(false));
+    assert_eq!(parsed["cluster"]["kube_config_path"], TomlValue::String(String::new()));
     assert_eq!(
       parsed["cluster"]["node_selector"],
       TomlValue::String("challenge".to_string())
     );
     assert_eq!(
-      parsed["logging"]["directory"],
-      TomlValue::String("/var/lib/ret2shell/logs".to_string())
+      parsed["cluster"]["capture_directory"],
+      TomlValue::String("/var/cache/ret2shell/captures".to_string())
     );
-    assert_eq!(parsed["server"]["external_https"], TomlValue::Boolean(true));
+    assert_eq!(
+      parsed["logging"]["directory"],
+      TomlValue::String("/var/lib/ret2shell/log".to_string())
+    );
+    assert_eq!(parsed["server"]["external_https"], TomlValue::Boolean(false));
     assert_eq!(
       parsed["server"]["cors_origins"],
-      TomlValue::String("https://ctf.example.com".to_string())
+      TomlValue::String("*".to_string())
     );
     assert_eq!(parsed["email"]["enabled"], TomlValue::Boolean(true));
+    assert_eq!(parsed["media"]["anti_theft"], TomlValue::Boolean(false));
+    assert_eq!(parsed["media"]["limit"], TomlValue::Integer(5));
   }
 
   fn sample_summary() -> PlatformPlanSummary {

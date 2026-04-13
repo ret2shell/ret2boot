@@ -447,13 +447,12 @@ fn cleanup_external_nginx_gateway(ctx: &StepExecutionContext<'_>) -> Result<()> 
 }
 
 fn render_nginx_http_site(
-  backend_host: &str, http_port: u16, upstream_host: &str, server_name: &str,
+  backend_host: &str, http_port: u16, _upstream_host: &str, server_name: &str,
 ) -> Result<String> {
   resources::load_utf8("templates/nginx/ret2shell.conf.tmpl").map(|template| {
     template
       .replace("{{BACKEND_HOST}}", backend_host)
       .replace("{{BACKEND_HTTP_PORT}}", &http_port.to_string())
-      .replace("{{UPSTREAM_HOST}}", upstream_host)
       .replace("{{SERVER_NAME}}", server_name)
   })
 }
@@ -601,7 +600,7 @@ mod tests {
   use crate::config::{ApplicationExposureMode, DeploymentProfile};
 
   #[test]
-  fn renders_nginx_site_with_rewritten_upstream_host() {
+  fn renders_nginx_site_with_original_host_forwarding() {
     let rendered = render_nginx_http_site(
       "192.168.23.132",
       10080,
@@ -612,9 +611,7 @@ mod tests {
 
     assert!(rendered.contains("server 192.168.23.132:10080;"));
     assert!(rendered.contains("server_name 192.168.23.132;"));
-    assert!(rendered.contains(
-      "proxy_set_header Host ret2shell-103-151-173-97.ret2boot.invalid;"
-    ));
+    assert!(rendered.contains("proxy_set_header Host $host;"));
     assert!(rendered.contains("proxy_set_header X-Forwarded-Host $host;"));
   }
 
