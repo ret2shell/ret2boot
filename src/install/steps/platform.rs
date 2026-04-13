@@ -60,6 +60,8 @@ const BACKEND_LOGS_DIR: &str = "/srv/ret2shell/backend/deployments/6-logs";
 const BACKEND_CONFIG_TOML_DEST: &str = "/srv/ret2shell/backend/config/config.toml";
 const BACKEND_BLOCKED_DEST: &str = "/srv/ret2shell/backend/config/blocked.txt";
 const BACKEND_LICENSE_DEST: &str = "/srv/ret2shell/backend/config/license";
+const K3S_REGISTRIES_DEST: &str = "/etc/rancher/k3s/registries.yaml";
+const RKE2_REGISTRIES_DEST: &str = "/etc/rancher/rke2/registries.yaml";
 pub(crate) const PLATFORM_NODE_PORT: u16 = 30307;
 const PLATFORM_INGRESS_PATH: &str = "/";
 const PLATFORM_INGRESS_PATH_TYPE: &str = "Prefix";
@@ -1647,6 +1649,9 @@ fn sync_platform_release(
 
   install_directory(ctx, "/etc/ret2shell")?;
   ensure_platform_host_layout(ctx, &summary)?;
+  if sync_runtime_registry_config(ctx, &summary)? {
+    restart_cluster_runtime_service(ctx)?;
+  }
   cluster_access.wait_for_nodes_ready(ctx)?;
 
   let desired_values = render_platform_values_yaml(&summary)?;
@@ -2104,6 +2109,56 @@ fn sync_optional_managed_text_file(
       }
     }
   }
+}
+
+fn sync_runtime_registry_config(
+  ctx: &StepExecutionContext<'_>, summary: &PlatformPlanSummary,
+) -> Result<bool> {
+  let registry = planned_service(summary, PlatformServiceId::Registry)?;
+  if registry.deployment != PlatformServiceDeploymentMode::Local {
+    return Ok(false);
+  }
+
+  let destination = match ctx
+    .as_plan_context()
+    .kubernetes_distribution()
+    .ok_or_else(|| anyhow!("kubernetes distribution is required before syncing registry mirrors"))?
+  {
+    KubernetesDistribution::K3s => K3S_REGISTRIES_DEST,
+    KubernetesDistribution::Rke2 => RKE2_REGISTRIES_DEST,
+  };
+
+  sync_managed_text_file(
+    ctx,
+    destination,
+    &render_runtime_registry_config(&summary.internal_registry_host),
+    "600",
+  )
+}
+
+fn restart_cluster_runtime_service(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  let service_name = match ctx
+    .as_plan_context()
+    .kubernetes_distribution()
+    .ok_or_else(|| anyhow!("kubernetes distribution is required before restarting the cluster runtime"))?
+  {
+    KubernetesDistribution::K3s => "k3s",
+    KubernetesDistribution::Rke2 => "rke2-server",
+  };
+
+  ctx.run_privileged_command(
+    "systemctl",
+    &["restart".to_string(), service_name.to_string()],
+    &[],
+  )
+}
+
+fn render_runtime_registry_config(registry_host: &str) -> String {
+  format!(
+    "mirrors:\n  {quoted}:\n    endpoint:\n      - {endpoint}\nconfigs:\n  {quoted}:\n    tls:\n      insecure_skip_verify: true\n",
+    quoted = yaml_quote(registry_host),
+    endpoint = yaml_quote(&format!("http://{registry_host}")),
+  )
 }
 
 fn uninstall_platform_release(
@@ -4222,6 +4277,15 @@ limit = 5
     assert_eq!(parsed["email"]["enabled"], TomlValue::Boolean(true));
     assert_eq!(parsed["media"]["anti_theft"], TomlValue::Boolean(false));
     assert_eq!(parsed["media"]["limit"], TomlValue::Integer(5));
+  }
+
+  #[test]
+  fn render_runtime_registry_config_marks_registry_as_insecure_http() {
+    let rendered = render_runtime_registry_config("192.168.23.132:30310");
+
+    assert!(rendered.contains("'192.168.23.132:30310'"));
+    assert!(rendered.contains("'http://192.168.23.132:30310'"));
+    assert!(rendered.contains("insecure_skip_verify: true"));
   }
 
   fn sample_summary() -> PlatformPlanSummary {
