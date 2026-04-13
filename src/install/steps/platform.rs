@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use rust_i18n::t;
 use serde::Deserialize;
-use serde_yaml::{Deserializer, Value as YamlValue};
+use serde_yaml::{Deserializer, Mapping, Value as YamlValue};
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
@@ -35,13 +35,108 @@ const PLATFORM_NAMESPACE: &str = "ret2shell-platform";
 const CHALLENGE_NAMESPACE: &str = "ret2shell-challenge";
 const HELM_RELEASE_NAME: &str = "ret2shell";
 const HELM_RELEASE_TIMEOUT: &str = "15m0s";
+const RET2SHELL_ROOT_DIR: &str = "/srv/ret2shell";
+const FRONTEND_HOST_DIR: &str = "/srv/ret2shell/frontend";
+const BACKEND_ROOT_DIR: &str = "/srv/ret2shell/backend";
+const BACKEND_CONFIG_DIR: &str = "/srv/ret2shell/backend/config";
+const BACKEND_DEPLOYMENTS_DIR: &str = "/srv/ret2shell/backend/deployments";
+const BACKEND_STORAGE_DIR: &str = "/srv/ret2shell/backend/storage";
+const BACKEND_CHART_ROOT_DIR: &str = "/srv/ret2shell/backend/deployments/chart";
+const BACKEND_CHART_DIR: &str = "/srv/ret2shell/backend/deployments/chart/ret2shell";
+const BACKEND_INIT_MANIFEST_DEST: &str = "/srv/ret2shell/backend/deployments/0-init.yaml";
+const BACKEND_VOLUMES_MANIFEST_DEST: &str = "/srv/ret2shell/backend/deployments/1-volumes.yaml";
+const BACKEND_PLATFORM_VALUES_DEST: &str = "/srv/ret2shell/backend/deployments/7-platform.yaml";
+const BACKEND_CACHE_DIR: &str = "/srv/ret2shell/backend/deployments/2-cache";
+const BACKEND_DATABASE_DIR: &str = "/srv/ret2shell/backend/deployments/3-database";
+const BACKEND_QUEUE_DIR: &str = "/srv/ret2shell/backend/deployments/4-queue";
+const BACKEND_REGISTRY_DIR: &str = "/srv/ret2shell/backend/deployments/5-registry";
+const BACKEND_LOGS_DIR: &str = "/srv/ret2shell/backend/deployments/6-logs";
+const BACKEND_CONFIG_TOML_DEST: &str = "/srv/ret2shell/backend/config/config.toml";
+const BACKEND_BLOCKED_DEST: &str = "/srv/ret2shell/backend/config/blocked.txt";
 pub(crate) const PLATFORM_NODE_PORT: u16 = 30307;
 const PLATFORM_INGRESS_PATH: &str = "/";
 const PLATFORM_INGRESS_PATH_TYPE: &str = "Prefix";
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
-const LOCAL_PATH_PROVISIONER: &str = "rancher.io/local-path";
 const DERIVED_PUBLIC_HOST_SUFFIX: &str = "nip.io";
 const INTERNAL_INGRESS_HOST_SUFFIX: &str = "ret2boot.invalid";
+const PLATFORM_TEMPLATE_CONTAINERS_MARKER: &str = "      containers:\n";
+const PLATFORM_TEMPLATE_VOLUME_MOUNTS_MARKER: &str = "          volumeMounts:\n";
+const PLATFORM_TEMPLATE_RESOURCES_MARKER: &str = "          {{- with .Values.platform.resources }}\n";
+const PLATFORM_TEMPLATE_VOLUMES_MARKER: &str = "      volumes:\n";
+const PLATFORM_TEMPLATE_NODE_SELECTOR_MARKER: &str =
+  "      {{- with .Values.platform.nodeSelector }}\n";
+const PATCHED_PLATFORM_INIT_CONTAINERS: &str = r#"      initContainers:
+        - name: frontend-sync
+          image: {{ include "ret2shell.image" .Values.platform.image }}
+          imagePullPolicy: {{ .Values.platform.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -eu
+              mkdir -p /host-frontend
+              find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+              cp -a /var/www/html/. /host-frontend/
+          volumeMounts:
+            - name: frontend
+              mountPath: /host-frontend
+        - name: config-sync
+          image: {{ include "ret2shell.image" .Values.platform.image }}
+          imagePullPolicy: {{ .Values.platform.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -eu
+              mkdir -p /host-config
+              cp /generated-config/config.toml /host-config/config.toml
+              cp /generated-blocked/blocked.txt /host-config/blocked.txt
+              chmod 600 /host-config/config.toml /host-config/blocked.txt
+          volumeMounts:
+            - name: backend-config
+              mountPath: /host-config
+            - name: generated-config
+              mountPath: /generated-config/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: generated-blocked
+              mountPath: /generated-blocked/blocked.txt
+              subPath: blocked.txt
+              readOnly: true
+      containers:
+"#;
+const PATCHED_PLATFORM_VOLUME_MOUNTS: &str = r#"          volumeMounts:
+            - name: data
+              mountPath: /var/lib/ret2shell
+            - name: frontend
+              mountPath: /var/www/html
+            - name: backend-config
+              mountPath: /etc/ret2shell
+"#;
+const PATCHED_PLATFORM_VOLUMES: &str = r#"      volumes:
+        - name: generated-config
+          secret:
+            secretName: {{ include "ret2shell.platformConfigSecretName" . }}
+        - name: generated-blocked
+          configMap:
+            name: {{ include "ret2shell.platformBlockedConfigMapName" . }}
+        - name: frontend
+          hostPath:
+            path: /srv/ret2shell/frontend
+            type: DirectoryOrCreate
+        - name: backend-config
+          hostPath:
+            path: /srv/ret2shell/backend/config
+            type: DirectoryOrCreate
+        {{- if .Values.platform.persistence.existingClaim }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.platform.persistence.existingClaim }}
+        {{- else if not .Values.platform.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+"#;
 
 pub(crate) struct ResolvedPublicEndpoint {
   pub public_host: String,
@@ -122,6 +217,7 @@ pub(crate) enum PlatformSyncMode {
 pub(crate) struct PlatformSyncReport {
   pub release_exists: bool,
   pub chart_changed: bool,
+  pub workload_changed: bool,
   pub values_changed: bool,
   pub config_changed: bool,
   pub blocked_changed: bool,
@@ -132,6 +228,7 @@ impl PlatformSyncReport {
   pub(crate) fn has_changes(&self) -> bool {
     !self.release_exists
       || self.chart_changed
+      || self.workload_changed
       || self.values_changed
       || self.config_changed
       || self.blocked_changed
@@ -141,9 +238,15 @@ impl PlatformSyncReport {
 
 struct ChartReference {
   version: String,
+  source_path: PathBuf,
   path: PathBuf,
   download_url: String,
   release_url: String,
+}
+
+struct ManifestResource {
+  kind: String,
+  name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,6 +262,7 @@ struct ClusterReleaseState {
   values: Option<YamlValue>,
   config_toml: Option<String>,
   blocked_content: Option<String>,
+  platform_mount_layout: Option<YamlValue>,
 }
 
 impl PlatformDeploymentStep {
@@ -233,7 +337,7 @@ impl AtomicInstallStep for PlatformDeploymentStep {
   fn describe(&self, ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
     let summary = platform_plan_summary(ctx)?;
     let _ = render_platform_values_yaml(&summary)?;
-    let _ = render_platform_storage_manifest(&summary);
+    let _ = render_platform_storage_manifest(&summary, None);
     let profile = ctx.deployment_profile().ok_or_else(|| {
       anyhow!("deployment profile is required before planning the platform deployment")
     })?;
@@ -337,6 +441,7 @@ impl AtomicInstallStep for PlatformDeploymentStep {
       let changed = config.remove_install_step_metadata(self.id(), "release_namespace") || changed;
       let changed = config.remove_install_step_metadata(self.id(), "chart_version") || changed;
       let changed = config.remove_install_step_metadata(self.id(), "chart_path") || changed;
+      let changed = config.remove_install_step_metadata(self.id(), "chart_source_path") || changed;
       let changed = config.remove_install_step_metadata(self.id(), "chart_download_url") || changed;
       config.remove_install_step_metadata(self.id(), "chart_release_url") || changed
     })?;
@@ -1541,24 +1646,36 @@ fn sync_platform_release(
   let cluster_access = ClusterAccess::from_plan_context(&ctx.as_plan_context())?;
   let helm_envs = helm_envs(&ctx.as_plan_context())?;
   let chart = resolve_chart_reference(ctx, step, mode)?;
+  let node_hostname = detect_node_hostname(ctx)?;
 
   install_directory(ctx, "/etc/ret2shell")?;
+  ensure_platform_host_layout(ctx, &summary)?;
   cluster_access.wait_for_nodes_ready(ctx)?;
 
   let desired_values = render_platform_values_yaml(&summary)?;
-  let _ = sync_managed_file(ctx, PLATFORM_VALUES_DEST, &desired_values)?;
+  let _ = sync_managed_text_file(ctx, PLATFORM_VALUES_DEST, &desired_values, "600")?;
+  let storage_manifest = render_platform_storage_manifest(&summary, Some(&node_hostname));
   let storage_changed = sync_storage_manifest(
     ctx,
     step,
     &cluster_access,
-    render_platform_storage_manifest(&summary),
+    storage_manifest.clone(),
   )?;
 
   let rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
+  let _ = sync_managed_text_file(ctx, BACKEND_CONFIG_TOML_DEST, &rendered_artifacts.config_toml, "600")?;
+  let _ = sync_managed_text_file(ctx, BACKEND_BLOCKED_DEST, &rendered_artifacts.blocked_content, "600")?;
+  sync_deployment_exports(
+    ctx,
+    &desired_values,
+    storage_manifest.as_deref(),
+  )?;
   let cluster_state = query_cluster_release_state(ctx, &cluster_access, &helm_envs)?;
   let report = PlatformSyncReport {
     release_exists: cluster_state.release_exists,
     chart_changed: cluster_state.chart_version.as_deref() != Some(chart.version.as_str()),
+    workload_changed: cluster_state.platform_mount_layout.as_ref()
+      != Some(&rendered_artifacts.platform_mount_layout),
     values_changed: cluster_state.values != Some(parse_yaml_value(&desired_values)?),
     config_changed: cluster_state.config_toml.as_deref()
       != Some(rendered_artifacts.config_toml.as_str()),
@@ -1605,15 +1722,18 @@ fn resolve_chart_reference(
   match mode {
     PlatformSyncMode::InstallLatest | PlatformSyncMode::UpdateLatest => {
       let chart = update::download_ret2shell_chart()?;
-      copy_chart_to_system_cache(
+      let chart = copy_chart_to_system_cache(
         ctx,
         ChartReference {
           version: chart.version,
+          source_path: chart.path.clone(),
           path: chart.path,
           download_url: chart.download_url,
           release_url: chart.release_url,
         },
-      )
+      )?;
+
+      prepare_patched_chart(ctx, chart)
     }
     PlatformSyncMode::SyncRecorded => {
       let chart_version = ctx
@@ -1623,15 +1743,22 @@ fn resolve_chart_reference(
         .ok_or_else(|| {
           anyhow!("the installed ret2shell chart version is unknown; run `ret2boot update` first")
         })?;
-      let configured_chart_path = ctx
+      let configured_chart_source_path = ctx
         .config()
-        .install_step_metadata(step.id(), "chart_path")
+        .install_step_metadata(step.id(), "chart_source_path")
         .map(PathBuf::from)
+        .or_else(|| {
+          ctx
+            .config()
+            .install_step_metadata(step.id(), "chart_path")
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+        })
         .ok_or_else(|| {
           anyhow!("the cached ret2shell chart path is missing; run `ret2boot update` first")
         })?;
-      let chart_path = if configured_chart_path.is_file() {
-        configured_chart_path
+      let chart_source_path = if configured_chart_source_path.is_file() {
+        configured_chart_source_path
       } else {
         let system_chart_path = system_chart_cache_path(&chart_version);
 
@@ -1640,25 +1767,29 @@ fn resolve_chart_reference(
         } else {
           bail!(
             "the cached ret2shell chart `{}` is missing; run `ret2boot update` first",
-            configured_chart_path.display()
+            configured_chart_source_path.display()
           );
         }
       };
 
-      Ok(ChartReference {
-        version: chart_version,
-        path: chart_path,
-        download_url: ctx
-          .config()
-          .install_step_metadata(step.id(), "chart_download_url")
-          .unwrap_or_default()
-          .to_string(),
-        release_url: ctx
-          .config()
-          .install_step_metadata(step.id(), "chart_release_url")
-          .unwrap_or_default()
-          .to_string(),
-      })
+      prepare_patched_chart(
+        ctx,
+        ChartReference {
+          version: chart_version,
+          source_path: chart_source_path.clone(),
+          path: chart_source_path,
+          download_url: ctx
+            .config()
+            .install_step_metadata(step.id(), "chart_download_url")
+            .unwrap_or_default()
+            .to_string(),
+          release_url: ctx
+            .config()
+            .install_step_metadata(step.id(), "chart_release_url")
+            .unwrap_or_default()
+            .to_string(),
+        },
+      )
     }
   }
 }
@@ -1667,8 +1798,9 @@ fn copy_chart_to_system_cache(
   ctx: &StepExecutionContext<'_>, chart: ChartReference,
 ) -> Result<ChartReference> {
   let system_chart_path = system_chart_cache_path(&chart.version);
-  if !chart_cache_copy_required(&chart.path, &system_chart_path) {
+  if !chart_cache_copy_required(&chart.source_path, &system_chart_path) {
     return Ok(ChartReference {
+      source_path: system_chart_path.clone(),
       path: system_chart_path,
       ..chart
     });
@@ -1682,13 +1814,14 @@ fn copy_chart_to_system_cache(
     &[
       "-m".to_string(),
       "644".to_string(),
-      chart.path.display().to_string(),
+      chart.source_path.display().to_string(),
       system_chart_path.display().to_string(),
     ],
     &[],
   )?;
 
   Ok(ChartReference {
+    source_path: system_chart_path.clone(),
     path: system_chart_path,
     ..chart
   })
@@ -1704,6 +1837,294 @@ fn system_chart_cache_path(version: &str) -> PathBuf {
     .join("ret2shell")
     .join(version)
     .join(format!("ret2shell-{version}.tgz"))
+}
+
+fn prepare_patched_chart(
+  ctx: &StepExecutionContext<'_>, chart: ChartReference,
+) -> Result<ChartReference> {
+  install_directory(ctx, RET2SHELL_ROOT_DIR)?;
+  install_directory(ctx, BACKEND_ROOT_DIR)?;
+  install_directory(ctx, BACKEND_DEPLOYMENTS_DIR)?;
+  install_directory(ctx, BACKEND_CHART_ROOT_DIR)?;
+
+  ctx.run_privileged_command(
+    "rm",
+    &["-rf".to_string(), BACKEND_CHART_DIR.to_string()],
+    &[],
+  )?;
+  ctx.run_privileged_command(
+    "tar",
+    &[
+      "-xzf".to_string(),
+      chart.source_path.display().to_string(),
+      "-C".to_string(),
+      BACKEND_CHART_ROOT_DIR.to_string(),
+    ],
+    &[],
+  )?;
+
+  let platform_template_path = format!("{BACKEND_CHART_DIR}/templates/platform.yaml");
+  let original_template = read_privileged_text_file(ctx, &platform_template_path)?.ok_or_else(|| {
+    anyhow!("the extracted ret2shell chart is missing `templates/platform.yaml`")
+  })?;
+  let patched_template = patch_platform_chart_template(&original_template)?;
+  let _ = sync_managed_text_file(ctx, &platform_template_path, &patched_template, "644")?;
+
+  Ok(ChartReference {
+    path: PathBuf::from(BACKEND_CHART_DIR),
+    ..chart
+  })
+}
+
+fn patch_platform_chart_template(contents: &str) -> Result<String> {
+  let patched = replace_first_block(
+    contents,
+    PLATFORM_TEMPLATE_CONTAINERS_MARKER,
+    PLATFORM_TEMPLATE_CONTAINERS_MARKER,
+    PATCHED_PLATFORM_INIT_CONTAINERS,
+  )?;
+  let patched = replace_first_block(
+    &patched,
+    PLATFORM_TEMPLATE_VOLUME_MOUNTS_MARKER,
+    PLATFORM_TEMPLATE_RESOURCES_MARKER,
+    PATCHED_PLATFORM_VOLUME_MOUNTS,
+  )?;
+
+  replace_first_block(
+    &patched,
+    PLATFORM_TEMPLATE_VOLUMES_MARKER,
+    PLATFORM_TEMPLATE_NODE_SELECTOR_MARKER,
+    PATCHED_PLATFORM_VOLUMES,
+  )
+}
+
+fn replace_first_block(
+  contents: &str, start_marker: &str, end_marker: &str, replacement: &str,
+) -> Result<String> {
+  let start = contents.find(start_marker).ok_or_else(|| {
+    anyhow!("unable to find the expected chart template marker `{start_marker}`")
+  })?;
+  let end = if start_marker == end_marker {
+    start + start_marker.len()
+  } else {
+    contents[start..]
+      .find(end_marker)
+      .map(|offset| start + offset)
+      .ok_or_else(|| anyhow!("unable to find the expected chart template marker `{end_marker}`"))?
+  };
+
+  Ok(format!(
+    "{}{}{}",
+    &contents[..start],
+    replacement,
+    &contents[end..]
+  ))
+}
+
+fn detect_node_hostname(ctx: &StepExecutionContext<'_>) -> Result<String> {
+  let hostname = ctx
+    .run_privileged_command_capture("hostname", &[], &[])?
+    .trim()
+    .to_string();
+
+  if hostname.is_empty() {
+    bail!("failed to determine the kubernetes node hostname for local persistent volumes");
+  }
+
+  Ok(hostname)
+}
+
+fn ensure_platform_host_layout(
+  ctx: &StepExecutionContext<'_>, summary: &PlatformPlanSummary,
+) -> Result<()> {
+  for path in [
+    RET2SHELL_ROOT_DIR,
+    FRONTEND_HOST_DIR,
+    BACKEND_ROOT_DIR,
+    BACKEND_CONFIG_DIR,
+    BACKEND_DEPLOYMENTS_DIR,
+    BACKEND_CHART_ROOT_DIR,
+    BACKEND_STORAGE_DIR,
+    BACKEND_CACHE_DIR,
+    BACKEND_DATABASE_DIR,
+    BACKEND_QUEUE_DIR,
+    BACKEND_REGISTRY_DIR,
+    BACKEND_LOGS_DIR,
+  ] {
+    install_directory(ctx, path)?;
+  }
+
+  for service in &summary.services {
+    if service.deployment == PlatformServiceDeploymentMode::Local
+      && service.storage_mode == Some(PlatformStorageMode::LocalPath)
+    {
+      install_directory(ctx, storage_host_path(service.id))?;
+    }
+  }
+
+  Ok(())
+}
+
+fn sync_managed_text_file(
+  ctx: &StepExecutionContext<'_>, dest: &str, contents: &str, mode: &str,
+) -> Result<bool> {
+  if read_privileged_text_file(ctx, dest)?.as_deref() == Some(contents) {
+    return Ok(false);
+  }
+
+  let staged = stage_text_file("ret2boot-managed", "txt", contents.to_string())?;
+  let install_result = ctx.run_privileged_command(
+    "install",
+    &[
+      "-D".to_string(),
+      "-m".to_string(),
+      mode.to_string(),
+      staged.display().to_string(),
+      dest.to_string(),
+    ],
+    &[],
+  );
+  let _ = fs::remove_file(&staged);
+  install_result?;
+
+  Ok(true)
+}
+
+fn sync_deployment_exports(
+  ctx: &StepExecutionContext<'_>, desired_values: &str, storage_manifest: Option<&str>,
+) -> Result<()> {
+  let _ = sync_managed_text_file(
+    ctx,
+    BACKEND_INIT_MANIFEST_DEST,
+    &render_platform_init_manifest(),
+    "644",
+  )?;
+
+  if let Some(storage_manifest) = storage_manifest {
+    let _ =
+      sync_managed_text_file(ctx, BACKEND_VOLUMES_MANIFEST_DEST, storage_manifest, "644")?;
+  }
+
+  let _ = sync_managed_text_file(
+    ctx,
+    BACKEND_PLATFORM_VALUES_DEST,
+    &extract_chart_section(desired_values, "platform")?,
+    "644",
+  )?;
+
+  for service in [
+    PlatformServiceId::Cache,
+    PlatformServiceId::Database,
+    PlatformServiceId::Queue,
+    PlatformServiceId::Registry,
+    PlatformServiceId::Logs,
+  ] {
+    let destination = format!(
+      "{}/chart-values.yaml",
+      deployment_service_directory(service).expect("service deployment directory exists")
+    );
+    let _ = sync_managed_text_file(
+      ctx,
+      &destination,
+      &extract_chart_section(desired_values, chart_section_key(service))?,
+      "644",
+    )?;
+  }
+
+  Ok(())
+}
+
+fn render_platform_init_manifest() -> String {
+  [
+    "apiVersion: v1".to_string(),
+    "kind: Namespace".to_string(),
+    "metadata:".to_string(),
+    format!("  name: {}", yaml_quote(CHALLENGE_NAMESPACE)),
+    "---".to_string(),
+    "apiVersion: v1".to_string(),
+    "kind: Namespace".to_string(),
+    "metadata:".to_string(),
+    format!("  name: {}", yaml_quote(PLATFORM_NAMESPACE)),
+    "---".to_string(),
+    "apiVersion: v1".to_string(),
+    "kind: ServiceAccount".to_string(),
+    "metadata:".to_string(),
+    "  name: 'ret2shell-service'".to_string(),
+    format!("  namespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
+    "automountServiceAccountToken: true".to_string(),
+    "---".to_string(),
+    "apiVersion: rbac.authorization.k8s.io/v1".to_string(),
+    "kind: ClusterRoleBinding".to_string(),
+    "metadata:".to_string(),
+    "  name: 'ret2shell-service-global'".to_string(),
+    "subjects:".to_string(),
+    "  - kind: ServiceAccount".to_string(),
+    "    name: 'ret2shell-service'".to_string(),
+    format!("    namespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
+    "roleRef:".to_string(),
+    "  apiGroup: rbac.authorization.k8s.io".to_string(),
+    "  kind: ClusterRole".to_string(),
+    "  name: 'cluster-admin'".to_string(),
+    String::new(),
+  ]
+  .join("\n")
+}
+
+fn extract_chart_section(full_values: &str, key: &str) -> Result<String> {
+  let parsed = parse_yaml_value(full_values)?;
+  let root = parsed
+    .as_mapping()
+    .ok_or_else(|| anyhow!("rendered helm values must be a YAML mapping"))?;
+  let section = root
+    .get(YamlValue::String(key.to_string()))
+    .cloned()
+    .ok_or_else(|| anyhow!("rendered helm values are missing section `{key}`"))?;
+  let mut mapping = Mapping::new();
+  mapping.insert(YamlValue::String(key.to_string()), section);
+  let mut rendered =
+    serde_yaml::to_string(&YamlValue::Mapping(mapping)).context("failed to serialize YAML")?;
+  if !rendered.ends_with('\n') {
+    rendered.push('\n');
+  }
+
+  Ok(rendered)
+}
+
+fn deployment_service_directory(service: PlatformServiceId) -> Option<&'static str> {
+  match service {
+    PlatformServiceId::Platform => None,
+    PlatformServiceId::Cache => Some(BACKEND_CACHE_DIR),
+    PlatformServiceId::Database => Some(BACKEND_DATABASE_DIR),
+    PlatformServiceId::Queue => Some(BACKEND_QUEUE_DIR),
+    PlatformServiceId::Registry => Some(BACKEND_REGISTRY_DIR),
+    PlatformServiceId::Logs => Some(BACKEND_LOGS_DIR),
+  }
+}
+
+fn chart_section_key(service: PlatformServiceId) -> &'static str {
+  match service {
+    PlatformServiceId::Platform => "platform",
+    PlatformServiceId::Database => "postgresql",
+    PlatformServiceId::Cache => "valkey",
+    PlatformServiceId::Queue => "nats",
+    PlatformServiceId::Registry => "registry",
+    PlatformServiceId::Logs => "victoriaLogs",
+  }
+}
+
+fn storage_host_path(service: PlatformServiceId) -> &'static str {
+  match service {
+    PlatformServiceId::Platform => "/srv/ret2shell/backend/storage/platform-pv1",
+    PlatformServiceId::Database => "/srv/ret2shell/backend/storage/database-pv1",
+    PlatformServiceId::Cache => "/srv/ret2shell/backend/storage/cache-pv1",
+    PlatformServiceId::Queue => "/srv/ret2shell/backend/storage/queue-pv1",
+    PlatformServiceId::Registry => "/srv/ret2shell/backend/storage/registry-pv1",
+    PlatformServiceId::Logs => "/srv/ret2shell/backend/storage/logs-pv1",
+  }
+}
+
+fn storage_persistent_volume_name(service: PlatformServiceId) -> String {
+  format!("ret2shell-storage-{}-pv1", service.as_config_value())
 }
 
 fn persist_platform_chart_metadata(
@@ -1728,6 +2149,11 @@ fn persist_platform_chart_metadata(
       let changed =
         config.set_install_step_metadata(step.id(), "chart_path", chart.path.display().to_string())
           || changed;
+      let changed = config.set_install_step_metadata(
+        step.id(),
+        "chart_source_path",
+        chart.source_path.display().to_string(),
+      ) || changed;
       let changed = config.set_install_step_metadata(
         step.id(),
         "chart_download_url",
@@ -1767,15 +2193,19 @@ fn sync_storage_manifest(
     .map(|path| read_privileged_text_file(ctx, path))
     .transpose()?
     .flatten();
-  let desired_storage_classes = desired_storage_manifest
+  let desired_resources = desired_storage_manifest
     .as_deref()
-    .map(extract_storage_class_names)
+    .map(extract_manifest_resources)
     .transpose()?
     .unwrap_or_default();
-  let mut missing_storage_classes = false;
-  for storage_class in &desired_storage_classes {
-    if !cluster_access.storage_class_exists(ctx, storage_class)? {
-      missing_storage_classes = true;
+  let mut missing_resources = false;
+  for resource in &desired_resources {
+    if !cluster_access.cluster_scoped_resource_exists(
+      ctx,
+      manifest_resource_type(resource.kind.as_str())?,
+      resource.name.as_str(),
+    )? {
+      missing_resources = true;
       break;
     }
   }
@@ -1794,7 +2224,7 @@ fn sync_storage_manifest(
     Some(storage_manifest) => {
       let file_changed = sync_managed_file(ctx, PLATFORM_STORAGE_DEST, &storage_manifest)?;
 
-      if manifest_changed || file_changed || missing_storage_classes {
+      if manifest_changed || file_changed || missing_resources {
         cluster_access.apply_manifest(ctx, PLATFORM_STORAGE_DEST)?;
       }
 
@@ -1804,7 +2234,7 @@ fn sync_storage_manifest(
         |config| config.set_install_step_metadata(step.id(), "storage_path", PLATFORM_STORAGE_DEST),
       )?;
 
-      Ok(manifest_changed || file_changed || missing_storage_classes)
+      Ok(manifest_changed || file_changed || missing_resources)
     }
     None => {
       if let Some(previous_storage_path) = previous_storage_path
@@ -1834,7 +2264,7 @@ fn sync_storage_manifest(
   }
 }
 
-fn extract_storage_class_names(manifest: &str) -> Result<Vec<String>> {
+fn extract_manifest_resources(manifest: &str) -> Result<Vec<ManifestResource>> {
   let documents = Deserializer::from_str(manifest)
     .map(YamlValue::deserialize)
     .collect::<std::result::Result<Vec<_>, _>>()
@@ -1843,10 +2273,22 @@ fn extract_storage_class_names(manifest: &str) -> Result<Vec<String>> {
   Ok(
     documents
       .into_iter()
-      .filter(|document| document["kind"].as_str() == Some("StorageClass"))
-      .filter_map(|document| document["metadata"]["name"].as_str().map(str::to_string))
+      .filter_map(|document| {
+        Some(ManifestResource {
+          kind: document["kind"].as_str()?.to_string(),
+          name: document["metadata"]["name"].as_str()?.to_string(),
+        })
+      })
       .collect(),
   )
+}
+
+fn manifest_resource_type(kind: &str) -> Result<&'static str> {
+  match kind {
+    "StorageClass" => Ok("storageclass"),
+    "PersistentVolume" => Ok("persistentvolume"),
+    _ => bail!("unsupported manifest resource kind `{kind}` in platform storage manifest"),
+  }
 }
 
 fn read_privileged_text_file(ctx: &StepExecutionContext<'_>, path: &str) -> Result<Option<String>> {
@@ -1884,6 +2326,14 @@ fn query_cluster_release_state(
       "ret2shell-blocked",
       "{{index .data \"blocked.txt\"}}",
     )?,
+    platform_mount_layout: cluster_access
+      .capture_namespaced_object_yaml(
+        ctx,
+        PLATFORM_NAMESPACE,
+        "statefulset",
+        "ret2shell-platform",
+      )?
+      .map(|document| extract_platform_mount_layout(&document)),
   })
 }
 
@@ -1936,6 +2386,7 @@ fn current_release_values(
 struct RenderedChartArtifacts {
   config_toml: String,
   blocked_content: String,
+  platform_mount_layout: YamlValue,
 }
 
 fn render_chart_artifacts(
@@ -1960,6 +2411,7 @@ fn render_chart_artifacts(
     .context("failed to parse `helm template` output")?;
   let mut config_toml = None;
   let mut blocked_content = None;
+  let mut platform_mount_layout = None;
 
   for document in documents {
     let kind = document["kind"].as_str();
@@ -1979,6 +2431,9 @@ fn render_chart_artifacts(
             .to_string(),
         );
       }
+      (Some("StatefulSet"), Some("ret2shell-platform")) => {
+        platform_mount_layout = Some(extract_platform_mount_layout(&document));
+      }
       _ => {}
     }
   }
@@ -1990,6 +2445,9 @@ fn render_chart_artifacts(
     blocked_content: blocked_content.ok_or_else(|| {
       anyhow!("the rendered ret2shell chart did not contain the generated blocked configmap")
     })?,
+    platform_mount_layout: platform_mount_layout.ok_or_else(|| {
+      anyhow!("the rendered ret2shell chart did not contain the platform StatefulSet")
+    })?,
   })
 }
 
@@ -1999,6 +2457,191 @@ fn parse_yaml_value(contents: &str) -> Result<YamlValue> {
   }
 
   serde_yaml::from_str(contents).context("failed to parse yaml content")
+}
+
+fn extract_platform_mount_layout(document: &YamlValue) -> YamlValue {
+  let template_spec = &document["spec"]["template"]["spec"];
+  let platform_volume_mounts = template_spec["containers"]
+    .as_sequence()
+    .and_then(|containers| {
+      containers.iter().find(|container| container["name"].as_str() == Some("platform"))
+    })
+    .map(|container| {
+      YamlValue::Sequence(
+        container["volumeMounts"]
+          .as_sequence()
+          .into_iter()
+          .flatten()
+          .map(|mount| {
+            let mut normalized = Mapping::new();
+            normalized.insert(
+              YamlValue::String("name".to_string()),
+              mount["name"].clone(),
+            );
+            normalized.insert(
+              YamlValue::String("mountPath".to_string()),
+              mount["mountPath"].clone(),
+            );
+            if !mount["subPath"].is_null() {
+              normalized.insert(
+                YamlValue::String("subPath".to_string()),
+                mount["subPath"].clone(),
+              );
+            }
+            if !mount["readOnly"].is_null() {
+              normalized.insert(
+                YamlValue::String("readOnly".to_string()),
+                mount["readOnly"].clone(),
+              );
+            }
+
+            YamlValue::Mapping(normalized)
+          })
+          .collect(),
+      )
+    })
+    .unwrap_or_else(|| YamlValue::Sequence(Vec::new()));
+  let normalized_init_containers = YamlValue::Sequence(
+    template_spec["initContainers"]
+      .as_sequence()
+      .into_iter()
+      .flatten()
+      .map(|container| {
+        let mut normalized = Mapping::new();
+        normalized.insert(
+          YamlValue::String("name".to_string()),
+          container["name"].clone(),
+        );
+        normalized.insert(
+          YamlValue::String("command".to_string()),
+          container["command"].clone(),
+        );
+        normalized.insert(
+          YamlValue::String("volumeMounts".to_string()),
+          YamlValue::Sequence(
+            container["volumeMounts"]
+              .as_sequence()
+              .into_iter()
+              .flatten()
+              .map(|mount| {
+                let mut normalized_mount = Mapping::new();
+                normalized_mount.insert(
+                  YamlValue::String("name".to_string()),
+                  mount["name"].clone(),
+                );
+                normalized_mount.insert(
+                  YamlValue::String("mountPath".to_string()),
+                  mount["mountPath"].clone(),
+                );
+                if !mount["subPath"].is_null() {
+                  normalized_mount.insert(
+                    YamlValue::String("subPath".to_string()),
+                    mount["subPath"].clone(),
+                  );
+                }
+                if !mount["readOnly"].is_null() {
+                  normalized_mount.insert(
+                    YamlValue::String("readOnly".to_string()),
+                    mount["readOnly"].clone(),
+                  );
+                }
+
+                YamlValue::Mapping(normalized_mount)
+              })
+              .collect(),
+          ),
+        );
+
+        YamlValue::Mapping(normalized)
+      })
+      .collect(),
+  );
+  let normalized_volumes = YamlValue::Sequence(
+    template_spec["volumes"]
+      .as_sequence()
+      .into_iter()
+      .flatten()
+      .map(|volume| {
+        let mut normalized = Mapping::new();
+        normalized.insert(
+          YamlValue::String("name".to_string()),
+          volume["name"].clone(),
+        );
+        if !volume["hostPath"].is_null() {
+          let mut host_path = Mapping::new();
+          host_path.insert(
+            YamlValue::String("path".to_string()),
+            volume["hostPath"]["path"].clone(),
+          );
+          host_path.insert(
+            YamlValue::String("type".to_string()),
+            volume["hostPath"]["type"].clone(),
+          );
+          normalized.insert(
+            YamlValue::String("hostPath".to_string()),
+            YamlValue::Mapping(host_path),
+          );
+        }
+        if !volume["secret"].is_null() {
+          let mut secret = Mapping::new();
+          secret.insert(
+            YamlValue::String("secretName".to_string()),
+            volume["secret"]["secretName"].clone(),
+          );
+          normalized.insert(
+            YamlValue::String("secret".to_string()),
+            YamlValue::Mapping(secret),
+          );
+        }
+        if !volume["configMap"].is_null() {
+          let mut config_map = Mapping::new();
+          config_map.insert(
+            YamlValue::String("name".to_string()),
+            volume["configMap"]["name"].clone(),
+          );
+          normalized.insert(
+            YamlValue::String("configMap".to_string()),
+            YamlValue::Mapping(config_map),
+          );
+        }
+        if !volume["persistentVolumeClaim"].is_null() {
+          let mut claim = Mapping::new();
+          claim.insert(
+            YamlValue::String("claimName".to_string()),
+            volume["persistentVolumeClaim"]["claimName"].clone(),
+          );
+          normalized.insert(
+            YamlValue::String("persistentVolumeClaim".to_string()),
+            YamlValue::Mapping(claim),
+          );
+        }
+        if !volume["emptyDir"].is_null() {
+          normalized.insert(
+            YamlValue::String("emptyDir".to_string()),
+            YamlValue::Mapping(Mapping::new()),
+          );
+        }
+
+        YamlValue::Mapping(normalized)
+      })
+      .collect(),
+  );
+
+  let mut layout = Mapping::new();
+  layout.insert(
+    YamlValue::String("initContainers".to_string()),
+    normalized_init_containers,
+  );
+  layout.insert(
+    YamlValue::String("volumes".to_string()),
+    normalized_volumes,
+  );
+  layout.insert(
+    YamlValue::String("platformVolumeMounts".to_string()),
+    platform_volume_mounts,
+  );
+
+  YamlValue::Mapping(layout)
 }
 
 fn parse_release_chart_version(chart: &str) -> Option<String> {
@@ -2228,21 +2871,27 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
   Ok(lines.join("\n"))
 }
 
-fn render_platform_storage_manifest(summary: &PlatformPlanSummary) -> Option<String> {
-  let storage_classes = summary
+fn render_platform_storage_manifest(
+  summary: &PlatformPlanSummary, node_hostname: Option<&str>,
+) -> Option<String> {
+  let local_services = summary
     .services
     .iter()
     .filter(|service| {
       service.deployment == PlatformServiceDeploymentMode::Local
         && service.storage_mode == Some(PlatformStorageMode::LocalPath)
     })
-    .filter_map(|service| service.storage_class_name.clone())
-    .collect::<BTreeSet<_>>();
+    .collect::<Vec<_>>();
 
-  if storage_classes.is_empty() {
+  if local_services.is_empty() {
     return None;
   }
 
+  let storage_classes = local_services
+    .iter()
+    .filter_map(|service| service.storage_class_name.clone())
+    .collect::<BTreeSet<_>>();
+  let node_hostname = node_hostname.unwrap_or("ret2shell-node-master");
   let mut lines = Vec::new();
   for (index, storage_class) in storage_classes.iter().enumerate() {
     if index > 0 {
@@ -2255,10 +2904,45 @@ fn render_platform_storage_manifest(summary: &PlatformPlanSummary) -> Option<Str
     lines.push(format!("  name: {}", yaml_quote(storage_class)));
     lines.push("  annotations:".to_string());
     lines.push("    storageclass.kubernetes.io/is-default-class: \"false\"".to_string());
-    lines.push(format!("provisioner: {LOCAL_PATH_PROVISIONER}"));
+    lines.push("provisioner: kubernetes.io/no-provisioner".to_string());
     lines.push("reclaimPolicy: Retain".to_string());
     lines.push("allowVolumeExpansion: true".to_string());
     lines.push("volumeBindingMode: WaitForFirstConsumer".to_string());
+  }
+  for service in local_services {
+    if !lines.is_empty() {
+      lines.push("---".to_string());
+    }
+
+    let storage_class = service.storage_class_name.as_deref().expect("local service has storage class");
+    let size_gib = service.persistence_size_gib.expect("local service has persistence size");
+    lines.push("apiVersion: v1".to_string());
+    lines.push("kind: PersistentVolume".to_string());
+    lines.push("metadata:".to_string());
+    lines.push(format!(
+      "  name: {}",
+      yaml_quote(&storage_persistent_volume_name(service.id))
+    ));
+    lines.push("spec:".to_string());
+    lines.push("  capacity:".to_string());
+    lines.push(format!("    storage: {size_gib}Gi"));
+    lines.push("  accessModes:".to_string());
+    lines.push("    - ReadWriteOnce".to_string());
+    lines.push("  persistentVolumeReclaimPolicy: Retain".to_string());
+    lines.push(format!("  storageClassName: {}", yaml_quote(storage_class)));
+    lines.push("  local:".to_string());
+    lines.push(format!(
+      "    path: {}",
+      yaml_quote(storage_host_path(service.id))
+    ));
+    lines.push("  nodeAffinity:".to_string());
+    lines.push("    required:".to_string());
+    lines.push("      nodeSelectorTerms:".to_string());
+    lines.push("        - matchExpressions:".to_string());
+    lines.push("            - key: kubernetes.io/hostname".to_string());
+    lines.push("              operator: In".to_string());
+    lines.push("              values:".to_string());
+    lines.push(format!("                - {}", yaml_quote(node_hostname)));
   }
   lines.push(String::new());
 
@@ -2617,12 +3301,14 @@ impl ClusterAccess {
     )
   }
 
-  fn storage_class_exists(&self, ctx: &StepExecutionContext<'_>, name: &str) -> Result<bool> {
+  fn cluster_scoped_resource_exists(
+    &self, ctx: &StepExecutionContext<'_>, resource: &str, name: &str,
+  ) -> Result<bool> {
     let output = self.capture(
       ctx,
       &[
         "get".to_string(),
-        "storageclass".to_string(),
+        resource.to_string(),
         name.to_string(),
         "--ignore-not-found".to_string(),
         "-o".to_string(),
@@ -2669,6 +3355,43 @@ impl ClusterAccess {
         ],
       )
       .map(Some)
+  }
+
+  fn capture_namespaced_object_yaml(
+    &self, ctx: &StepExecutionContext<'_>, namespace: &str, resource: &str, name: &str,
+  ) -> Result<Option<YamlValue>> {
+    let exists = self.capture(
+      ctx,
+      &[
+        "-n".to_string(),
+        namespace.to_string(),
+        "get".to_string(),
+        resource.to_string(),
+        name.to_string(),
+        "--ignore-not-found".to_string(),
+        "-o".to_string(),
+        "name".to_string(),
+      ],
+    )?;
+
+    if exists.trim().is_empty() {
+      return Ok(None);
+    }
+
+    let yaml = self.capture(
+      ctx,
+      &[
+        "-n".to_string(),
+        namespace.to_string(),
+        "get".to_string(),
+        resource.to_string(),
+        name.to_string(),
+        "-o".to_string(),
+        "yaml".to_string(),
+      ],
+    )?;
+
+    parse_yaml_value(&yaml).map(Some)
   }
 
   fn restart_release_workloads(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
@@ -2838,20 +3561,40 @@ mod tests {
   }
 
   #[test]
-  fn render_platform_storage_manifest_only_emits_local_path_classes() {
+  fn render_platform_storage_manifest_emits_local_pvs_and_storage_classes() {
     let summary = sample_summary();
-    let rendered = render_platform_storage_manifest(&summary).expect("storage manifest exists");
+    let rendered =
+      render_platform_storage_manifest(&summary, Some("ret2shell-node-master"))
+        .expect("storage manifest exists");
     let documents = Deserializer::from_str(&rendered)
       .map(Value::deserialize)
       .collect::<std::result::Result<Vec<_>, _>>()
       .expect("storage manifest parses as yaml");
     let storage_classes = documents
-      .into_iter()
+      .iter()
+      .filter(|document| document["kind"].as_str() == Some("StorageClass"))
       .map(|document| {
         document["metadata"]["name"]
           .as_str()
           .unwrap_or_default()
           .to_string()
+      })
+      .collect::<Vec<_>>();
+    let persistent_volumes = documents
+      .iter()
+      .filter(|document| document["kind"].as_str() == Some("PersistentVolume"))
+      .into_iter()
+      .map(|document| {
+        (
+          document["metadata"]["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+          document["spec"]["local"]["path"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        )
       })
       .collect::<Vec<_>>();
 
@@ -2861,6 +3604,23 @@ mod tests {
         "ret2shell-storage-cache".to_string(),
         "ret2shell-storage-platform".to_string(),
         "ret2shell-storage-registry".to_string(),
+      ]
+    );
+    assert_eq!(
+      persistent_volumes,
+      vec![
+        (
+          "ret2shell-storage-platform-pv1".to_string(),
+          "/srv/ret2shell/backend/storage/platform-pv1".to_string()
+        ),
+        (
+          "ret2shell-storage-cache-pv1".to_string(),
+          "/srv/ret2shell/backend/storage/cache-pv1".to_string()
+        ),
+        (
+          "ret2shell-storage-registry-pv1".to_string(),
+          "/srv/ret2shell/backend/storage/registry-pv1".to_string()
+        ),
       ]
     );
   }

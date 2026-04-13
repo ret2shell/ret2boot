@@ -345,6 +345,9 @@ impl<'a> InstallFlow<'a> {
     if report.chart_changed {
       details.push("helm chart changed");
     }
+    if report.workload_changed {
+      details.push("platform workload spec changed");
+    }
     if report.values_changed {
       details.push("helm values changed");
     }
