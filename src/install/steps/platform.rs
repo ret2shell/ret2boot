@@ -12,6 +12,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use rust_i18n::t;
 use serde::Deserialize;
 use serde_yaml::{Deserializer, Mapping, Value as YamlValue};
+use toml::Value as TomlValue;
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
@@ -58,6 +59,7 @@ const BACKEND_REGISTRY_DIR: &str = "/srv/ret2shell/backend/deployments/5-registr
 const BACKEND_LOGS_DIR: &str = "/srv/ret2shell/backend/deployments/6-logs";
 const BACKEND_CONFIG_TOML_DEST: &str = "/srv/ret2shell/backend/config/config.toml";
 const BACKEND_BLOCKED_DEST: &str = "/srv/ret2shell/backend/config/blocked.txt";
+const BACKEND_LICENSE_DEST: &str = "/srv/ret2shell/backend/config/license";
 pub(crate) const PLATFORM_NODE_PORT: u16 = 30307;
 const PLATFORM_INGRESS_PATH: &str = "/";
 const PLATFORM_INGRESS_PATH_TYPE: &str = "Prefix";
@@ -224,6 +226,13 @@ struct ChartReference {
 struct ManifestResource {
   kind: String,
   name: String,
+}
+
+#[derive(Default)]
+struct ReferenceConfigFiles {
+  config_toml: Option<String>,
+  blocked_content: Option<String>,
+  license_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1651,8 +1660,25 @@ fn sync_platform_release(
   )?;
 
   let rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
-  let _ = sync_managed_text_file(ctx, BACKEND_CONFIG_TOML_DEST, &rendered_artifacts.config_toml, "600")?;
-  let _ = sync_managed_text_file(ctx, BACKEND_BLOCKED_DEST, &rendered_artifacts.blocked_content, "600")?;
+  let reference_files = load_reference_config_files()?;
+  let desired_host_config_toml = merge_runtime_config_with_reference(
+    &rendered_artifacts.config_toml,
+    reference_files.config_toml.as_deref(),
+  )?;
+  let desired_host_blocked = reference_files
+    .blocked_content
+    .clone()
+    .unwrap_or_else(|| rendered_artifacts.blocked_content.clone());
+  let host_config_changed =
+    sync_managed_text_file(ctx, BACKEND_CONFIG_TOML_DEST, &desired_host_config_toml, "600")?;
+  let host_blocked_changed =
+    sync_managed_text_file(ctx, BACKEND_BLOCKED_DEST, &desired_host_blocked, "600")?;
+  let host_license_changed = sync_optional_managed_text_file(
+    ctx,
+    BACKEND_LICENSE_DEST,
+    reference_files.license_content.as_deref(),
+    "644",
+  )?;
   sync_deployment_exports(
     ctx,
     &desired_values,
@@ -1663,12 +1689,13 @@ fn sync_platform_release(
     release_exists: cluster_state.release_exists,
     chart_changed: cluster_state.chart_version.as_deref() != Some(chart.version.as_str()),
     workload_changed: cluster_state.platform_mount_layout.as_ref()
-      != Some(&rendered_artifacts.platform_mount_layout),
+      != Some(&rendered_artifacts.platform_mount_layout)
+      || host_license_changed,
     values_changed: cluster_state.values != Some(parse_yaml_value(&desired_values)?),
-    config_changed: cluster_state.config_toml.as_deref()
-      != Some(rendered_artifacts.config_toml.as_str()),
-    blocked_changed: cluster_state.blocked_content.as_deref()
-      != Some(rendered_artifacts.blocked_content.as_str()),
+    config_changed: host_config_changed
+      || cluster_state.config_toml.as_deref() != Some(rendered_artifacts.config_toml.as_str()),
+    blocked_changed: host_blocked_changed
+      || cluster_state.blocked_content.as_deref() != Some(rendered_artifacts.blocked_content.as_str()),
     storage_changed,
   };
 
@@ -2063,6 +2090,22 @@ fn sync_managed_text_file(
   Ok(true)
 }
 
+fn sync_optional_managed_text_file(
+  ctx: &StepExecutionContext<'_>, dest: &str, contents: Option<&str>, mode: &str,
+) -> Result<bool> {
+  match contents {
+    Some(contents) => sync_managed_text_file(ctx, dest, contents, mode),
+    None => {
+      if Path::new(dest).is_file() {
+        ctx.run_privileged_command("rm", &["-f".to_string(), dest.to_string()], &[])?;
+        Ok(true)
+      } else {
+        Ok(false)
+      }
+    }
+  }
+}
+
 fn uninstall_platform_release(
   ctx: &StepExecutionContext<'_>, helm_envs: &[(String, String)],
 ) -> Result<()> {
@@ -2173,6 +2216,120 @@ fn sync_deployment_exports(
   }
 
   Ok(())
+}
+
+fn load_reference_config_files() -> Result<ReferenceConfigFiles> {
+  Ok(ReferenceConfigFiles {
+    config_toml: read_first_existing_text(&["config.toml", "Raw_Config_files/config/config.toml"])?,
+    blocked_content: read_first_existing_text(&["blocked.txt", "Raw_Config_files/config/blocked.txt"])?,
+    license_content: read_first_existing_text(&["license", "Raw_Config_files/config/license"])?,
+  })
+}
+
+fn read_first_existing_text(paths: &[&str]) -> Result<Option<String>> {
+  for path in paths {
+    let candidate = Path::new(path);
+    if !candidate.is_file() {
+      continue;
+    }
+
+    let contents = fs::read_to_string(candidate)
+      .with_context(|| format!("failed to read reference config file `{}`", candidate.display()))?;
+    return Ok(Some(contents));
+  }
+
+  Ok(None)
+}
+
+fn merge_runtime_config_with_reference(
+  generated: &str, reference: Option<&str>,
+) -> Result<String> {
+  let Some(reference) = reference else {
+    return Ok(generated.to_string());
+  };
+
+  let mut generated_value: TomlValue =
+    toml::from_str(generated).context("failed to parse generated runtime config TOML")?;
+  let reference_value: TomlValue =
+    toml::from_str(reference).context("failed to parse reference runtime config TOML")?;
+
+  for path in [
+    &["cluster", "try_default"][..],
+    &["cluster", "auto_infer"][..],
+    &["cluster", "kube_config_path"][..],
+    &["cluster", "node_selector"][..],
+    &["cluster", "enable_capture"][..],
+    &["cluster", "capture_directory"][..],
+    &["cluster", "traffic"][..],
+    &["cluster", "lifecycle"][..],
+    &["email"][..],
+    &["logging"][..],
+    &["media", "anti_theft"][..],
+    &["media", "limit"][..],
+    &["server", "api_base_path"][..],
+    &["server", "cors_origins"][..],
+    &["server", "external_domain"][..],
+    &["server", "external_https"][..],
+    &["server", "name"][..],
+    &["server", "footer_info"][..],
+    &["server", "footer_url"][..],
+    &["server", "subject_info"][..],
+    &["server", "subject_url"][..],
+    &["server", "record"][..],
+    &["server", "hide_maker"][..],
+    &["server", "highlight_banner"][..],
+    &["server", "zen_game"][..],
+    &["server", "rate_limit"][..],
+  ] {
+    copy_toml_path(&reference_value, &mut generated_value, path);
+  }
+
+  let mut rendered =
+    toml::to_string_pretty(&generated_value).context("failed to serialize runtime config TOML")?;
+  if !rendered.ends_with('\n') {
+    rendered.push('\n');
+  }
+
+  Ok(rendered)
+}
+
+fn copy_toml_path(source: &TomlValue, destination: &mut TomlValue, path: &[&str]) -> bool {
+  let Some(value) = get_toml_path(source, path).cloned() else {
+    return false;
+  };
+
+  set_toml_path(destination, path, value)
+}
+
+fn get_toml_path<'a>(value: &'a TomlValue, path: &[&str]) -> Option<&'a TomlValue> {
+  let mut current = value;
+  for segment in path {
+    current = current.get(*segment)?;
+  }
+
+  Some(current)
+}
+
+fn set_toml_path(value: &mut TomlValue, path: &[&str], replacement: TomlValue) -> bool {
+  if path.is_empty() {
+    *value = replacement;
+    return true;
+  }
+
+  let Some(table) = value.as_table_mut() else {
+    return false;
+  };
+
+  if path.len() == 1 {
+    table.insert(path[0].to_string(), replacement);
+    return true;
+  }
+
+  let entry = table
+    .entry(path[0].to_string())
+    .or_insert_with(|| TomlValue::Table(Default::default()));
+
+  set_toml_path(entry, &path[1..], replacement)
 }
 
 fn render_platform_init_manifest() -> String {
@@ -2796,6 +2953,8 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
   let queue = planned_service(summary, PlatformServiceId::Queue)?;
   let registry = planned_service(summary, PlatformServiceId::Registry)?;
   let logs = planned_service(summary, PlatformServiceId::Logs)?;
+  let external_https = summary.application_exposure == ApplicationExposureMode::Ingress;
+  let external_origin = derive_external_origin(&summary.public_host, external_https);
 
   let mut lines = vec!["platform:".to_string()];
   lines.push("  exposure:".to_string());
@@ -2838,7 +2997,11 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
     "      externalDomain: {}",
     yaml_quote(&summary.public_host)
   ));
-  lines.push("      externalHttps: false".to_string());
+  lines.push(format!("      externalHttps: {external_https}"));
+  lines.push(format!(
+    "      corsOrigins: {}",
+    yaml_quote(&external_origin)
+  ));
   lines.push("  blocked:".to_string());
   push_yaml_string_field(&mut lines, "    ", "content", &summary.blocked_content);
   append_local_persistence(&mut lines, "  ", platform)?;
@@ -3296,6 +3459,12 @@ fn derive_internal_registry_host(public_host: &str) -> String {
   format!("{public_host}:{INTERNAL_REGISTRY_NODE_PORT}")
 }
 
+fn derive_external_origin(public_host: &str, external_https: bool) -> String {
+  let scheme = if external_https { "https" } else { "http" };
+
+  format!("{scheme}://{public_host}")
+}
+
 fn public_host_is_ipv4(public_host: &str) -> bool {
   public_host.parse::<Ipv4Addr>().is_ok()
 }
@@ -3702,6 +3871,30 @@ mod tests {
       parsed["platform"]["config"]["server"]["externalDomain"],
       Value::String("192.168.23.132".to_string())
     );
+    assert_eq!(
+      parsed["platform"]["config"]["server"]["externalHttps"],
+      Value::Bool(false)
+    );
+    assert_eq!(
+      parsed["platform"]["config"]["server"]["corsOrigins"],
+      Value::String("http://192.168.23.132".to_string())
+    );
+  }
+
+  #[test]
+  fn render_platform_values_yaml_maps_ingress_profile_to_https_origin() {
+    let summary = sample_summary();
+    let rendered = render_platform_values_yaml(&summary).expect("values render");
+    let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
+
+    assert_eq!(
+      parsed["platform"]["config"]["server"]["externalHttps"],
+      Value::Bool(true)
+    );
+    assert_eq!(
+      parsed["platform"]["config"]["server"]["corsOrigins"],
+      Value::String("https://ctf.example.com".to_string())
+    );
   }
 
   #[test]
@@ -3950,6 +4143,81 @@ spec:\n\
         .expect("single control-plane node resolves"),
       "cp-label"
     );
+  }
+
+  #[test]
+  fn merge_runtime_config_with_reference_overrides_selected_runtime_fields() {
+    let generated = r#"
+[cluster]
+try_default = true
+auto_infer = false
+node_selector = ""
+capture_directory = "/var/lib/ret2shell/captures"
+
+[email]
+enabled = false
+
+[logging]
+directory = "/var/lib/ret2shell/log"
+level = "info"
+
+[server]
+external_domain = "generated.example"
+external_https = false
+cors_origins = "*"
+
+[server.rate_limit]
+burst_limit = 32
+burst_restore_rate = 500
+"#;
+    let reference = r#"
+[cluster]
+auto_infer = true
+kube_config_path = "/etc/rancher/k3s.yaml"
+node_selector = "challenge"
+capture_directory = "/var/cache/ret2shell/captures"
+
+[email]
+enabled = true
+host = "smtp.example.com"
+
+[logging]
+directory = "/var/lib/ret2shell/logs"
+level = "info,tower_http=off,sqlx=warn"
+
+[server]
+external_domain = "ctf.example.com"
+external_https = true
+cors_origins = "https://ctf.example.com"
+
+[server.rate_limit]
+burst_limit = 128
+burst_restore_rate = 500
+"#;
+
+    let merged =
+      merge_runtime_config_with_reference(generated, Some(reference)).expect("merge succeeds");
+    let parsed: TomlValue = toml::from_str(&merged).expect("merged config parses");
+
+    assert_eq!(parsed["cluster"]["auto_infer"], TomlValue::Boolean(true));
+    assert_eq!(
+      parsed["cluster"]["kube_config_path"],
+      TomlValue::String("/etc/rancher/k3s.yaml".to_string())
+    );
+    assert_eq!(
+      parsed["cluster"]["node_selector"],
+      TomlValue::String("challenge".to_string())
+    );
+    assert_eq!(
+      parsed["logging"]["directory"],
+      TomlValue::String("/var/lib/ret2shell/logs".to_string())
+    );
+    assert_eq!(parsed["server"]["external_https"], TomlValue::Boolean(true));
+    assert_eq!(
+      parsed["server"]["cors_origins"],
+      TomlValue::String("https://ctf.example.com".to_string())
+    );
+    assert_eq!(parsed["email"]["enabled"], TomlValue::Boolean(true));
   }
 
   fn sample_summary() -> PlatformPlanSummary {
