@@ -1879,22 +1879,22 @@ fn prepare_patched_chart(
 fn patch_platform_chart_template(contents: &str) -> Result<String> {
   let patched = replace_first_block(
     contents,
-    PLATFORM_TEMPLATE_CONTAINERS_MARKER,
-    PLATFORM_TEMPLATE_CONTAINERS_MARKER,
-    PATCHED_PLATFORM_INIT_CONTAINERS,
-  )?;
-  let patched = replace_first_block(
-    &patched,
     PLATFORM_TEMPLATE_VOLUME_MOUNTS_MARKER,
     PLATFORM_TEMPLATE_RESOURCES_MARKER,
     PATCHED_PLATFORM_VOLUME_MOUNTS,
   )?;
-
-  replace_first_block(
+  let patched = replace_first_block(
     &patched,
     PLATFORM_TEMPLATE_VOLUMES_MARKER,
     PLATFORM_TEMPLATE_NODE_SELECTOR_MARKER,
     PATCHED_PLATFORM_VOLUMES,
+  )?;
+
+  replace_first_block(
+    &patched,
+    PLATFORM_TEMPLATE_CONTAINERS_MARKER,
+    PLATFORM_TEMPLATE_CONTAINERS_MARKER,
+    PATCHED_PLATFORM_INIT_CONTAINERS,
   )
 }
 
@@ -3623,6 +3623,37 @@ mod tests {
         ),
       ]
     );
+  }
+
+  #[test]
+  fn patch_platform_chart_template_keeps_platform_container_after_inserting_init_containers() {
+    let original = "\
+spec:\n\
+      containers:\n\
+        - name: platform\n\
+          image: example\n\
+          volumeMounts:\n\
+            - name: data\n\
+              mountPath: /var/lib/ret2shell\n\
+          {{- with .Values.platform.resources }}\n\
+          resources:\n\
+            {}\n\
+          {{- end }}\n\
+      volumes:\n\
+        - name: config\n\
+          secret:\n\
+            secretName: ret2shell-config\n\
+      {{- with .Values.platform.nodeSelector }}\n\
+      nodeSelector:\n\
+        {}\n\
+      {{- end }}\n";
+    let patched = patch_platform_chart_template(original).expect("template patch succeeds");
+
+    assert!(patched.contains("initContainers:"));
+    assert!(patched.contains("containers:\n        - name: platform"));
+    assert!(patched.contains("mountPath: /var/www/html"));
+    assert!(patched.contains("path: /srv/ret2shell/frontend"));
+    assert!(patched.contains("mountPath: /etc/ret2shell"));
   }
 
   #[test]
