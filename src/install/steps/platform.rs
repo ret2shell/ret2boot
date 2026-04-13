@@ -35,6 +35,9 @@ const PLATFORM_NAMESPACE: &str = "ret2shell-platform";
 const CHALLENGE_NAMESPACE: &str = "ret2shell-challenge";
 const HELM_RELEASE_NAME: &str = "ret2shell";
 const HELM_RELEASE_TIMEOUT: &str = "15m0s";
+const HELM_UNINSTALL_TIMEOUT: &str = "10m0s";
+const HELM_UNINSTALL_POLL_RETRIES: usize = 24;
+const HELM_UNINSTALL_POLL_INTERVAL_SECONDS: u64 = 5;
 const RET2SHELL_ROOT_DIR: &str = "/srv/ret2shell";
 const FRONTEND_HOST_DIR: &str = "/srv/ret2shell/frontend";
 const BACKEND_ROOT_DIR: &str = "/srv/ret2shell/backend";
@@ -405,20 +408,7 @@ impl AtomicInstallStep for PlatformDeploymentStep {
       .install_step_metadata(self.id(), "storage_path")
       .map(str::to_string);
 
-    ctx.run_privileged_command(
-      "helm",
-      &[
-        "uninstall".to_string(),
-        HELM_RELEASE_NAME.to_string(),
-        "-n".to_string(),
-        PLATFORM_NAMESPACE.to_string(),
-        "--ignore-not-found".to_string(),
-        "--wait".to_string(),
-        "--timeout".to_string(),
-        "5m0s".to_string(),
-      ],
-      &helm_envs,
-    )?;
+    uninstall_platform_release(ctx, &helm_envs)?;
 
     if let Some(storage_path) = storage_path.filter(|path| PathBuf::from(path).is_file()) {
       ClusterAccess::from_plan_context(&ctx.as_plan_context())?
@@ -1988,6 +1978,48 @@ fn sync_managed_text_file(
   install_result?;
 
   Ok(true)
+}
+
+fn uninstall_platform_release(
+  ctx: &StepExecutionContext<'_>, helm_envs: &[(String, String)],
+) -> Result<()> {
+  let uninstall_args = vec![
+    "uninstall".to_string(),
+    HELM_RELEASE_NAME.to_string(),
+    "-n".to_string(),
+    PLATFORM_NAMESPACE.to_string(),
+    "--ignore-not-found".to_string(),
+    "--wait".to_string(),
+    "--timeout".to_string(),
+    HELM_UNINSTALL_TIMEOUT.to_string(),
+  ];
+
+  match ctx.run_privileged_command("helm", &uninstall_args, helm_envs) {
+    Ok(()) => Ok(()),
+    Err(error) if helm_uninstall_timed_out(&error) => {
+      println!(
+        "{}",
+        ui::note(
+          "helm uninstall timed out while waiting for platform resources to terminate; checking whether the release has already been removed"
+        )
+      );
+
+      for _ in 0..HELM_UNINSTALL_POLL_RETRIES {
+        if current_helm_release(ctx, helm_envs)?.is_none() {
+          return Ok(());
+        }
+
+        thread::sleep(Duration::from_secs(HELM_UNINSTALL_POLL_INTERVAL_SECONDS));
+      }
+
+      Err(error)
+    }
+    Err(error) => Err(error),
+  }
+}
+
+fn helm_uninstall_timed_out(error: &anyhow::Error) -> bool {
+  error.to_string().contains("context deadline exceeded")
 }
 
 fn sync_deployment_exports(
