@@ -1,4 +1,8 @@
-use std::net::Ipv4Addr;
+use std::{
+  net::Ipv4Addr,
+  thread,
+  time::Duration,
+};
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -191,6 +195,10 @@ pub enum SystemPackageManager {
   Pacman,
 }
 
+const APT_LOCK_TIMEOUT_SECONDS: &str = "300";
+const APT_LOCK_RETRY_ATTEMPTS: usize = 3;
+const APT_LOCK_RETRY_DELAY_SECONDS: u64 = 5;
+
 impl SystemPackageManager {
   pub(crate) fn detect() -> Option<Self> {
     use super::support::command_exists;
@@ -226,9 +234,9 @@ impl SystemPackageManager {
   pub fn install_nginx(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
     match self {
       Self::Apt => {
-        ctx.run_privileged_command("apt-get", &["update".to_string()], &[])?;
-        ctx.run_privileged_command(
-          "apt-get",
+        self.run_apt_command(ctx, &["update".to_string()], &[])?;
+        self.run_apt_command(
+          ctx,
           &["install".to_string(), "-y".to_string(), "nginx".to_string()],
           &[("DEBIAN_FRONTEND".to_string(), "noninteractive".to_string())],
         )
@@ -269,8 +277,8 @@ impl SystemPackageManager {
 
   pub fn remove_nginx(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
     match self {
-      Self::Apt => ctx.run_privileged_command(
-        "apt-get",
+      Self::Apt => self.run_apt_command(
+        ctx,
         &["remove".to_string(), "-y".to_string(), "nginx".to_string()],
         &[("DEBIAN_FRONTEND".to_string(), "noninteractive".to_string())],
       ),
@@ -319,6 +327,41 @@ impl SystemPackageManager {
       _ => None,
     }
   }
+
+  fn run_apt_command(
+    &self, ctx: &StepExecutionContext<'_>, args: &[String], envs: &[(String, String)],
+  ) -> Result<()> {
+    debug_assert!(matches!(self, Self::Apt));
+
+    let mut full_args = vec![
+      "-o".to_string(),
+      format!("DPkg::Lock::Timeout={APT_LOCK_TIMEOUT_SECONDS}"),
+    ];
+    full_args.extend(args.iter().cloned());
+
+    let mut last_error = None;
+    for attempt in 1..=APT_LOCK_RETRY_ATTEMPTS {
+      match ctx.run_privileged_command("apt-get", &full_args, envs) {
+        Ok(()) => return Ok(()),
+        Err(error) if apt_lock_error(&error) && attempt < APT_LOCK_RETRY_ATTEMPTS => {
+          last_error = Some(error);
+          thread::sleep(Duration::from_secs(APT_LOCK_RETRY_DELAY_SECONDS));
+        }
+        Err(error) => return Err(error),
+      }
+    }
+
+    Err(last_error.expect("apt retry loop should capture the lock error"))
+  }
+}
+
+fn apt_lock_error(error: &anyhow::Error) -> bool {
+  let message = error.to_string();
+
+  message.contains("/var/lib/dpkg/lock-frontend")
+    || message.contains("/var/lib/dpkg/lock")
+    || message.contains("Unable to acquire the dpkg frontend lock")
+    || message.contains("Could not get lock")
 }
 
 pub struct InstallStepPlan {
@@ -613,5 +656,30 @@ impl<'a> StepExecutionContext<'a> {
     );
 
     Ok(changed)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use anyhow::anyhow;
+
+  use super::apt_lock_error;
+
+  #[test]
+  fn detects_dpkg_lock_frontend_errors() {
+    let error = anyhow!(
+      "privileged command `apt-get` exited with status Some(100): E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 33265 (unattended-upgr)"
+    );
+
+    assert!(apt_lock_error(&error));
+  }
+
+  #[test]
+  fn ignores_non_lock_apt_errors() {
+    let error = anyhow!(
+      "privileged command `apt-get` exited with status Some(100): E: Unable to locate package nginx"
+    );
+
+    assert!(!apt_lock_error(&error));
   }
 }
