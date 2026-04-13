@@ -38,6 +38,8 @@ const HELM_RELEASE_TIMEOUT: &str = "15m0s";
 const HELM_UNINSTALL_TIMEOUT: &str = "10m0s";
 const HELM_UNINSTALL_POLL_RETRIES: usize = 24;
 const HELM_UNINSTALL_POLL_INTERVAL_SECONDS: u64 = 5;
+const NODE_READY_WAIT_TIMEOUT: &str = "10s";
+const NODE_READY_WAIT_RETRIES: usize = 60;
 const RET2SHELL_ROOT_DIR: &str = "/srv/ret2shell";
 const FRONTEND_HOST_DIR: &str = "/srv/ret2shell/frontend";
 const BACKEND_ROOT_DIR: &str = "/srv/ret2shell/backend";
@@ -78,34 +80,12 @@ const PATCHED_PLATFORM_INIT_CONTAINERS: &str = r#"      initContainers:
             - |
               set -eu
               mkdir -p /host-frontend
-              find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-              cp -a /var/www/html/. /host-frontend/
+              if [ ! -f /host-frontend/index.html ]; then
+                cp -a /var/www/html/. /host-frontend/
+              fi
           volumeMounts:
             - name: frontend
               mountPath: /host-frontend
-        - name: config-sync
-          image: {{ include "ret2shell.image" .Values.platform.image }}
-          imagePullPolicy: {{ .Values.platform.image.pullPolicy }}
-          command:
-            - /bin/sh
-            - -ec
-            - |
-              set -eu
-              mkdir -p /host-config
-              cp /generated-config/config.toml /host-config/config.toml
-              cp /generated-blocked/blocked.txt /host-config/blocked.txt
-              chmod 600 /host-config/config.toml /host-config/blocked.txt
-          volumeMounts:
-            - name: backend-config
-              mountPath: /host-config
-            - name: generated-config
-              mountPath: /generated-config/config.toml
-              subPath: config.toml
-              readOnly: true
-            - name: generated-blocked
-              mountPath: /generated-blocked/blocked.txt
-              subPath: blocked.txt
-              readOnly: true
       containers:
 "#;
 const PATCHED_PLATFORM_VOLUME_MOUNTS: &str = r#"          volumeMounts:
@@ -117,12 +97,6 @@ const PATCHED_PLATFORM_VOLUME_MOUNTS: &str = r#"          volumeMounts:
               mountPath: /etc/ret2shell
 "#;
 const PATCHED_PLATFORM_VOLUMES: &str = r#"      volumes:
-        - name: generated-config
-          secret:
-            secretName: {{ include "ret2shell.platformConfigSecretName" . }}
-        - name: generated-blocked
-          configMap:
-            name: {{ include "ret2shell.platformBlockedConfigMapName" . }}
         - name: frontend
           hostPath:
             path: /srv/ret2shell/frontend
@@ -2092,6 +2066,7 @@ fn sync_managed_text_file(
 fn uninstall_platform_release(
   ctx: &StepExecutionContext<'_>, helm_envs: &[(String, String)],
 ) -> Result<()> {
+  let cluster_access = ClusterAccess::from_plan_context(&ctx.as_plan_context())?;
   let uninstall_args = vec![
     "uninstall".to_string(),
     HELM_RELEASE_NAME.to_string(),
@@ -2114,7 +2089,9 @@ fn uninstall_platform_release(
       );
 
       for _ in 0..HELM_UNINSTALL_POLL_RETRIES {
-        if current_helm_release(ctx, helm_envs)?.is_none() {
+        if current_helm_release(ctx, helm_envs)?.is_none()
+          && release_resources_gone(ctx, &cluster_access)?
+        {
           return Ok(());
         }
 
@@ -2129,6 +2106,29 @@ fn uninstall_platform_release(
 
 fn helm_uninstall_timed_out(error: &anyhow::Error) -> bool {
   error.to_string().contains("context deadline exceeded")
+}
+
+fn release_resources_gone(
+  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess,
+) -> Result<bool> {
+  let namespaced = cluster_access.capture_release_resources(ctx)?;
+  if !namespaced.trim().is_empty() {
+    return Ok(false);
+  }
+
+  if cluster_access.cluster_scoped_resource_exists(
+    ctx,
+    "clusterrolebinding",
+    "ret2shell-service-global",
+  )? {
+    return Ok(false);
+  }
+
+  if cluster_access.cluster_scoped_resource_exists(ctx, "clusterrole", "ret2shell-service")? {
+    return Ok(false);
+  }
+
+  Ok(!cluster_access.namespace_exists(ctx, CHALLENGE_NAMESPACE)?)
 }
 
 fn sync_deployment_exports(
@@ -3404,11 +3404,11 @@ impl ClusterAccess {
       "--for=condition=Ready".to_string(),
       "node".to_string(),
       "--all".to_string(),
-      "--timeout=5s".to_string(),
+      format!("--timeout={NODE_READY_WAIT_TIMEOUT}"),
     ];
     let mut last_error = None;
 
-    for _ in 0..60 {
+    for _ in 0..NODE_READY_WAIT_RETRIES {
       match self.run(ctx, &args) {
         Ok(()) => return Ok(()),
         Err(error) => last_error = Some(error),
@@ -3458,6 +3458,38 @@ impl ClusterAccess {
     )?;
 
     Ok(!output.trim().is_empty())
+  }
+
+  fn namespace_exists(&self, ctx: &StepExecutionContext<'_>, name: &str) -> Result<bool> {
+    let output = self.capture(
+      ctx,
+      &[
+        "get".to_string(),
+        "namespace".to_string(),
+        name.to_string(),
+        "--ignore-not-found".to_string(),
+        "-o".to_string(),
+        "name".to_string(),
+      ],
+    )?;
+
+    Ok(!output.trim().is_empty())
+  }
+
+  fn capture_release_resources(&self, ctx: &StepExecutionContext<'_>) -> Result<String> {
+    self.capture(
+      ctx,
+      &[
+        "-n".to_string(),
+        PLATFORM_NAMESPACE.to_string(),
+        "get".to_string(),
+        "all,configmap,secret,persistentvolumeclaim,serviceaccount,ingress".to_string(),
+        "-l".to_string(),
+        "app.kubernetes.io/instance=ret2shell".to_string(),
+        "-o".to_string(),
+        "name".to_string(),
+      ],
+    )
   }
 
   fn capture_namespaced_object_template(
@@ -3795,6 +3827,9 @@ spec:\n\
     assert!(patched.contains("mountPath: /var/www/html"));
     assert!(patched.contains("path: /srv/ret2shell/frontend"));
     assert!(patched.contains("mountPath: /etc/ret2shell"));
+    assert!(!patched.contains("find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +"));
+    assert!(!patched.contains("name: config-sync"));
+    assert!(!patched.contains("name: generated-config"));
   }
 
   #[test]
