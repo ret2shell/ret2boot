@@ -68,6 +68,9 @@ const PLATFORM_INGRESS_PATH_TYPE: &str = "Prefix";
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
 const DERIVED_PUBLIC_HOST_SUFFIX: &str = "nip.io";
 const INTERNAL_INGRESS_HOST_SUFFIX: &str = "ret2boot.invalid";
+const POSTGRESQL_STORAGE_ROOT_MODE: &str = "1777";
+const POSTGRESQL_LEGACY_MOUNT_PATH: &str = "mountPath: /var/lib/postgresql/data";
+const POSTGRESQL_PERSISTENT_MOUNT_PATH: &str = "mountPath: /var/lib/postgresql";
 const PLATFORM_TEMPLATE_CONTAINERS_MARKER: &str = "      containers:\n";
 const PLATFORM_TEMPLATE_VOLUME_MOUNTS_MARKER: &str = "          volumeMounts:\n";
 const PLATFORM_TEMPLATE_RESOURCES_MARKER: &str = "          {{- with .Values.platform.resources }}\n";
@@ -1889,6 +1892,7 @@ fn prepare_patched_chart(
   })?;
   let patched_template = patch_platform_chart_template(&original_template)?;
   let _ = sync_managed_text_file(ctx, &platform_template_path, &patched_template, "644")?;
+  patch_postgresql_chart_templates(ctx)?;
 
   Ok(ChartReference {
     path: PathBuf::from(BACKEND_CHART_DIR),
@@ -1916,6 +1920,63 @@ fn patch_platform_chart_template(contents: &str) -> Result<String> {
     PLATFORM_TEMPLATE_CONTAINERS_MARKER,
     PATCHED_PLATFORM_INIT_CONTAINERS,
   )
+}
+
+fn patch_postgresql_chart_templates(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  for template_path in find_chart_template_paths(Path::new(&format!("{BACKEND_CHART_DIR}/templates")))? {
+    let display_path = template_path.display().to_string();
+    let Some(original_template) = read_privileged_text_file(ctx, &display_path)? else {
+      continue;
+    };
+    let patched_template = patch_postgresql_chart_template(&original_template);
+    if patched_template != original_template {
+      let _ = sync_managed_text_file(ctx, &display_path, &patched_template, "644")?;
+    }
+  }
+
+  Ok(())
+}
+
+fn patch_postgresql_chart_template(contents: &str) -> String {
+  contents.replace(
+    POSTGRESQL_LEGACY_MOUNT_PATH,
+    POSTGRESQL_PERSISTENT_MOUNT_PATH,
+  )
+}
+
+fn find_chart_template_paths(root: &Path) -> Result<Vec<PathBuf>> {
+  if !root.is_dir() {
+    return Ok(Vec::new());
+  }
+
+  let mut paths = Vec::new();
+  collect_chart_template_paths(root, &mut paths)?;
+  Ok(paths)
+}
+
+fn collect_chart_template_paths(root: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+  for entry in fs::read_dir(root)
+    .with_context(|| format!("failed to read chart template directory `{}`", root.display()))?
+  {
+    let entry = entry.with_context(|| {
+      format!("failed to inspect chart template directory `{}`", root.display())
+    })?;
+    let path = entry.path();
+
+    if path.is_dir() {
+      collect_chart_template_paths(&path, paths)?;
+      continue;
+    }
+
+    if matches!(
+      path.extension().and_then(|extension| extension.to_str()),
+      Some("yaml" | "yml" | "tpl")
+    ) {
+      paths.push(path);
+    }
+  }
+
+  Ok(())
 }
 
 fn replace_first_block(
@@ -2064,8 +2125,40 @@ fn ensure_platform_host_layout(
       && service.storage_mode == Some(PlatformStorageMode::LocalPath)
     {
       install_directory(ctx, storage_host_path(service.id))?;
+      if let Some(subdirectory) = storage_host_subdirectory(service.id) {
+        install_directory(ctx, subdirectory)?;
+      }
+      if service.id == PlatformServiceId::Database {
+        prepare_postgresql_storage_host_layout(ctx)?;
+      }
     }
   }
+
+  Ok(())
+}
+
+fn prepare_postgresql_storage_host_layout(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  let root = storage_host_path(PlatformServiceId::Database);
+
+  // The official postgres entrypoint creates PGDATA itself and only adjusts
+  // ownership automatically when the container starts as root. Our workload
+  // runs as the image's default `postgres` user, so the mounted parent path
+  // must already be writable for that unprivileged startup path.
+  ctx.run_privileged_command(
+    "install",
+    &[
+      "-d".to_string(),
+      "-m".to_string(),
+      POSTGRESQL_STORAGE_ROOT_MODE.to_string(),
+      root.to_string(),
+    ],
+    &[],
+  )?;
+  ctx.run_privileged_command(
+    "chmod",
+    &[POSTGRESQL_STORAGE_ROOT_MODE.to_string(), root.to_string()],
+    &[],
+  )?;
 
   Ok(())
 }
@@ -2465,6 +2558,13 @@ fn storage_host_path(service: PlatformServiceId) -> &'static str {
     PlatformServiceId::Queue => "/srv/ret2shell/backend/storage/queue-pv1",
     PlatformServiceId::Registry => "/srv/ret2shell/backend/storage/registry-pv1",
     PlatformServiceId::Logs => "/srv/ret2shell/backend/storage/logs-pv1",
+  }
+}
+
+fn storage_host_subdirectory(service: PlatformServiceId) -> Option<&'static str> {
+  match service {
+    PlatformServiceId::Database => None,
+    _ => None,
   }
 }
 
@@ -4036,6 +4136,34 @@ mod tests {
         ),
       ]
     );
+  }
+
+  #[test]
+  fn database_storage_host_layout_uses_volume_root_for_official_postgres() {
+    assert_eq!(
+      storage_host_path(PlatformServiceId::Database),
+      "/srv/ret2shell/backend/storage/database-pv1"
+    );
+    assert_eq!(storage_host_subdirectory(PlatformServiceId::Database), None);
+    assert_eq!(storage_host_subdirectory(PlatformServiceId::Cache), None);
+  }
+
+  #[test]
+  fn database_storage_root_mode_allows_official_postgres_to_create_pgdata() {
+    assert_eq!(POSTGRESQL_STORAGE_ROOT_MODE, "1777");
+  }
+
+  #[test]
+  fn patch_postgresql_chart_template_moves_volume_to_pgdata_parent() {
+    let original = "\
+volumeMounts:\n\
+  - name: data\n\
+    mountPath: /var/lib/postgresql/data\n";
+
+    let patched = patch_postgresql_chart_template(original);
+
+    assert!(patched.contains("mountPath: /var/lib/postgresql\n"));
+    assert!(!patched.contains("mountPath: /var/lib/postgresql/data"));
   }
 
   #[test]
