@@ -122,6 +122,7 @@ const PATCHED_PLATFORM_VOLUMES: &str = r#"      volumes:
         {{- end }}
 "#;
 
+#[derive(Debug)]
 pub(crate) struct ResolvedPublicEndpoint {
   pub public_host: String,
   pub ingress_host: String,
@@ -415,6 +416,7 @@ impl AtomicInstallStep for PlatformDeploymentStep {
 
   fn uninstall(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
     let helm_envs = helm_envs(&ctx.as_plan_context())?;
+    let cluster_access = ClusterAccess::from_plan_context(&ctx.as_plan_context())?;
     let storage_path = ctx
       .config()
       .install_step_metadata(self.id(), "storage_path")
@@ -422,15 +424,20 @@ impl AtomicInstallStep for PlatformDeploymentStep {
 
     uninstall_platform_release(ctx, &helm_envs)?;
 
+    if Path::new(BACKEND_INIT_MANIFEST_DEST).is_file() {
+      cluster_access.delete_manifest(ctx, BACKEND_INIT_MANIFEST_DEST)?;
+    }
+
     if let Some(storage_path) = storage_path.filter(|path| PathBuf::from(path).is_file()) {
-      ClusterAccess::from_plan_context(&ctx.as_plan_context())?
-        .delete_manifest(ctx, &storage_path)?;
+      cluster_access.delete_manifest(ctx, &storage_path)?;
     }
 
     ctx.run_privileged_command(
       "rm",
       &[
         "-f".to_string(),
+        BACKEND_INIT_MANIFEST_DEST.to_string(),
+        BACKEND_VOLUMES_MANIFEST_DEST.to_string(),
         PLATFORM_VALUES_DEST.to_string(),
         PLATFORM_STORAGE_DEST.to_string(),
       ],
@@ -2257,7 +2264,6 @@ fn render_runtime_registry_config(registry_host: &str) -> String {
 fn uninstall_platform_release(
   ctx: &StepExecutionContext<'_>, helm_envs: &[(String, String)],
 ) -> Result<()> {
-  let cluster_access = ClusterAccess::from_plan_context(&ctx.as_plan_context())?;
   let uninstall_args = vec![
     "uninstall".to_string(),
     HELM_RELEASE_NAME.to_string(),
@@ -2280,9 +2286,13 @@ fn uninstall_platform_release(
       );
 
       for _ in 0..HELM_UNINSTALL_POLL_RETRIES {
-        if current_helm_release(ctx, helm_envs)?.is_none()
-          && release_resources_gone(ctx, &cluster_access)?
-        {
+        if current_helm_release(ctx, helm_envs)?.is_none() {
+          println!(
+            "{}",
+            ui::note(
+              "helm release is already gone; continuing with installer-managed resource cleanup"
+            )
+          );
           return Ok(());
         }
 
@@ -2297,29 +2307,6 @@ fn uninstall_platform_release(
 
 fn helm_uninstall_timed_out(error: &anyhow::Error) -> bool {
   error.to_string().contains("context deadline exceeded")
-}
-
-fn release_resources_gone(
-  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess,
-) -> Result<bool> {
-  let namespaced = cluster_access.capture_release_resources(ctx)?;
-  if !namespaced.trim().is_empty() {
-    return Ok(false);
-  }
-
-  if cluster_access.cluster_scoped_resource_exists(
-    ctx,
-    "clusterrolebinding",
-    "ret2shell-service-global",
-  )? {
-    return Ok(false);
-  }
-
-  if cluster_access.cluster_scoped_resource_exists(ctx, "clusterrole", "ret2shell-service")? {
-    return Ok(false);
-  }
-
-  Ok(!cluster_access.namespace_exists(ctx, CHALLENGE_NAMESPACE)?)
 }
 
 fn sync_deployment_exports(
@@ -3774,38 +3761,6 @@ impl ClusterAccess {
     )?;
 
     Ok(!output.trim().is_empty())
-  }
-
-  fn namespace_exists(&self, ctx: &StepExecutionContext<'_>, name: &str) -> Result<bool> {
-    let output = self.capture(
-      ctx,
-      &[
-        "get".to_string(),
-        "namespace".to_string(),
-        name.to_string(),
-        "--ignore-not-found".to_string(),
-        "-o".to_string(),
-        "name".to_string(),
-      ],
-    )?;
-
-    Ok(!output.trim().is_empty())
-  }
-
-  fn capture_release_resources(&self, ctx: &StepExecutionContext<'_>) -> Result<String> {
-    self.capture(
-      ctx,
-      &[
-        "-n".to_string(),
-        PLATFORM_NAMESPACE.to_string(),
-        "get".to_string(),
-        "all,configmap,secret,persistentvolumeclaim,serviceaccount,ingress".to_string(),
-        "-l".to_string(),
-        "app.kubernetes.io/instance=ret2shell".to_string(),
-        "-o".to_string(),
-        "name".to_string(),
-      ],
-    )
   }
 
   fn capture_namespaced_object_template(
