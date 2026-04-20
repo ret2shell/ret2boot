@@ -2733,36 +2733,54 @@ fn set_toml_path(value: &mut TomlValue, path: &[&str], replacement: TomlValue) -
 
 fn render_platform_init_manifest() -> String {
   [
-    "apiVersion: v1".to_string(),
-    "kind: Namespace".to_string(),
-    "metadata:".to_string(),
-    format!("  name: {}", yaml_quote(CHALLENGE_NAMESPACE)),
-    "---".to_string(),
-    "apiVersion: v1".to_string(),
-    "kind: Namespace".to_string(),
-    "metadata:".to_string(),
-    format!("  name: {}", yaml_quote(PLATFORM_NAMESPACE)),
-    "---".to_string(),
-    "apiVersion: v1".to_string(),
-    "kind: ServiceAccount".to_string(),
-    "metadata:".to_string(),
-    "  name: 'ret2shell-service'".to_string(),
-    format!("  namespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
-    "automountServiceAccountToken: true".to_string(),
-    "---".to_string(),
-    "apiVersion: rbac.authorization.k8s.io/v1".to_string(),
-    "kind: ClusterRoleBinding".to_string(),
-    "metadata:".to_string(),
-    "  name: 'ret2shell-service-global'".to_string(),
-    "subjects:".to_string(),
-    "  - kind: ServiceAccount".to_string(),
-    "    name: 'ret2shell-service'".to_string(),
-    format!("    namespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
-    "roleRef:".to_string(),
-    "  apiGroup: rbac.authorization.k8s.io".to_string(),
-    "  kind: ClusterRole".to_string(),
-    "  name: 'cluster-admin'".to_string(),
+    render_helm_owned_namespace_manifest(CHALLENGE_NAMESPACE),
+    render_helm_owned_namespace_manifest(PLATFORM_NAMESPACE),
+    [
+      "apiVersion: v1".to_string(),
+      "kind: ServiceAccount".to_string(),
+      "metadata:".to_string(),
+      "  name: 'ret2shell-service'".to_string(),
+      format!("  namespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
+      "automountServiceAccountToken: true".to_string(),
+    ]
+    .join("\n"),
+    [
+      "apiVersion: rbac.authorization.k8s.io/v1".to_string(),
+      "kind: ClusterRoleBinding".to_string(),
+      "metadata:".to_string(),
+      "  name: 'ret2shell-service-global'".to_string(),
+      "subjects:".to_string(),
+      "  - kind: ServiceAccount".to_string(),
+      "    name: 'ret2shell-service'".to_string(),
+      format!("    namespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
+      "roleRef:".to_string(),
+      "  apiGroup: rbac.authorization.k8s.io".to_string(),
+      "  kind: ClusterRole".to_string(),
+      "  name: 'cluster-admin'".to_string(),
+    ]
+    .join("\n"),
     String::new(),
+  ]
+  .join("\n---\n")
+}
+
+fn render_helm_owned_namespace_manifest(namespace: &str) -> String {
+  [
+    "apiVersion: v1".to_string(),
+    "kind: Namespace".to_string(),
+    "metadata:".to_string(),
+    format!("  name: {}", yaml_quote(namespace)),
+    "  labels:".to_string(),
+    format!("    app.kubernetes.io/managed-by: {}", yaml_quote("Helm")),
+    "  annotations:".to_string(),
+    format!(
+      "    meta.helm.sh/release-name: {}",
+      yaml_quote(HELM_RELEASE_NAME)
+    ),
+    format!(
+      "    meta.helm.sh/release-namespace: {}",
+      yaml_quote(PLATFORM_NAMESPACE)
+    ),
   ]
   .join("\n")
 }
@@ -4622,6 +4640,18 @@ limit = 5
     assert!(rendered.contains("'http://192.168.23.132:30310'"));
     assert!(rendered.contains("insecure_skip_verify: true"));
     assert!(rendered.contains("'https://docker.1ms.run'"));
+  }
+
+  #[test]
+  fn render_platform_init_manifest_marks_namespaces_as_helm_managed() {
+    let rendered = render_platform_init_manifest();
+
+    assert!(rendered.contains("kind: Namespace"));
+    assert!(rendered.contains("name: 'ret2shell-challenge'"));
+    assert!(rendered.contains("name: 'ret2shell-platform'"));
+    assert!(rendered.contains("app.kubernetes.io/managed-by: 'Helm'"));
+    assert!(rendered.contains("meta.helm.sh/release-name: 'ret2shell'"));
+    assert!(rendered.contains("meta.helm.sh/release-namespace: 'ret2shell-platform'"));
   }
 
   fn sample_summary() -> PlatformPlanSummary {
