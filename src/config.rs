@@ -69,7 +69,6 @@ pub struct KubernetesMirrorConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlatformQuestionnaire {
-  pub deployment_profile: Option<DeploymentProfile>,
   pub remaining_disk_gib: Option<u32>,
   pub requested_disk_gib: Option<u32>,
   pub public_host: Option<String>,
@@ -98,7 +97,6 @@ pub struct PlatformTlsConfig {
 #[serde(default)]
 pub struct NodePortSecurityConfig {
   pub guard_enabled: Option<bool>,
-  pub cluster_interface: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -349,48 +347,6 @@ impl ApplicationExposureMode {
       Self::NodePortExternalNginx => "nodeport-external-nginx",
     }
   }
-
-  pub fn default_index(self) -> usize {
-    match self {
-      Self::Ingress => 0,
-      Self::NodePortExternalNginx => 1,
-    }
-  }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum DeploymentProfile {
-  LocalLab,
-  CampusInternal,
-  PublicDomain,
-}
-
-impl DeploymentProfile {
-  pub const ALL: [Self; 3] = [Self::LocalLab, Self::CampusInternal, Self::PublicDomain];
-
-  pub fn as_config_value(self) -> &'static str {
-    match self {
-      Self::LocalLab => "local-lab",
-      Self::CampusInternal => "campus-internal",
-      Self::PublicDomain => "public-domain",
-    }
-  }
-
-  pub fn default_index(self) -> usize {
-    match self {
-      Self::LocalLab => 0,
-      Self::CampusInternal => 1,
-      Self::PublicDomain => 2,
-    }
-  }
-
-  pub fn recommended_exposure(self) -> ApplicationExposureMode {
-    match self {
-      Self::LocalLab | Self::CampusInternal => ApplicationExposureMode::NodePortExternalNginx,
-      Self::PublicDomain => ApplicationExposureMode::Ingress,
-    }
-  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -635,17 +591,6 @@ impl Ret2BootConfig {
     true
   }
 
-  pub fn set_platform_deployment_profile(&mut self, profile: DeploymentProfile) -> bool {
-    if self.install.questionnaire.platform.deployment_profile == Some(profile) {
-      return false;
-    }
-
-    self.install.questionnaire.platform.deployment_profile = Some(profile);
-    self.invalidate_install_pipeline();
-
-    true
-  }
-
   pub fn set_install_worker_server_url(&mut self, server_url: impl Into<String>) -> bool {
     let server_url = server_url.into();
 
@@ -876,31 +821,6 @@ impl Ret2BootConfig {
       .platform
       .nodeport_security
       .guard_enabled = Some(enabled);
-    self.invalidate_install_pipeline();
-    true
-  }
-
-  pub fn set_platform_nodeport_cluster_interface(&mut self, value: impl Into<String>) -> bool {
-    let value = value.into();
-
-    if self
-      .install
-      .questionnaire
-      .platform
-      .nodeport_security
-      .cluster_interface
-      .as_deref()
-      == Some(value.as_str())
-    {
-      return false;
-    }
-
-    self
-      .install
-      .questionnaire
-      .platform
-      .nodeport_security
-      .cluster_interface = Some(value);
     self.invalidate_install_pipeline();
     true
   }

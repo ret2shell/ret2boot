@@ -15,9 +15,7 @@ use super::{
   },
 };
 use crate::{
-  config::{
-    ApplicationExposureMode, DeploymentProfile, InstallStepId, InstallTargetRole, PlatformTlsMode,
-  },
+  config::{ApplicationExposureMode, InstallStepId, InstallTargetRole, PlatformTlsMode},
   install::collectors::SingleSelectCollector,
   ui,
 };
@@ -54,67 +52,30 @@ impl AtomicInstallStep for ApplicationGatewayStep {
   }
 
   fn collect(&self, ctx: &mut StepQuestionContext<'_>) -> Result<()> {
-    let default_profile = ctx
+    let exposure_options = [
+      ApplicationExposureMode::NodePortExternalNginx,
+      ApplicationExposureMode::Ingress,
+    ];
+    let default = match ctx
       .config()
       .install
       .questionnaire
-      .platform
-      .deployment_profile
-      .unwrap_or(DeploymentProfile::LocalLab)
-      .default_index();
-    let profile_options = DeploymentProfile::ALL
+      .kubernetes
+      .application_exposure
+    {
+      Some(ApplicationExposureMode::NodePortExternalNginx) => 0,
+      Some(ApplicationExposureMode::Ingress) => 1,
+      None => 0,
+    };
+    let options = exposure_options
       .iter()
       .copied()
-      .map(deployment_profile_label)
+      .map(application_exposure_label)
       .collect::<Vec<_>>();
-    let profile = DeploymentProfile::ALL[SingleSelectCollector::new(
-      t!("install.deployment_profile.prompt"),
-      profile_options,
-    )
-    .with_default(default_profile)
-    .collect_index()?];
-
-    ctx.persist_change(
-      "install.questionnaire.platform.deployment_profile",
-      profile.as_config_value(),
-      |config| config.set_platform_deployment_profile(profile),
-    )?;
-
-    println!();
-    println!("{}", ui::note(deployment_profile_notice(profile)));
-
-    let supported_exposures = supported_application_exposure_modes(profile);
-    let exposure = if supported_exposures.len() == 1 {
-      let exposure = supported_exposures[0];
-      println!();
-      println!(
-        "{}",
-        ui::note(t!(
-          "install.exposure.profile_locked",
-          exposure = application_exposure_label(exposure)
-        ))
-      );
-      exposure
-    } else {
-      let default = ctx
-        .config()
-        .install
-        .questionnaire
-        .kubernetes
-        .application_exposure
-        .filter(|exposure| supported_exposures.contains(exposure))
-        .unwrap_or(profile.recommended_exposure())
-        .default_index();
-      let options = supported_exposures
-        .iter()
-        .copied()
-        .map(application_exposure_label)
-        .collect::<Vec<_>>();
-
-      supported_exposures[SingleSelectCollector::new(t!("install.exposure.entry_prompt"), options)
+    let exposure =
+      exposure_options[SingleSelectCollector::new(t!("install.exposure.entry_prompt"), options)
         .with_default(default)
-        .collect_index()?]
-    };
+        .collect_index()?];
 
     ctx.persist_change(
       "install.questionnaire.kubernetes.application_exposure",
@@ -161,20 +122,11 @@ impl AtomicInstallStep for ApplicationGatewayStep {
   }
 
   fn describe(&self, ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
-    let profile = ctx
-      .deployment_profile()
-      .ok_or_else(|| anyhow!("deployment profile is required before planning gateway setup"))?;
     let exposure = ctx.application_exposure().ok_or_else(|| {
       anyhow!("application exposure mode is required before planning gateway setup")
     })?;
-    validate_profile_exposure(profile, exposure)?;
 
     let mut details = vec![
-      t!(
-        "install.steps.gateway.selected_profile",
-        profile = deployment_profile_label(profile)
-      )
-      .to_string(),
       t!(
         "install.steps.gateway.selected_mode",
         exposure = application_exposure_label(exposure)
@@ -226,15 +178,10 @@ impl AtomicInstallStep for ApplicationGatewayStep {
   }
 
   fn install(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
-    let profile = ctx
-      .as_plan_context()
-      .deployment_profile()
-      .ok_or_else(|| anyhow!("deployment profile is required before installing gateway"))?;
     let exposure = ctx
       .as_plan_context()
       .application_exposure()
       .ok_or_else(|| anyhow!("application exposure mode is required before installing gateway"))?;
-    validate_profile_exposure(profile, exposure)?;
 
     ctx.persist_change(
       "install.execution.gateway.mode",
@@ -289,7 +236,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .public_host
       .as_deref()
       .ok_or_else(|| anyhow!("platform public host is required before installing gateway"))?;
-    let endpoint = resolve_public_endpoint(public_host, exposure, profile)?;
+    let endpoint = resolve_public_endpoint(public_host, exposure)?;
     let backend_host = "127.0.0.1".to_string();
     let backend_http_port = PLATFORM_NODE_PORT;
 
@@ -739,9 +686,7 @@ fn ensure_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
     return Ok(());
   }
 
-  let cluster_interface = plan_context
-    .platform_nodeport_cluster_interface()
-    .unwrap_or("cni0");
+  let cluster_interface = resolve_nodeport_cluster_interface()?;
   for args in [
     vec![
       "-t".to_string(),
@@ -749,7 +694,7 @@ fn ensure_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
       "-C".to_string(),
       "PREROUTING".to_string(),
       "-i".to_string(),
-      cluster_interface.to_string(),
+      cluster_interface.clone(),
       "-p".to_string(),
       "tcp".to_string(),
       "-m".to_string(),
@@ -803,10 +748,10 @@ fn ensure_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
 }
 
 fn remove_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let plan_context = ctx.as_plan_context();
-  let cluster_interface = plan_context
-    .platform_nodeport_cluster_interface()
-    .unwrap_or("cni0");
+  let cluster_interface = match resolve_nodeport_cluster_interface() {
+    Ok(interface) => interface,
+    Err(_) => return Ok(()),
+  };
   for args in [
     vec![
       "-t".to_string(),
@@ -814,7 +759,7 @@ fn remove_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
       "-D".to_string(),
       "PREROUTING".to_string(),
       "-i".to_string(),
-      cluster_interface.to_string(),
+      cluster_interface.clone(),
       "-p".to_string(),
       "tcp".to_string(),
       "-m".to_string(),
@@ -923,7 +868,7 @@ fn render_nginx_site(
   backend_host: &str, http_port: u16, server_name: &str, tls_material: Option<&ManagedTlsMaterial>,
 ) -> Result<String> {
   let location_block =
-    "    location /assets/ {{\n        expires 1y;\n        add_header Cache-Control \"public, immutable\";\n    }}\n\n    location / {{\n        client_max_body_size 1024M;\n        proxy_pass http://backend;\n        proxy_set_header Host $host;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection \"Upgrade\";\n        proxy_set_header Range $http_range;\n        proxy_set_header If-Range $http_if_range;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Host $host;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Port $server_port;\n        proxy_set_header X-Forwarded-Server $host;\n        proxy_set_header Origin $http_origin;\n        proxy_set_header Referer $http_referer;\n        proxy_redirect off;\n    }}\n\n    location ~ ^/v2(/.*)?$ {{\n        rewrite ^/v2(.*)$ /api/cluster/registry/v2$1 break;\n        proxy_pass http://backend;\n        proxy_set_header Host $host;\n        proxy_set_header Range $http_range;\n        proxy_set_header If-Range $http_if_range;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Host $host;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Port $server_port;\n        proxy_set_header X-Forwarded-Server $host;\n        proxy_set_header Origin $http_origin;\n        proxy_set_header Referer $http_referer;\n        proxy_redirect off;\n    }}\n"
+    "    location /assets/ {\n        expires 1y;\n        add_header Cache-Control \"public, immutable\";\n    }\n\n    location / {\n        client_max_body_size 1024M;\n        proxy_pass http://backend;\n        proxy_set_header Host $host;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection \"Upgrade\";\n        proxy_set_header Range $http_range;\n        proxy_set_header If-Range $http_if_range;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Host $host;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Port $server_port;\n        proxy_set_header X-Forwarded-Server $host;\n        proxy_set_header Origin $http_origin;\n        proxy_set_header Referer $http_referer;\n        proxy_redirect off;\n    }\n\n    location ~ ^/v2(/.*)?$ {\n        rewrite ^/v2(.*)$ /api/cluster/registry/v2$1 break;\n        proxy_pass http://backend;\n        proxy_set_header Host $host;\n        proxy_set_header Range $http_range;\n        proxy_set_header If-Range $http_if_range;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Host $host;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header X-Forwarded-Port $server_port;\n        proxy_set_header X-Forwarded-Server $host;\n        proxy_set_header Origin $http_origin;\n        proxy_set_header Referer $http_referer;\n        proxy_redirect off;\n    }\n"
       .to_string();
 
   let mut lines = vec![
@@ -1065,65 +1010,48 @@ fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
   }
 }
 
-fn supported_application_exposure_modes(
-  profile: DeploymentProfile,
-) -> &'static [ApplicationExposureMode] {
-  match profile {
-    DeploymentProfile::LocalLab => &[ApplicationExposureMode::NodePortExternalNginx],
-    DeploymentProfile::CampusInternal | DeploymentProfile::PublicDomain => {
-      &[ApplicationExposureMode::Ingress]
-    }
-  }
+fn resolve_nodeport_cluster_interface() -> Result<String> {
+  let interfaces = discover_network_interfaces()?;
+  choose_cluster_bridge_interface(&interfaces).ok_or_else(|| {
+    anyhow!(
+      "unable to detect the cluster bridge interface for NodePort guard rules; detected interfaces: {}",
+      interfaces.join(", ")
+    )
+  })
 }
 
-fn validate_profile_exposure(
-  profile: DeploymentProfile, exposure: ApplicationExposureMode,
-) -> Result<()> {
-  if supported_application_exposure_modes(profile).contains(&exposure) {
-    return Ok(());
-  }
-
-  match profile {
-    DeploymentProfile::LocalLab => bail!(
-      "the local intranet debugging profile only supports `NodePort + external nginx` exposure"
-    ),
-    DeploymentProfile::CampusInternal | DeploymentProfile::PublicDomain => {
-      bail!("this deployment profile only supports `Kubernetes ingress` exposure")
-    }
-  }
+fn discover_network_interfaces() -> Result<Vec<String>> {
+  let mut interfaces = fs::read_dir("/sys/class/net")
+    .context("failed to inspect `/sys/class/net` while detecting the cluster bridge interface")?
+    .filter_map(|entry| entry.ok())
+    .filter_map(|entry| entry.file_name().into_string().ok())
+    .collect::<Vec<_>>();
+  interfaces.sort();
+  Ok(interfaces)
 }
 
-fn deployment_profile_label(profile: DeploymentProfile) -> String {
-  match profile {
-    DeploymentProfile::LocalLab => t!("install.deployment_profile.options.local_lab").to_string(),
-    DeploymentProfile::CampusInternal => {
-      t!("install.deployment_profile.options.campus_internal").to_string()
-    }
-    DeploymentProfile::PublicDomain => {
-      t!("install.deployment_profile.options.public_domain").to_string()
+fn choose_cluster_bridge_interface(interfaces: &[String]) -> Option<String> {
+  for preferred in ["cni0", "flannel.1", "cbr0", "weave", "kube-bridge"] {
+    if interfaces.iter().any(|name| name == preferred) {
+      return Some(preferred.to_string());
     }
   }
-}
 
-fn deployment_profile_notice(profile: DeploymentProfile) -> String {
-  match profile {
-    DeploymentProfile::LocalLab => t!("install.deployment_profile.notice.local_lab").to_string(),
-    DeploymentProfile::CampusInternal => {
-      t!("install.deployment_profile.notice.campus_internal").to_string()
-    }
-    DeploymentProfile::PublicDomain => {
-      t!("install.deployment_profile.notice.public_domain").to_string()
+  for prefix in ["cni", "flannel", "cbr", "weave", "kube"] {
+    if let Some(name) = interfaces.iter().find(|name| name.starts_with(prefix)) {
+      return Some(name.clone());
     }
   }
+
+  None
 }
 
 #[cfg(test)]
 mod tests {
   use super::{
-    ManagedTlsMaterial, remove_custom_site_include_line, render_nginx_site,
-    supported_application_exposure_modes, validate_profile_exposure,
+    ManagedTlsMaterial, choose_cluster_bridge_interface, remove_custom_site_include_line,
+    render_nginx_site,
   };
-  use crate::config::{ApplicationExposureMode, DeploymentProfile};
 
   #[test]
   fn renders_nginx_site_with_original_host_forwarding() {
@@ -1134,6 +1062,7 @@ mod tests {
     assert!(rendered.contains("server_name 192.168.23.132;"));
     assert!(rendered.contains("proxy_set_header Host $host;"));
     assert!(rendered.contains("proxy_set_header X-Forwarded-Host $host;"));
+    assert!(!rendered.contains("{{"));
   }
 
   #[test]
@@ -1161,44 +1090,30 @@ mod tests {
   }
 
   #[test]
-  fn local_lab_profile_only_offers_nodeport_exposure() {
+  fn choose_cluster_bridge_interface_prefers_cni0() {
+    let interfaces = vec![
+      "eth0".to_string(),
+      "cni0".to_string(),
+      "flannel.1".to_string(),
+    ];
+
     assert_eq!(
-      supported_application_exposure_modes(DeploymentProfile::LocalLab),
-      [ApplicationExposureMode::NodePortExternalNginx]
+      choose_cluster_bridge_interface(&interfaces),
+      Some("cni0".to_string())
     );
   }
 
   #[test]
-  fn campus_and_public_profiles_only_offer_ingress_exposure() {
+  fn choose_cluster_bridge_interface_falls_back_to_matching_prefix() {
+    let interfaces = vec![
+      "eth0".to_string(),
+      "flannel.1".to_string(),
+      "lo".to_string(),
+    ];
+
     assert_eq!(
-      supported_application_exposure_modes(DeploymentProfile::CampusInternal),
-      [ApplicationExposureMode::Ingress]
+      choose_cluster_bridge_interface(&interfaces),
+      Some("flannel.1".to_string())
     );
-    assert_eq!(
-      supported_application_exposure_modes(DeploymentProfile::PublicDomain),
-      [ApplicationExposureMode::Ingress]
-    );
-  }
-
-  #[test]
-  fn local_lab_profile_rejects_ingress_exposure() {
-    let error = validate_profile_exposure(
-      DeploymentProfile::LocalLab,
-      ApplicationExposureMode::Ingress,
-    )
-    .expect_err("local lab should reject ingress exposure");
-
-    assert!(error.to_string().contains("only supports"));
-  }
-
-  #[test]
-  fn campus_internal_profile_rejects_nodeport_exposure() {
-    let error = validate_profile_exposure(
-      DeploymentProfile::CampusInternal,
-      ApplicationExposureMode::NodePortExternalNginx,
-    )
-    .expect_err("campus internal should reject nodeport exposure");
-
-    assert!(error.to_string().contains("Kubernetes ingress"));
   }
 }

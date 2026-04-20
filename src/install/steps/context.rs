@@ -1,4 +1,4 @@
-use std::{net::Ipv4Addr, thread, time::Duration};
+use std::{thread, time::Duration};
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -435,16 +435,6 @@ impl<'a> StepPlanContext<'a> {
       .enable_china_registry_mirrors
   }
 
-  pub fn deployment_profile(&self) -> Option<crate::config::DeploymentProfile> {
-    self
-      .config
-      .install
-      .questionnaire
-      .platform
-      .deployment_profile
-      .or_else(|| infer_deployment_profile(self.config))
-  }
-
   pub fn worker_server_url(&self) -> Option<&str> {
     self
       .config
@@ -549,43 +539,6 @@ impl<'a> StepPlanContext<'a> {
       .platform
       .nodeport_security
       .guard_enabled
-  }
-
-  pub fn platform_nodeport_cluster_interface(&self) -> Option<&str> {
-    self
-      .config
-      .install
-      .questionnaire
-      .platform
-      .nodeport_security
-      .cluster_interface
-      .as_deref()
-  }
-}
-
-fn infer_deployment_profile(config: &Ret2BootConfig) -> Option<crate::config::DeploymentProfile> {
-  let public_host = config
-    .install
-    .questionnaire
-    .platform
-    .public_host
-    .as_deref()?;
-
-  if public_host.parse::<Ipv4Addr>().is_ok()
-    || public_host.ends_with(".nip.io")
-    || public_host.ends_with(".sslip.io")
-  {
-    return Some(crate::config::DeploymentProfile::LocalLab);
-  }
-
-  match config.install.questionnaire.kubernetes.application_exposure {
-    Some(crate::config::ApplicationExposureMode::NodePortExternalNginx) => {
-      Some(crate::config::DeploymentProfile::CampusInternal)
-    }
-    Some(crate::config::ApplicationExposureMode::Ingress) => {
-      Some(crate::config::DeploymentProfile::PublicDomain)
-    }
-    None => Some(crate::config::DeploymentProfile::CampusInternal),
   }
 }
 
