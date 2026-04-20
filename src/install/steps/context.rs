@@ -472,43 +472,6 @@ impl<'a> StepPlanContext<'a> {
       .as_deref()
   }
 
-  pub fn platform_tls_domains(&self) -> &[String] {
-    &self.config.install.questionnaire.platform.tls.domains
-  }
-
-  pub fn platform_tls_acme_email(&self) -> Option<&str> {
-    self
-      .config
-      .install
-      .questionnaire
-      .platform
-      .tls
-      .acme_email
-      .as_deref()
-  }
-
-  pub fn platform_tls_acme_dns_provider(&self) -> Option<&str> {
-    self
-      .config
-      .install
-      .questionnaire
-      .platform
-      .tls
-      .acme_dns_provider
-      .as_deref()
-  }
-
-  pub fn platform_tls_acme_dns_credentials(&self) -> Option<&str> {
-    self
-      .config
-      .install
-      .questionnaire
-      .platform
-      .tls
-      .acme_dns_credentials
-      .as_deref()
-  }
-
   pub fn platform_tls_certificate_path(&self) -> Option<&str> {
     self
       .config

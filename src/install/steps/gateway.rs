@@ -10,8 +10,7 @@ use super::{
   support::{
     command_exists, detect_nginx_binary_path, ensure_symlink, install_directory,
     install_staged_file, managed_tls_asset_name, managed_tls_certificate_path,
-    managed_tls_directory, managed_tls_key_path, nginx_service_exists, stage_remote_script,
-    stage_text_file,
+    managed_tls_directory, managed_tls_key_path, nginx_service_exists, stage_text_file,
   },
 };
 use crate::{
@@ -33,8 +32,6 @@ const NGINX_STREAM_INCLUDE_MARKER: &str = "include /etc/nginx/ret2boot-stream-en
 const INGRESS_RELEASE_NAME: &str = "ingress-nginx";
 const INGRESS_NAMESPACE: &str = "ingress-nginx";
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
-const ACME_SH_INSTALL_URL: &str = "https://get.acme.sh";
-
 pub struct ApplicationGatewayStep;
 
 struct ManagedTlsMaterial {
@@ -526,28 +523,7 @@ fn ensure_managed_tls_assets(ctx: &StepExecutionContext<'_>) -> Result<Option<Ma
 
   match tls_mode {
     PlatformTlsMode::Disabled => {}
-    PlatformTlsMode::AcmeDns => {
-      install_acme_certificate(
-        ctx,
-        plan_context
-          .platform_tls_acme_email()
-          .ok_or_else(|| anyhow!("an ACME contact email is required when TLS mode is acme-dns"))?,
-        plan_context
-          .platform_tls_acme_dns_provider()
-          .ok_or_else(|| {
-            anyhow!("an acme.sh DNS provider code is required when TLS mode is acme-dns")
-          })?,
-        plan_context
-          .platform_tls_acme_dns_credentials()
-          .ok_or_else(|| {
-            anyhow!("DNS provider credentials are required when TLS mode is acme-dns")
-          })?,
-        plan_context.platform_tls_domains(),
-        &certificate_path,
-        &key_path,
-      )?;
-    }
-    PlatformTlsMode::ProvidedFiles => {
+    PlatformTlsMode::AcmeDns | PlatformTlsMode::ProvidedFiles => {
       let source_certificate_path =
         plan_context
           .platform_tls_certificate_path()
@@ -599,96 +575,6 @@ fn ensure_host_file_exists(ctx: &StepExecutionContext<'_>, path: &str, label: &s
   }
 
   bail!("{label} file `{path}` is missing on the target host or is not a regular file")
-}
-
-fn install_acme_certificate(
-  ctx: &StepExecutionContext<'_>, acme_email: &str, dns_provider: &str, dns_credentials: &str,
-  domains: &[String], certificate_path: &str, key_path: &str,
-) -> Result<()> {
-  if domains.is_empty() {
-    bail!("at least one ACME domain is required when TLS mode is acme-dns");
-  }
-
-  let acme_script = ensure_acme_sh(ctx, acme_email)?;
-  let credential_envs = parse_shell_assignments(dns_credentials)?;
-  let mut issue_args = vec![
-    acme_script.clone(),
-    "--issue".to_string(),
-    "--dns".to_string(),
-    dns_provider.to_string(),
-  ];
-  for domain in domains {
-    issue_args.push("-d".to_string());
-    issue_args.push(domain.clone());
-  }
-  ctx.run_privileged_command("sh", &issue_args, &credential_envs)?;
-  ctx.run_privileged_command(
-    "sh",
-    &[
-      acme_script,
-      "--install-cert".to_string(),
-      "-d".to_string(),
-      domains[0].clone(),
-      "--key-file".to_string(),
-      key_path.to_string(),
-      "--fullchain-file".to_string(),
-      certificate_path.to_string(),
-    ],
-    &credential_envs,
-  )
-}
-
-fn ensure_acme_sh(ctx: &StepExecutionContext<'_>, acme_email: &str) -> Result<String> {
-  let installed_paths = ["/root/.acme.sh/acme.sh", "/usr/local/bin/acme.sh"];
-  if let Some(existing) = installed_paths
-    .into_iter()
-    .find(|path| std::path::Path::new(path).is_file())
-  {
-    return Ok(existing.to_string());
-  }
-
-  let installer = stage_remote_script(ACME_SH_INSTALL_URL, "acme-sh-install")?;
-  let install_result = ctx.run_privileged_command(
-    "sh",
-    &[
-      installer.display().to_string(),
-      format!("email={acme_email}"),
-    ],
-    &[],
-  );
-  let _ = fs::remove_file(&installer);
-  install_result?;
-
-  ["/root/.acme.sh/acme.sh", "/usr/local/bin/acme.sh"]
-    .into_iter()
-    .find(|path| std::path::Path::new(path).is_file())
-    .map(str::to_string)
-    .ok_or_else(|| anyhow!("acme.sh was installed but the executable path could not be located"))
-}
-
-fn parse_shell_assignments(input: &str) -> Result<Vec<(String, String)>> {
-  let mut envs = Vec::new();
-  for assignment in input
-    .split(';')
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-  {
-    let (key, value) = assignment
-      .split_once('=')
-      .ok_or_else(|| anyhow!("invalid shell assignment `{assignment}`"))?;
-    let key = key.trim();
-    let value = value.trim().trim_matches('"').trim_matches('\'');
-    if key.is_empty() || value.is_empty() {
-      bail!("invalid shell assignment `{assignment}`");
-    }
-    envs.push((key.to_string(), value.to_string()));
-  }
-
-  if envs.is_empty() {
-    bail!("at least one DNS provider credential assignment is required");
-  }
-
-  Ok(envs)
 }
 
 fn ensure_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {

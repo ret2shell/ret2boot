@@ -27,9 +27,7 @@ use crate::{
     ApplicationExposureMode, InstallStepId, InstallTargetRole, KubernetesDistribution,
     PlatformServiceDeploymentMode, PlatformServiceId, PlatformStorageMode, PlatformTlsMode,
   },
-  install::collectors::{
-    Collector, ConfirmCollector, InputCollector, SecretCollector, SingleSelectCollector,
-  },
+  install::collectors::{Collector, ConfirmCollector, InputCollector, SingleSelectCollector},
   ui, update,
 };
 
@@ -959,9 +957,10 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
     .as_plan_context()
     .platform_tls_mode()
     .unwrap_or(match exposure {
-      ApplicationExposureMode::Ingress => PlatformTlsMode::AcmeDns,
+      ApplicationExposureMode::Ingress => PlatformTlsMode::ProvidedFiles,
       ApplicationExposureMode::NodePortExternalNginx => PlatformTlsMode::Disabled,
     });
+  let existing_mode = normalize_tls_mode(existing_mode);
   let enable_tls_default = existing_mode != PlatformTlsMode::Disabled;
   let enable_tls =
     ConfirmCollector::new(t!("install.platform.tls.enable_prompt"), enable_tls_default)
@@ -976,31 +975,12 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
     return Ok(());
   }
 
-  let tls_modes = supported_tls_modes(exposure, &public_host);
-  let default_tls_mode = tls_modes
-    .iter()
-    .position(|mode| *mode == existing_mode)
-    .unwrap_or(0);
-  let tls_mode = if tls_modes.len() == 1 {
-    println!();
-    println!(
-      "{}",
-      ui::note(t!(
-        "install.platform.tls.mode.auto_selected",
-        mode = tls_mode_label(tls_modes[0])
-      ))
-    );
-    tls_modes[0]
-  } else {
-    let tls_mode_labels = tls_modes
-      .iter()
-      .copied()
-      .map(tls_mode_label)
-      .collect::<Vec<_>>();
-    tls_modes[SingleSelectCollector::new(t!("install.platform.tls.mode.prompt"), tls_mode_labels)
-      .with_default(default_tls_mode)
-      .collect_index()?]
-  };
+  let tls_mode = PlatformTlsMode::ProvidedFiles;
+  println!();
+  println!(
+    "{}",
+    ui::note(t!("install.platform.tls.mode.prepared_files_only"))
+  );
 
   ctx.persist_change(
     "install.questionnaire.platform.tls.mode",
@@ -1026,92 +1006,13 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
     )?;
   }
 
-  let default_domains = if ctx.as_plan_context().platform_tls_domains().is_empty() {
-    public_host.clone()
-  } else {
-    ctx.as_plan_context().platform_tls_domains().join(",")
-  };
-  let domains = InputCollector::new(t!("install.platform.tls.domains.prompt"))
-    .with_default(default_domains)
-    .collect()?;
-  let domains = domains
-    .split(',')
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .map(str::to_string)
-    .collect::<Vec<_>>();
-  if domains.is_empty() {
-    bail!("{}", t!("install.platform.tls.domains.required"));
-  }
-  ctx.persist_change(
-    "install.questionnaire.platform.tls.domains",
-    &domains.join(","),
-    |config| config.set_platform_tls_domains(domains.clone()),
-  )?;
-
   match tls_mode {
     PlatformTlsMode::Disabled => {}
-    PlatformTlsMode::AcmeDns => {
-      if !supports_acme_dns_for_host(exposure, &public_host) {
-        bail!("{}", t!("install.platform.tls.acme_dns.public_host_error"));
-      }
-
-      let acme_email = InputCollector::new(t!("install.platform.tls.acme_email.prompt"))
-        .with_default(
-          ctx
-            .as_plan_context()
-            .platform_tls_acme_email()
-            .unwrap_or("admin@example.com")
-            .to_string(),
-        )
-        .collect()?
-        .trim()
-        .to_string();
-      ctx.persist_change(
-        "install.questionnaire.platform.tls.acme_email",
-        &acme_email,
-        |config| config.set_platform_tls_acme_email(acme_email.clone()),
-      )?;
-
-      let dns_provider = InputCollector::new(t!("install.platform.tls.acme_dns_provider.prompt"))
-        .with_default(
-          ctx
-            .as_plan_context()
-            .platform_tls_acme_dns_provider()
-            .unwrap_or("dns_dp")
-            .to_string(),
-        )
-        .collect()?
-        .trim()
-        .to_string();
-      ctx.persist_change(
-        "install.questionnaire.platform.tls.acme_dns_provider",
-        &dns_provider,
-        |config| config.set_platform_tls_acme_dns_provider(dns_provider.clone()),
-      )?;
-
-      let credentials_prompt = t!("install.platform.tls.acme_dns_credentials.prompt");
-      let credentials = match ctx.as_plan_context().platform_tls_acme_dns_credentials() {
-        Some(existing_value) => SecretCollector::new(credentials_prompt)
-          .with_existing_value(existing_value.to_string())
-          .collect()?,
-        None => SecretCollector::new(credentials_prompt).collect()?,
-      };
-      ctx.persist_change(
-        "install.questionnaire.platform.tls.acme_dns_credentials",
-        "[redacted]",
-        |config| config.set_platform_tls_acme_dns_credentials(credentials.clone()),
-      )?;
-    }
-    PlatformTlsMode::ProvidedFiles => {
+    PlatformTlsMode::AcmeDns | PlatformTlsMode::ProvidedFiles => {
       let certificate_path = collect_existing_host_file_path(
         ctx,
         t!("install.platform.tls.certificate_path.prompt").to_string(),
-        ctx
-          .as_plan_context()
-          .platform_tls_certificate_path()
-          .unwrap_or("/etc/ssl/certs/fullchain.pem")
-          .to_string(),
+        default_tls_certificate_path(ctx, &public_host),
         t!("install.platform.tls.certificate_path.missing").to_string(),
       )?;
       ctx.persist_change(
@@ -1123,11 +1024,7 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
       let key_path = collect_existing_host_file_path(
         ctx,
         t!("install.platform.tls.key_path.prompt").to_string(),
-        ctx
-          .as_plan_context()
-          .platform_tls_key_path()
-          .unwrap_or("/etc/ssl/private/privkey.pem")
-          .to_string(),
+        default_tls_key_path(ctx, &public_host),
         t!("install.platform.tls.key_path.missing").to_string(),
       )?;
       ctx.persist_change(
@@ -1163,6 +1060,22 @@ fn host_regular_file_exists(ctx: &StepQuestionContext<'_>, path: &str) -> bool {
   ctx
     .run_privileged_command("test", &["-f".to_string(), path.to_string()], &[])
     .is_ok()
+}
+
+fn default_tls_certificate_path(ctx: &StepQuestionContext<'_>, public_host: &str) -> String {
+  ctx
+    .as_plan_context()
+    .platform_tls_certificate_path()
+    .map(str::to_string)
+    .unwrap_or_else(|| format!("/etc/letsencrypt/live/{public_host}/fullchain.pem"))
+}
+
+fn default_tls_key_path(ctx: &StepQuestionContext<'_>, public_host: &str) -> String {
+  ctx
+    .as_plan_context()
+    .platform_tls_key_path()
+    .map(str::to_string)
+    .unwrap_or_else(|| format!("/etc/letsencrypt/live/{public_host}/privkey.pem"))
 }
 
 fn collect_nodeport_security(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
@@ -3948,30 +3861,10 @@ fn canonical_public_host_input(raw: &str) -> Result<&str> {
   )
 }
 
-fn supported_tls_modes(
-  exposure: ApplicationExposureMode, public_host: &str,
-) -> Vec<PlatformTlsMode> {
-  if supports_acme_dns_for_host(exposure, public_host) {
-    vec![PlatformTlsMode::AcmeDns, PlatformTlsMode::ProvidedFiles]
-  } else {
-    vec![PlatformTlsMode::ProvidedFiles]
-  }
-}
-
-fn supports_acme_dns_for_host(exposure: ApplicationExposureMode, public_host: &str) -> bool {
-  matches!(
-    exposure,
-    ApplicationExposureMode::NodePortExternalNginx | ApplicationExposureMode::Ingress
-  ) && !public_host_is_ipv4(public_host)
-    && !public_host.ends_with(".nip.io")
-    && !public_host.ends_with(".sslip.io")
-}
-
-fn tls_mode_label(mode: PlatformTlsMode) -> String {
+fn normalize_tls_mode(mode: PlatformTlsMode) -> PlatformTlsMode {
   match mode {
-    PlatformTlsMode::Disabled => t!("install.platform.tls.mode.disabled").to_string(),
-    PlatformTlsMode::AcmeDns => t!("install.platform.tls.mode.acme_dns").to_string(),
-    PlatformTlsMode::ProvidedFiles => t!("install.platform.tls.mode.provided_files").to_string(),
+    PlatformTlsMode::Disabled => PlatformTlsMode::Disabled,
+    PlatformTlsMode::AcmeDns | PlatformTlsMode::ProvidedFiles => PlatformTlsMode::ProvidedFiles,
   }
 }
 
@@ -4561,13 +4454,10 @@ spec:\n\
   }
 
   #[test]
-  fn supported_tls_modes_only_offer_provided_files_for_bare_ipv4_nodeport() {
+  fn normalize_tls_mode_maps_legacy_acme_dns_to_provided_files() {
     assert_eq!(
-      supported_tls_modes(
-        ApplicationExposureMode::NodePortExternalNginx,
-        "103.151.173.97"
-      ),
-      vec![PlatformTlsMode::ProvidedFiles]
+      normalize_tls_mode(PlatformTlsMode::AcmeDns),
+      PlatformTlsMode::ProvidedFiles
     );
   }
 
