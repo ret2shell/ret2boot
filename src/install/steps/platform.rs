@@ -765,7 +765,7 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     internal_database_password,
     internal_cache_password,
     internal_queue_token,
-    internal_registry_host: derive_internal_registry_host(&endpoint.public_host),
+    internal_registry_host: derive_internal_registry_host(),
     services,
   })
 }
@@ -3918,8 +3918,8 @@ fn normalize_tls_mode(mode: PlatformTlsMode) -> PlatformTlsMode {
   }
 }
 
-fn derive_internal_registry_host(public_host: &str) -> String {
-  format!("{public_host}:{INTERNAL_REGISTRY_NODE_PORT}")
+fn derive_internal_registry_host() -> String {
+  format!("localhost:{INTERNAL_REGISTRY_NODE_PORT}")
 }
 
 fn resolved_managed_tls_material_paths(ctx: &StepPlanContext<'_>) -> Result<(String, String)> {
@@ -4269,7 +4269,7 @@ mod tests {
     );
     assert_eq!(
       parsed["registry"]["externalAccess"]["host"],
-      Value::String("ctf.example.com:30310".to_string())
+      Value::String("localhost:30310".to_string())
     );
     assert_eq!(
       parsed["victoriaLogs"]["mode"],
@@ -4284,7 +4284,7 @@ mod tests {
     summary.tls_enabled = false;
     summary.public_host = "192.168.23.132".to_string();
     summary.ingress_host = "ret2shell-192-168-23-132.ret2boot.invalid".to_string();
-    summary.internal_registry_host = "192.168.23.132:30310".to_string();
+    summary.internal_registry_host = "localhost:30310".to_string();
     let rendered = render_platform_values_yaml(&summary).expect("values render");
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
@@ -4665,11 +4665,11 @@ limit = 5
 
   #[test]
   fn render_runtime_registry_config_marks_registry_as_insecure_http() {
-    let rendered = render_container_registry_config(true, Some("192.168.23.132:30310"))
+    let rendered = render_container_registry_config(true, Some("localhost:30310"))
       .expect("registry config should render");
 
-    assert!(rendered.contains("'192.168.23.132:30310'"));
-    assert!(rendered.contains("'http://192.168.23.132:30310'"));
+    assert!(rendered.contains("'localhost:30310'"));
+    assert!(rendered.contains("'http://localhost:30310'"));
     assert!(rendered.contains("insecure_skip_verify: true"));
     assert!(rendered.contains("'https://docker.1ms.run'"));
   }
@@ -4707,7 +4707,7 @@ limit = 5
       internal_database_password: "database-secret".to_string(),
       internal_cache_password: "cache-secret".to_string(),
       internal_queue_token: "queue-secret".to_string(),
-      internal_registry_host: "ctf.example.com:30310".to_string(),
+      internal_registry_host: "localhost:30310".to_string(),
       services: vec![
         service_plan(
           PlatformServiceId::Platform,
