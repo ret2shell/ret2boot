@@ -2733,14 +2733,25 @@ fn set_toml_path(value: &mut TomlValue, path: &[&str], replacement: TomlValue) -
 
 fn render_platform_init_manifest() -> String {
   [
-    render_helm_owned_namespace_manifest(CHALLENGE_NAMESPACE),
-    render_helm_owned_namespace_manifest(PLATFORM_NAMESPACE),
+    render_helm_owned_resource_manifest("Namespace", CHALLENGE_NAMESPACE, None, &[]),
+    render_helm_owned_resource_manifest("Namespace", PLATFORM_NAMESPACE, None, &[]),
     [
       "apiVersion: v1".to_string(),
       "kind: ServiceAccount".to_string(),
       "metadata:".to_string(),
       "  name: 'ret2shell-service'".to_string(),
       format!("  namespace: {}", yaml_quote(PLATFORM_NAMESPACE)),
+      "  labels:".to_string(),
+      format!("    app.kubernetes.io/managed-by: {}", yaml_quote("Helm")),
+      "  annotations:".to_string(),
+      format!(
+        "    meta.helm.sh/release-name: {}",
+        yaml_quote(HELM_RELEASE_NAME)
+      ),
+      format!(
+        "    meta.helm.sh/release-namespace: {}",
+        yaml_quote(PLATFORM_NAMESPACE)
+      ),
       "automountServiceAccountToken: true".to_string(),
     ]
     .join("\n"),
@@ -2749,6 +2760,17 @@ fn render_platform_init_manifest() -> String {
       "kind: ClusterRoleBinding".to_string(),
       "metadata:".to_string(),
       "  name: 'ret2shell-service-global'".to_string(),
+      "  labels:".to_string(),
+      format!("    app.kubernetes.io/managed-by: {}", yaml_quote("Helm")),
+      "  annotations:".to_string(),
+      format!(
+        "    meta.helm.sh/release-name: {}",
+        yaml_quote(HELM_RELEASE_NAME)
+      ),
+      format!(
+        "    meta.helm.sh/release-namespace: {}",
+        yaml_quote(PLATFORM_NAMESPACE)
+      ),
       "subjects:".to_string(),
       "  - kind: ServiceAccount".to_string(),
       "    name: 'ret2shell-service'".to_string(),
@@ -2764,12 +2786,21 @@ fn render_platform_init_manifest() -> String {
   .join("\n---\n")
 }
 
-fn render_helm_owned_namespace_manifest(namespace: &str) -> String {
-  [
+fn render_helm_owned_resource_manifest(
+  kind: &str, name: &str, namespace: Option<&str>, trailing_fields: &[String],
+) -> String {
+  let mut lines = vec![
     "apiVersion: v1".to_string(),
-    "kind: Namespace".to_string(),
+    format!("kind: {kind}"),
     "metadata:".to_string(),
-    format!("  name: {}", yaml_quote(namespace)),
+    format!("  name: {}", yaml_quote(name)),
+  ];
+
+  if let Some(namespace) = namespace {
+    lines.push(format!("  namespace: {}", yaml_quote(namespace)));
+  }
+
+  lines.extend([
     "  labels:".to_string(),
     format!("    app.kubernetes.io/managed-by: {}", yaml_quote("Helm")),
     "  annotations:".to_string(),
@@ -2781,8 +2812,9 @@ fn render_helm_owned_namespace_manifest(namespace: &str) -> String {
       "    meta.helm.sh/release-namespace: {}",
       yaml_quote(PLATFORM_NAMESPACE)
     ),
-  ]
-  .join("\n")
+  ]);
+  lines.extend_from_slice(trailing_fields);
+  lines.join("\n")
 }
 
 fn extract_chart_section(full_values: &str, key: &str) -> Result<String> {
@@ -4649,6 +4681,10 @@ limit = 5
     assert!(rendered.contains("kind: Namespace"));
     assert!(rendered.contains("name: 'ret2shell-challenge'"));
     assert!(rendered.contains("name: 'ret2shell-platform'"));
+    assert!(rendered.contains("kind: ServiceAccount"));
+    assert!(rendered.contains("name: 'ret2shell-service'"));
+    assert!(rendered.contains("kind: ClusterRoleBinding"));
+    assert!(rendered.contains("name: 'ret2shell-service-global'"));
     assert!(rendered.contains("app.kubernetes.io/managed-by: 'Helm'"));
     assert!(rendered.contains("meta.helm.sh/release-name: 'ret2shell'"));
     assert!(rendered.contains("meta.helm.sh/release-namespace: 'ret2shell-platform'"));
