@@ -43,6 +43,8 @@ pub struct KubernetesQuestionnaire {
   pub source: Option<KubernetesInstallSource>,
   pub application_exposure: Option<ApplicationExposureMode>,
   pub worker_join: WorkerJoinConfig,
+  pub bootstrap: KubernetesBootstrapConfig,
+  pub mirrors: KubernetesMirrorConfig,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -54,15 +56,49 @@ pub struct WorkerJoinConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
+pub struct KubernetesBootstrapConfig {
+  pub disable_traefik: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KubernetesMirrorConfig {
+  pub enable_china_registry_mirrors: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PlatformQuestionnaire {
   pub deployment_profile: Option<DeploymentProfile>,
   pub remaining_disk_gib: Option<u32>,
   pub requested_disk_gib: Option<u32>,
   pub public_host: Option<String>,
+  pub tls: PlatformTlsConfig,
+  pub nodeport_security: NodePortSecurityConfig,
   pub signing_key: Option<String>,
   pub blocked_content: Option<String>,
   pub internal_credentials: PlatformInternalCredentials,
   pub services: BTreeMap<PlatformServiceId, PlatformServiceConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformTlsConfig {
+  pub mode: Option<PlatformTlsMode>,
+  pub secret_name: Option<String>,
+  pub domains: Vec<String>,
+  pub acme_email: Option<String>,
+  pub acme_dns_provider: Option<String>,
+  pub acme_dns_credentials: Option<String>,
+  pub certificate_path: Option<String>,
+  pub key_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NodePortSecurityConfig {
+  pub guard_enabled: Option<bool>,
+  pub cluster_interface: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -415,6 +451,25 @@ impl PlatformStorageMode {
   }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformTlsMode {
+  Disabled,
+  #[default]
+  AcmeDns,
+  ProvidedFiles,
+}
+
+impl PlatformTlsMode {
+  pub fn as_config_value(self) -> &'static str {
+    match self {
+      Self::Disabled => "disabled",
+      Self::AcmeDns => "acme-dns",
+      Self::ProvidedFiles => "provided-files",
+    }
+  }
+}
+
 impl Ret2BootConfig {
   pub fn load() -> Result<Self> {
     let path = Self::path()?;
@@ -536,6 +591,50 @@ impl Ret2BootConfig {
     true
   }
 
+  pub fn set_install_kubernetes_disable_traefik(&mut self, disable_traefik: bool) -> bool {
+    if self
+      .install
+      .questionnaire
+      .kubernetes
+      .bootstrap
+      .disable_traefik
+      == Some(disable_traefik)
+    {
+      return false;
+    }
+
+    self
+      .install
+      .questionnaire
+      .kubernetes
+      .bootstrap
+      .disable_traefik = Some(disable_traefik);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_install_kubernetes_enable_china_registry_mirrors(&mut self, enabled: bool) -> bool {
+    if self
+      .install
+      .questionnaire
+      .kubernetes
+      .mirrors
+      .enable_china_registry_mirrors
+      == Some(enabled)
+    {
+      return false;
+    }
+
+    self
+      .install
+      .questionnaire
+      .kubernetes
+      .mirrors
+      .enable_china_registry_mirrors = Some(enabled);
+    self.invalidate_install_pipeline();
+    true
+  }
+
   pub fn set_platform_deployment_profile(&mut self, profile: DeploymentProfile) -> bool {
     if self.install.questionnaire.platform.deployment_profile == Some(profile) {
       return false;
@@ -623,6 +722,185 @@ impl Ret2BootConfig {
     }
 
     self.install.questionnaire.platform.public_host = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_tls_mode(&mut self, mode: PlatformTlsMode) -> bool {
+    if self.install.questionnaire.platform.tls.mode == Some(mode) {
+      return false;
+    }
+
+    self.install.questionnaire.platform.tls.mode = Some(mode);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_tls_secret_name(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .secret_name
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self.install.questionnaire.platform.tls.secret_name = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_tls_domains(&mut self, domains: Vec<String>) -> bool {
+    if self.install.questionnaire.platform.tls.domains == domains {
+      return false;
+    }
+
+    self.install.questionnaire.platform.tls.domains = domains;
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_tls_acme_email(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .acme_email
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self.install.questionnaire.platform.tls.acme_email = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_tls_acme_dns_provider(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .acme_dns_provider
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self.install.questionnaire.platform.tls.acme_dns_provider = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_tls_acme_dns_credentials(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .acme_dns_credentials
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self.install.questionnaire.platform.tls.acme_dns_credentials = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_tls_certificate_path(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .certificate_path
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self.install.questionnaire.platform.tls.certificate_path = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_tls_key_path(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self.install.questionnaire.platform.tls.key_path.as_deref() == Some(value.as_str()) {
+      return false;
+    }
+
+    self.install.questionnaire.platform.tls.key_path = Some(value);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_nodeport_guard_enabled(&mut self, enabled: bool) -> bool {
+    if self
+      .install
+      .questionnaire
+      .platform
+      .nodeport_security
+      .guard_enabled
+      == Some(enabled)
+    {
+      return false;
+    }
+
+    self
+      .install
+      .questionnaire
+      .platform
+      .nodeport_security
+      .guard_enabled = Some(enabled);
+    self.invalidate_install_pipeline();
+    true
+  }
+
+  pub fn set_platform_nodeport_cluster_interface(&mut self, value: impl Into<String>) -> bool {
+    let value = value.into();
+
+    if self
+      .install
+      .questionnaire
+      .platform
+      .nodeport_security
+      .cluster_interface
+      .as_deref()
+      == Some(value.as_str())
+    {
+      return false;
+    }
+
+    self
+      .install
+      .questionnaire
+      .platform
+      .nodeport_security
+      .cluster_interface = Some(value);
     self.invalidate_install_pipeline();
     true
   }
@@ -1062,7 +1340,15 @@ impl Ret2BootConfig {
 }
 
 fn is_root_user() -> bool {
-  unsafe { libc::geteuid() == 0 }
+  #[cfg(unix)]
+  {
+    unsafe { libc::geteuid() == 0 }
+  }
+
+  #[cfg(not(unix))]
+  {
+    false
+  }
 }
 
 fn xdg_config_home() -> Option<PathBuf> {

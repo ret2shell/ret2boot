@@ -60,7 +60,15 @@ impl PrivilegeSession {
   }
 
   pub fn is_root_user() -> bool {
-    unsafe { libc::geteuid() == 0 }
+    #[cfg(unix)]
+    {
+      unsafe { libc::geteuid() == 0 }
+    }
+
+    #[cfg(not(unix))]
+    {
+      false
+    }
   }
 
   pub fn run_command(

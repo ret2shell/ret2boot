@@ -1,13 +1,12 @@
 use std::{
   collections::BTreeSet,
-  env,
-  ffi::CString,
-  fs,
-  mem::MaybeUninit,
+  env, fs,
   path::{Path, PathBuf},
   process::Command,
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(unix)]
+use std::{ffi::CString, mem::MaybeUninit};
 
 use anyhow::{Context, Result, anyhow};
 use reqwest::blocking::Client;
@@ -58,8 +57,12 @@ pub(crate) fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
 }
 
 fn staged_script_invocation(script_path: &Path) -> Result<(String, Vec<String>)> {
-  let contents = fs::read_to_string(script_path)
-    .with_context(|| format!("failed to inspect staged script `{}`", script_path.display()))?;
+  let contents = fs::read_to_string(script_path).with_context(|| {
+    format!(
+      "failed to inspect staged script `{}`",
+      script_path.display()
+    )
+  })?;
 
   Ok(script_invocation_from_contents(script_path, &contents))
 }
@@ -163,19 +166,30 @@ pub(crate) fn nginx_service_exists() -> bool {
 }
 
 pub(crate) fn disk_free_bytes(path: &str) -> Result<u64> {
-  let path = CString::new(path).context("invalid disk path")?;
-  let mut stat = MaybeUninit::<libc::statvfs>::uninit();
+  #[cfg(unix)]
+  {
+    let path = CString::new(path).context("invalid disk path")?;
+    let mut stat = MaybeUninit::<libc::statvfs>::uninit();
 
-  let result = unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) };
-  if result != 0 {
-    return Err(anyhow!(
-      "failed to stat filesystem for `{}`",
-      path.to_string_lossy()
-    ));
+    let result = unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) };
+    if result != 0 {
+      return Err(anyhow!(
+        "failed to stat filesystem for `{}`",
+        path.to_string_lossy()
+      ));
+    }
+
+    let stat = unsafe { stat.assume_init() };
+    Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
   }
 
-  let stat = unsafe { stat.assume_init() };
-  Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
+  #[cfg(not(unix))]
+  {
+    let _ = path;
+    Err(anyhow!(
+      "disk capacity probing is only implemented on unix targets"
+    ))
+  }
 }
 
 pub(crate) fn memory_total_bytes() -> Result<u64> {
@@ -265,11 +279,64 @@ pub(crate) fn yaml_quote(value: &str) -> String {
   format!("'{}'", value.replace('\'', "''"))
 }
 
+pub(crate) fn render_container_registry_config(
+  enable_china_registry_mirrors: bool, internal_registry_host: Option<&str>,
+) -> Option<String> {
+  if !enable_china_registry_mirrors && internal_registry_host.is_none() {
+    return None;
+  }
+
+  let mut lines = Vec::new();
+  lines.push("mirrors:".to_string());
+
+  if enable_china_registry_mirrors {
+    for (registry, endpoint) in [
+      ("docker.io", "https://docker.1ms.run"),
+      ("ghcr.io", "https://ghcr.m.daocloud.io"),
+      ("gcr.io", "https://gcr.m.daocloud.io"),
+      ("quay.io", "https://quay.m.daocloud.io"),
+      ("registry.k8s.io", "https://k8s.m.daocloud.io"),
+    ] {
+      lines.push(format!("  {}:", yaml_quote(registry)));
+      lines.push("    endpoint:".to_string());
+      lines.push(format!("      - {}", yaml_quote(endpoint)));
+    }
+  }
+
+  if let Some(internal_registry_host) = internal_registry_host {
+    lines.push(format!("  {}:", yaml_quote(internal_registry_host)));
+    lines.push("    endpoint:".to_string());
+    lines.push(format!(
+      "      - {}",
+      yaml_quote(&format!("http://{internal_registry_host}"))
+    ));
+    lines.push("configs:".to_string());
+    lines.push(format!("  {}:", yaml_quote(internal_registry_host)));
+    lines.push("    tls:".to_string());
+    lines.push("      insecure_skip_verify: true".to_string());
+  }
+
+  lines.push(String::new());
+  Some(lines.join("\n"))
+}
+
+pub(crate) fn managed_tls_directory(secret_name: &str) -> String {
+  format!("/etc/ret2shell/tls/{secret_name}")
+}
+
+pub(crate) fn managed_tls_certificate_path(secret_name: &str) -> String {
+  format!("{}/fullchain.pem", managed_tls_directory(secret_name))
+}
+
+pub(crate) fn managed_tls_key_path(secret_name: &str) -> String {
+  format!("{}/privkey.pem", managed_tls_directory(secret_name))
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::Path;
 
-  use super::script_invocation_from_contents;
+  use super::{render_container_registry_config, script_invocation_from_contents};
 
   #[test]
   fn uses_script_shebang_when_present() {
@@ -278,7 +345,10 @@ mod tests {
       script_invocation_from_contents(script_path, "#!/usr/bin/env bash\nprintf 'ok'\n");
 
     assert_eq!(program, "/usr/bin/env");
-    assert_eq!(args, vec!["bash".to_string(), "staged-script.sh".to_string()]);
+    assert_eq!(
+      args,
+      vec!["bash".to_string(), "staged-script.sh".to_string()]
+    );
   }
 
   #[test]
@@ -288,5 +358,26 @@ mod tests {
 
     assert_eq!(program, "sh");
     assert_eq!(args, vec!["staged-script.sh".to_string()]);
+  }
+
+  #[test]
+  fn renders_public_registry_mirrors_without_internal_registry() {
+    let rendered =
+      render_container_registry_config(true, None).expect("registry config should render");
+
+    assert!(rendered.contains("'docker.io'"));
+    assert!(rendered.contains("'https://docker.1ms.run'"));
+    assert!(rendered.contains("'registry.k8s.io'"));
+    assert!(!rendered.contains("insecure_skip_verify"));
+  }
+
+  #[test]
+  fn renders_internal_registry_with_insecure_tls_override() {
+    let rendered = render_container_registry_config(false, Some("registry.internal:30310"))
+      .expect("registry config should render");
+
+    assert!(rendered.contains("'registry.internal:30310'"));
+    assert!(rendered.contains("'http://registry.internal:30310'"));
+    assert!(rendered.contains("insecure_skip_verify: true"));
   }
 }

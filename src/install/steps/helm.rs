@@ -291,8 +291,7 @@ fn download_text_with_retries(client: &Client, url: &str, label: &str) -> Result
         response
           .text()
           .with_context(|| format!("failed to read {label} `{url}`"))
-      })
-    {
+      }) {
       Ok(body) => return Ok(body),
       Err(error) if attempt < HELM_DOWNLOAD_ATTEMPTS => {
         warn!(
@@ -327,8 +326,7 @@ fn download_bytes_with_retries(client: &Client, url: &str, label: &str) -> Resul
         response
           .bytes()
           .with_context(|| format!("failed to read {label} `{url}`"))
-      })
-    {
+      }) {
       Ok(body) => return Ok(body.to_vec()),
       Err(error) if attempt < HELM_DOWNLOAD_ATTEMPTS => {
         warn!(
@@ -354,8 +352,9 @@ fn parse_helm_version_manifest(contents: &str) -> Result<String> {
     .find(|line| !line.is_empty())
     .ok_or_else(|| anyhow!("the Helm version manifest is empty"))?;
   let normalized = version.trim_start_matches('v');
-  Version::parse(normalized)
-    .with_context(|| format!("failed to parse Helm version `{version}` from the version manifest"))?;
+  Version::parse(normalized).with_context(|| {
+    format!("failed to parse Helm version `{version}` from the version manifest")
+  })?;
 
   Ok(version.to_string())
 }
@@ -423,9 +422,7 @@ fn helm_user_agent() -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::{
-    helm_target_triplet_for, parse_helm_archive_checksum, parse_helm_version_manifest,
-  };
+  use super::{helm_target_triplet_for, parse_helm_archive_checksum, parse_helm_version_manifest};
 
   #[test]
   fn parses_helm_version_manifest() {

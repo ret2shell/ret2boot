@@ -7,8 +7,8 @@ use tracing::info;
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   support::{
-    find_existing_path, install_staged_file, run_staged_script, stage_remote_script,
-    stage_text_file, unique_temp_path, yaml_quote,
+    find_existing_path, install_staged_file, render_container_registry_config, run_staged_script,
+    stage_remote_script, stage_text_file, unique_temp_path, yaml_quote,
   },
 };
 use crate::{
@@ -25,8 +25,10 @@ pub const NODE_CIDR_MASK_SIZE: u8 = 20;
 pub const NODE_MAX_PODS: u16 = 3072;
 const K3S_CONFIG_DEST: &str = "/etc/rancher/k3s/config.yaml";
 const K3S_KUBELET_CONFIG_DEST: &str = "/etc/rancher/k3s/kubelet.config";
+const K3S_REGISTRIES_DEST: &str = "/etc/rancher/k3s/registries.yaml";
 const RKE2_CONFIG_DEST: &str = "/etc/rancher/rke2/config.yaml";
 const RKE2_KUBELET_CONFIG_DEST: &str = "/etc/rancher/rke2/kubelet.conf";
+const RKE2_REGISTRIES_DEST: &str = "/etc/rancher/rke2/registries.yaml";
 const K3S_MANIFEST_DIR: &str = "/var/lib/rancher/k3s/server/manifests";
 const RKE2_MANIFEST_DIR: &str = "/var/lib/rancher/rke2/server/manifests";
 const K3S_TRAEFIK_CONFIG_DEST: &str =
@@ -160,6 +162,26 @@ impl AtomicInstallStep for ClusterBootstrapStep {
       |config| config.set_install_kubernetes_source(source),
     )?;
 
+    let disable_traefik = distribution == KubernetesDistribution::K3s;
+    ctx.persist_change(
+      "install.questionnaire.kubernetes.bootstrap.disable_traefik",
+      if disable_traefik { "true" } else { "false" },
+      |config| config.set_install_kubernetes_disable_traefik(disable_traefik),
+    )?;
+
+    let enable_china_registry_mirrors = source == KubernetesInstallSource::ChinaMirror;
+    ctx.persist_change(
+      "install.questionnaire.kubernetes.mirrors.enable_china_registry_mirrors",
+      if enable_china_registry_mirrors {
+        "true"
+      } else {
+        "false"
+      },
+      |config| {
+        config.set_install_kubernetes_enable_china_registry_mirrors(enable_china_registry_mirrors)
+      },
+    )?;
+
     if role == InstallTargetRole::Worker {
       println!();
       println!("{}", ui::note(worker_server_url_hint(distribution)));
@@ -243,6 +265,17 @@ impl AtomicInstallStep for ClusterBootstrapStep {
       t!("install.steps.cluster.max_pods", max_pods = NODE_MAX_PODS).to_string(),
     ];
 
+    if spec.distribution == KubernetesDistribution::K3s && spec.disable_traefik {
+      details.push("k3s builtin traefik will be disabled during cluster bootstrap".to_string());
+    }
+
+    if ctx
+      .kubernetes_enable_china_registry_mirrors()
+      .unwrap_or(false)
+    {
+      details.push("container registry mirrors will be configured for docker.io, ghcr.io, gcr.io, quay.io, and registry.k8s.io".to_string());
+    }
+
     if let Some(exposure) = spec.application_exposure {
       details.push(
         t!(
@@ -316,6 +349,7 @@ pub(crate) struct ClusterInstallSpec {
   pub(crate) role: InstallTargetRole,
   pub(crate) distribution: KubernetesDistribution,
   pub(crate) source: KubernetesInstallSource,
+  pub(crate) disable_traefik: bool,
   pub(crate) application_exposure: Option<ApplicationExposureMode>,
   pub(crate) worker_server_url: Option<String>,
   pub(crate) worker_token: Option<String>,
@@ -332,6 +366,9 @@ impl ClusterInstallSpec {
     let source = ctx.kubernetes_source().ok_or_else(|| {
       anyhow!("kubernetes source is required before planning cluster installation")
     })?;
+    let disable_traefik = ctx
+      .kubernetes_disable_traefik()
+      .unwrap_or(distribution == KubernetesDistribution::K3s);
     let application_exposure = ctx.application_exposure();
     let worker_server_url = ctx.worker_server_url().map(str::to_string);
     let worker_token = ctx.worker_token().map(str::to_string);
@@ -353,6 +390,7 @@ impl ClusterInstallSpec {
       role,
       distribution,
       source,
+      disable_traefik,
       application_exposure,
       worker_server_url,
       worker_token,
@@ -363,15 +401,14 @@ impl ClusterInstallSpec {
 pub(crate) fn install_k3s(
   ctx: &mut StepExecutionContext<'_>, spec: &ClusterInstallSpec,
 ) -> Result<()> {
-  if let Some((http_port, https_port)) = selected_gateway_ports_for_cluster(ctx, spec)? {
-    let manifest_path = stage_text_file(
-      "k3s-traefik-config",
-      "yaml",
-      render_k3s_traefik_ports_config(http_port, https_port),
-    )?;
-    install_staged_file(ctx, &manifest_path, K3S_TRAEFIK_CONFIG_DEST)?;
-    let _ = fs::remove_file(&manifest_path);
-  }
+  sync_cluster_registry_config(
+    ctx,
+    K3S_REGISTRIES_DEST,
+    ctx
+      .as_plan_context()
+      .kubernetes_enable_china_registry_mirrors()
+      .unwrap_or(false),
+  )?;
 
   let staged = stage_k3s_config(spec)?;
   install_staged_file(ctx, &staged.config, K3S_CONFIG_DEST)?;
@@ -417,6 +454,15 @@ pub(crate) fn uninstall_k3s(
 pub(crate) fn install_rke2(
   ctx: &mut StepExecutionContext<'_>, spec: &ClusterInstallSpec,
 ) -> Result<()> {
+  sync_cluster_registry_config(
+    ctx,
+    RKE2_REGISTRIES_DEST,
+    ctx
+      .as_plan_context()
+      .kubernetes_enable_china_registry_mirrors()
+      .unwrap_or(false),
+  )?;
+
   if let Some((http_port, https_port)) = selected_gateway_ports_for_cluster(ctx, spec)? {
     let traefik_manifest = stage_text_file(
       "rke2-traefik-config",
@@ -623,6 +669,7 @@ fn cleanup_k3s_configs(ctx: &StepExecutionContext<'_>) -> Result<()> {
       "-f".to_string(),
       K3S_CONFIG_DEST.to_string(),
       K3S_KUBELET_CONFIG_DEST.to_string(),
+      K3S_REGISTRIES_DEST.to_string(),
     ],
     &[],
   )?;
@@ -637,6 +684,7 @@ fn cleanup_rke2_configs(ctx: &StepExecutionContext<'_>) -> Result<()> {
       "-f".to_string(),
       RKE2_CONFIG_DEST.to_string(),
       RKE2_KUBELET_CONFIG_DEST.to_string(),
+      RKE2_REGISTRIES_DEST.to_string(),
     ],
     &[],
   )?;
@@ -673,6 +721,10 @@ fn render_k3s_config(spec: &ClusterInstallSpec) -> String {
 
   if spec.role == InstallTargetRole::ControlPlane {
     lines.push(format!("cluster-cidr: {CLUSTER_CIDR}"));
+    if spec.disable_traefik {
+      lines.push("disable:".to_string());
+      lines.push("  - traefik".to_string());
+    }
     lines.push("kube-controller-manager-arg:".to_string());
     lines.push(format!("  - node-cidr-mask-size={NODE_CIDR_MASK_SIZE}"));
   } else {
@@ -695,6 +747,19 @@ fn render_k3s_config(spec: &ClusterInstallSpec) -> String {
   lines.push(format!("  - config={K3S_KUBELET_CONFIG_DEST}"));
   lines.push(String::new());
   lines.join("\n")
+}
+
+fn sync_cluster_registry_config(
+  ctx: &StepExecutionContext<'_>, destination: &str, enable_china_registry_mirrors: bool,
+) -> Result<()> {
+  let Some(contents) = render_container_registry_config(enable_china_registry_mirrors, None) else {
+    return Ok(());
+  };
+
+  let staged = stage_text_file("cluster-registries", "yaml", contents)?;
+  let install_result = install_staged_file(ctx, &staged, destination);
+  let _ = fs::remove_file(&staged);
+  install_result
 }
 
 fn render_rke2_config(spec: &ClusterInstallSpec) -> String {
@@ -729,12 +794,6 @@ fn render_rke2_config(spec: &ClusterInstallSpec) -> String {
 fn render_kubelet_config() -> String {
   format!(
     "apiVersion: kubelet.config.k8s.io/v1beta1\nkind: KubeletConfiguration\nmaxPods: {NODE_MAX_PODS}\n"
-  )
-}
-
-fn render_k3s_traefik_ports_config(http_port: u16, https_port: u16) -> String {
-  format!(
-    "apiVersion: helm.cattle.io/v1\nkind: HelmChartConfig\nmetadata:\n  name: traefik\n  namespace: kube-system\nspec:\n  valuesContent: |-\n    ports:\n      web:\n        exposedPort: {http_port}\n      websecure:\n        exposedPort: {https_port}\n"
   )
 }
 

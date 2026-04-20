@@ -1,8 +1,4 @@
-use std::{
-  net::Ipv4Addr,
-  thread,
-  time::Duration,
-};
+use std::{net::Ipv4Addr, thread, time::Duration};
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -11,7 +7,7 @@ use tracing::debug;
 use crate::{
   config::{
     InstallStepId, InstallTargetRole, KubernetesDistribution, KubernetesInstallSource,
-    Ret2BootConfig,
+    PlatformTlsMode, Ret2BootConfig,
   },
   startup::RuntimeState,
 };
@@ -419,6 +415,26 @@ impl<'a> StepPlanContext<'a> {
       .application_exposure
   }
 
+  pub fn kubernetes_disable_traefik(&self) -> Option<bool> {
+    self
+      .config
+      .install
+      .questionnaire
+      .kubernetes
+      .bootstrap
+      .disable_traefik
+  }
+
+  pub fn kubernetes_enable_china_registry_mirrors(&self) -> Option<bool> {
+    self
+      .config
+      .install
+      .questionnaire
+      .kubernetes
+      .mirrors
+      .enable_china_registry_mirrors
+  }
+
   pub fn deployment_profile(&self) -> Option<crate::config::DeploymentProfile> {
     self
       .config
@@ -450,10 +466,110 @@ impl<'a> StepPlanContext<'a> {
       .token
       .as_deref()
   }
+
+  pub fn platform_tls_mode(&self) -> Option<PlatformTlsMode> {
+    self.config.install.questionnaire.platform.tls.mode
+  }
+
+  pub fn platform_tls_secret_name(&self) -> Option<&str> {
+    self
+      .config
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .secret_name
+      .as_deref()
+  }
+
+  pub fn platform_tls_domains(&self) -> &[String] {
+    &self.config.install.questionnaire.platform.tls.domains
+  }
+
+  pub fn platform_tls_acme_email(&self) -> Option<&str> {
+    self
+      .config
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .acme_email
+      .as_deref()
+  }
+
+  pub fn platform_tls_acme_dns_provider(&self) -> Option<&str> {
+    self
+      .config
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .acme_dns_provider
+      .as_deref()
+  }
+
+  pub fn platform_tls_acme_dns_credentials(&self) -> Option<&str> {
+    self
+      .config
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .acme_dns_credentials
+      .as_deref()
+  }
+
+  pub fn platform_tls_certificate_path(&self) -> Option<&str> {
+    self
+      .config
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .certificate_path
+      .as_deref()
+  }
+
+  pub fn platform_tls_key_path(&self) -> Option<&str> {
+    self
+      .config
+      .install
+      .questionnaire
+      .platform
+      .tls
+      .key_path
+      .as_deref()
+  }
+
+  pub fn platform_nodeport_guard_enabled(&self) -> Option<bool> {
+    self
+      .config
+      .install
+      .questionnaire
+      .platform
+      .nodeport_security
+      .guard_enabled
+  }
+
+  pub fn platform_nodeport_cluster_interface(&self) -> Option<&str> {
+    self
+      .config
+      .install
+      .questionnaire
+      .platform
+      .nodeport_security
+      .cluster_interface
+      .as_deref()
+  }
 }
 
 fn infer_deployment_profile(config: &Ret2BootConfig) -> Option<crate::config::DeploymentProfile> {
-  let public_host = config.install.questionnaire.platform.public_host.as_deref()?;
+  let public_host = config
+    .install
+    .questionnaire
+    .platform
+    .public_host
+    .as_deref()?;
 
   if public_host.parse::<Ipv4Addr>().is_ok()
     || public_host.ends_with(".nip.io")

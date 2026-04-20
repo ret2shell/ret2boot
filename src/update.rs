@@ -603,9 +603,11 @@ fn request_remote_asset(
   asset
     .accept
     .apply(
-      asset
-        .auth
-        .apply(client.get(&asset.request_url).header(USER_AGENT, user_agent())),
+      asset.auth.apply(
+        client
+          .get(&asset.request_url)
+          .header(USER_AGENT, user_agent()),
+      ),
     )
     .send()
     .with_context(|| format!("failed to request release asset `{}`", asset.request_url))
@@ -721,7 +723,15 @@ fn xdg_cache_home() -> Option<PathBuf> {
 }
 
 fn is_root_user() -> bool {
-  unsafe { libc::geteuid() == 0 }
+  #[cfg(unix)]
+  {
+    unsafe { libc::geteuid() == 0 }
+  }
+
+  #[cfg(not(unix))]
+  {
+    false
+  }
 }
 
 fn target_env() -> Option<&'static str> {
@@ -749,8 +759,7 @@ mod tests {
 
   #[test]
   fn rejects_empty_gh_auth_token_output() {
-    let error =
-      parse_gh_auth_token(b" \n").expect_err("empty `gh auth token` output should fail");
+    let error = parse_gh_auth_token(b" \n").expect_err("empty `gh auth token` output should fail");
 
     assert!(error.to_string().contains("returned an empty token"));
   }

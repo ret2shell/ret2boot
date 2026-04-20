@@ -17,16 +17,20 @@ use toml::Value as TomlValue;
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   support::{
-    command_exists, find_existing_path, install_directory, install_staged_file, stage_text_file,
-    yaml_quote,
+    command_exists, find_existing_path, install_directory, install_staged_file,
+    managed_tls_certificate_path, managed_tls_key_path, render_container_registry_config,
+    stage_text_file, yaml_quote,
   },
 };
 use crate::{
   config::{
     ApplicationExposureMode, DeploymentProfile, InstallStepId, InstallTargetRole,
     KubernetesDistribution, PlatformServiceDeploymentMode, PlatformServiceId, PlatformStorageMode,
+    PlatformTlsMode,
   },
-  install::collectors::{Collector, InputCollector, SingleSelectCollector},
+  install::collectors::{
+    Collector, ConfirmCollector, InputCollector, SecretCollector, SingleSelectCollector,
+  },
   ui, update,
 };
 
@@ -73,7 +77,8 @@ const POSTGRESQL_LEGACY_MOUNT_PATH: &str = "mountPath: /var/lib/postgresql/data"
 const POSTGRESQL_PERSISTENT_MOUNT_PATH: &str = "mountPath: /var/lib/postgresql";
 const PLATFORM_TEMPLATE_CONTAINERS_MARKER: &str = "      containers:\n";
 const PLATFORM_TEMPLATE_VOLUME_MOUNTS_MARKER: &str = "          volumeMounts:\n";
-const PLATFORM_TEMPLATE_RESOURCES_MARKER: &str = "          {{- with .Values.platform.resources }}\n";
+const PLATFORM_TEMPLATE_RESOURCES_MARKER: &str =
+  "          {{- with .Values.platform.resources }}\n";
 const PLATFORM_TEMPLATE_VOLUMES_MARKER: &str = "      volumes:\n";
 const PLATFORM_TEMPLATE_NODE_SELECTOR_MARKER: &str =
   "      {{- with .Values.platform.nodeSelector }}\n";
@@ -345,6 +350,8 @@ impl AtomicInstallStep for PlatformDeploymentStep {
 
     collect_platform_disk_plan(ctx)?;
     collect_platform_public_host(ctx)?;
+    collect_platform_tls(ctx)?;
+    collect_nodeport_security(ctx)?;
     ensure_generated_platform_credentials(ctx)?;
 
     Ok(())
@@ -382,6 +389,16 @@ impl AtomicInstallStep for PlatformDeploymentStep {
       )
       .to_string(),
     ];
+
+    if summary.tls_enabled {
+      details.push(format!(
+        "TLS is enabled for external access using secret `{}`",
+        summary
+          .tls_secret_name
+          .as_deref()
+          .unwrap_or("ret2shell-tls")
+      ));
+    }
 
     if summary.unallocated_local_disk_gib > 0 {
       details.push(
@@ -599,6 +616,8 @@ struct PlatformPlanSummary {
   public_host: String,
   ingress_host: String,
   ingress_class_name: String,
+  tls_enabled: bool,
+  tls_secret_name: Option<String>,
   signing_key: String,
   blocked_content: String,
   internal_database_password: String,
@@ -654,6 +673,18 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
       anyhow!("kubernetes distribution is required before planning the platform deployment")
     })?)
     .to_string();
+  let tls_enabled =
+    ctx.platform_tls_mode().unwrap_or(PlatformTlsMode::Disabled) != PlatformTlsMode::Disabled;
+  let tls_secret_name = if tls_enabled {
+    Some(
+      ctx
+        .platform_tls_secret_name()
+        .ok_or_else(|| anyhow!("a TLS secret name is required when TLS is enabled"))?
+        .to_string(),
+    )
+  } else {
+    None
+  };
   let signing_key = required_platform_secret(
     ctx
       .config()
@@ -734,6 +765,8 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     public_host: endpoint.public_host.clone(),
     ingress_host: endpoint.ingress_host.clone(),
     ingress_class_name,
+    tls_enabled,
+    tls_secret_name,
     signing_key,
     blocked_content,
     internal_database_password,
@@ -862,9 +895,12 @@ fn collect_platform_public_host(ctx: &mut StepQuestionContext<'_>) -> Result<()>
   let profile = ctx.as_plan_context().deployment_profile().ok_or_else(|| {
     anyhow!("deployment profile is required before collecting the platform public host")
   })?;
-  let exposure = ctx.as_plan_context().application_exposure().ok_or_else(|| {
-    anyhow!("application exposure mode is required before collecting the platform public host")
-  })?;
+  let exposure = ctx
+    .as_plan_context()
+    .application_exposure()
+    .ok_or_else(|| {
+      anyhow!("application exposure mode is required before collecting the platform public host")
+    })?;
   let default_host = ctx
     .config()
     .install
@@ -910,6 +946,260 @@ fn collect_platform_public_host(ctx: &mut StepQuestionContext<'_>) -> Result<()>
     "install.questionnaire.platform.public_host",
     &input_host,
     |config| config.set_platform_public_host(input_host.clone()),
+  )?;
+
+  Ok(())
+}
+
+fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
+  let exposure = ctx
+    .as_plan_context()
+    .application_exposure()
+    .ok_or_else(|| {
+      anyhow!("application exposure mode is required before collecting TLS settings")
+    })?;
+  let public_host = ctx
+    .config()
+    .install
+    .questionnaire
+    .platform
+    .public_host
+    .clone()
+    .ok_or_else(|| anyhow!("platform public host is required before collecting TLS settings"))?;
+  let existing_mode = ctx
+    .as_plan_context()
+    .platform_tls_mode()
+    .unwrap_or(match exposure {
+      ApplicationExposureMode::Ingress => PlatformTlsMode::AcmeDns,
+      ApplicationExposureMode::NodePortExternalNginx => PlatformTlsMode::Disabled,
+    });
+  let enable_tls_default = existing_mode != PlatformTlsMode::Disabled;
+  let enable_tls = ConfirmCollector::new(
+    "Enable TLS for external platform access?",
+    enable_tls_default,
+  )
+  .collect()?;
+
+  if !enable_tls {
+    ctx.persist_change(
+      "install.questionnaire.platform.tls.mode",
+      "disabled",
+      |config| config.set_platform_tls_mode(PlatformTlsMode::Disabled),
+    )?;
+    return Ok(());
+  }
+
+  let tls_modes = [PlatformTlsMode::AcmeDns, PlatformTlsMode::ProvidedFiles];
+  let tls_mode_labels = vec![
+    "Automatic ACME DNS challenge (recommended)".to_string(),
+    "Use existing certificate and key files".to_string(),
+  ];
+  let default_tls_mode = if existing_mode == PlatformTlsMode::ProvidedFiles {
+    1
+  } else {
+    0
+  };
+  let tls_mode =
+    tls_modes[SingleSelectCollector::new("Select the TLS provisioning mode", tls_mode_labels)
+      .with_default(default_tls_mode)
+      .collect_index()?];
+
+  ctx.persist_change(
+    "install.questionnaire.platform.tls.mode",
+    tls_mode.as_config_value(),
+    |config| config.set_platform_tls_mode(tls_mode),
+  )?;
+
+  let default_secret_name = ctx
+    .as_plan_context()
+    .platform_tls_secret_name()
+    .unwrap_or("ret2shell-tls")
+    .to_string();
+  let secret_name = InputCollector::new("Kubernetes TLS secret name")
+    .with_default(default_secret_name)
+    .collect()?
+    .trim()
+    .to_string();
+  ctx.persist_change(
+    "install.questionnaire.platform.tls.secret_name",
+    &secret_name,
+    |config| config.set_platform_tls_secret_name(secret_name.clone()),
+  )?;
+
+  let default_domains = if ctx.as_plan_context().platform_tls_domains().is_empty() {
+    public_host.clone()
+  } else {
+    ctx.as_plan_context().platform_tls_domains().join(",")
+  };
+  let domains = InputCollector::new("TLS certificate domains (comma-separated)")
+    .with_default(default_domains)
+    .collect()?;
+  let domains = domains
+    .split(',')
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+  if domains.is_empty() {
+    bail!("at least one TLS certificate domain is required when TLS is enabled");
+  }
+  ctx.persist_change(
+    "install.questionnaire.platform.tls.domains",
+    &domains.join(","),
+    |config| config.set_platform_tls_domains(domains.clone()),
+  )?;
+
+  match tls_mode {
+    PlatformTlsMode::Disabled => {}
+    PlatformTlsMode::AcmeDns => {
+      if public_host_is_ipv4(&public_host)
+        || public_host.ends_with(".nip.io")
+        || public_host.ends_with(".sslip.io")
+      {
+        bail!(
+          "automatic ACME DNS issuance requires a user-controlled DNS hostname and cannot be used with a bare IPv4 address or a derived wildcard DNS hostname"
+        );
+      }
+
+      let acme_email = InputCollector::new("ACME account email")
+        .with_default(
+          ctx
+            .as_plan_context()
+            .platform_tls_acme_email()
+            .unwrap_or("admin@example.com")
+            .to_string(),
+        )
+        .collect()?
+        .trim()
+        .to_string();
+      ctx.persist_change(
+        "install.questionnaire.platform.tls.acme_email",
+        &acme_email,
+        |config| config.set_platform_tls_acme_email(acme_email.clone()),
+      )?;
+
+      let dns_provider =
+        InputCollector::new("acme.sh DNS provider code (for example: dns_dp, dns_cf, dns_ali)")
+          .with_default(
+            ctx
+              .as_plan_context()
+              .platform_tls_acme_dns_provider()
+              .unwrap_or("dns_dp")
+              .to_string(),
+          )
+          .collect()?
+          .trim()
+          .to_string();
+      ctx.persist_change(
+        "install.questionnaire.platform.tls.acme_dns_provider",
+        &dns_provider,
+        |config| config.set_platform_tls_acme_dns_provider(dns_provider.clone()),
+      )?;
+
+      let credentials_prompt =
+        "DNS provider credentials as shell assignments (example: DP_Id=1234;DP_Key=abcd)";
+      let credentials = match ctx.as_plan_context().platform_tls_acme_dns_credentials() {
+        Some(existing_value) => SecretCollector::new(credentials_prompt)
+          .with_existing_value(existing_value.to_string())
+          .collect()?,
+        None => SecretCollector::new(credentials_prompt).collect()?,
+      };
+      ctx.persist_change(
+        "install.questionnaire.platform.tls.acme_dns_credentials",
+        "[redacted]",
+        |config| config.set_platform_tls_acme_dns_credentials(credentials.clone()),
+      )?;
+    }
+    PlatformTlsMode::ProvidedFiles => {
+      let certificate_path = InputCollector::new("TLS fullchain certificate path")
+        .with_default(
+          ctx
+            .as_plan_context()
+            .platform_tls_certificate_path()
+            .unwrap_or("/etc/ssl/certs/fullchain.pem")
+            .to_string(),
+        )
+        .collect()?
+        .trim()
+        .to_string();
+      ctx.persist_change(
+        "install.questionnaire.platform.tls.certificate_path",
+        &certificate_path,
+        |config| config.set_platform_tls_certificate_path(certificate_path.clone()),
+      )?;
+
+      let key_path = InputCollector::new("TLS private key path")
+        .with_default(
+          ctx
+            .as_plan_context()
+            .platform_tls_key_path()
+            .unwrap_or("/etc/ssl/private/privkey.pem")
+            .to_string(),
+        )
+        .collect()?
+        .trim()
+        .to_string();
+      ctx.persist_change(
+        "install.questionnaire.platform.tls.key_path",
+        &key_path,
+        |config| config.set_platform_tls_key_path(key_path.clone()),
+      )?;
+    }
+  }
+
+  Ok(())
+}
+
+fn collect_nodeport_security(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
+  let exposure = ctx
+    .as_plan_context()
+    .application_exposure()
+    .ok_or_else(|| {
+      anyhow!("application exposure mode is required before collecting nodeport security settings")
+    })?;
+
+  if exposure != ApplicationExposureMode::NodePortExternalNginx {
+    let _ = ctx.persist_change(
+      "install.questionnaire.platform.nodeport_security.guard_enabled",
+      "false",
+      |config| config.set_platform_nodeport_guard_enabled(false),
+    )?;
+    return Ok(());
+  }
+
+  let guard_enabled = ConfirmCollector::new(
+    "Protect the internal NodePort services with iptables raw rules?",
+    ctx
+      .as_plan_context()
+      .platform_nodeport_guard_enabled()
+      .unwrap_or(true),
+  )
+  .collect()?;
+  ctx.persist_change(
+    "install.questionnaire.platform.nodeport_security.guard_enabled",
+    if guard_enabled { "true" } else { "false" },
+    |config| config.set_platform_nodeport_guard_enabled(guard_enabled),
+  )?;
+
+  if !guard_enabled {
+    return Ok(());
+  }
+
+  let cluster_interface = InputCollector::new("Cluster bridge interface for NodePort allow rules")
+    .with_default(
+      ctx
+        .as_plan_context()
+        .platform_nodeport_cluster_interface()
+        .unwrap_or("cni0")
+        .to_string(),
+    )
+    .collect()?
+    .trim()
+    .to_string();
+  ctx.persist_change(
+    "install.questionnaire.platform.nodeport_security.cluster_interface",
+    &cluster_interface,
+    |config| config.set_platform_nodeport_cluster_interface(cluster_interface.clone()),
   )?;
 
   Ok(())
@@ -1667,12 +1957,8 @@ fn sync_platform_release(
   let desired_values = render_platform_values_yaml(&summary)?;
   let _ = sync_managed_text_file(ctx, PLATFORM_VALUES_DEST, &desired_values, "600")?;
   let storage_manifest = render_platform_storage_manifest(&summary, Some(&node_hostname));
-  let storage_changed = sync_storage_manifest(
-    ctx,
-    step,
-    &cluster_access,
-    storage_manifest.clone(),
-  )?;
+  let storage_changed =
+    sync_storage_manifest(ctx, step, &cluster_access, storage_manifest.clone())?;
 
   let rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
   let reference_files = load_reference_config_files()?;
@@ -1684,8 +1970,12 @@ fn sync_platform_release(
     .blocked_content
     .clone()
     .unwrap_or_else(|| rendered_artifacts.blocked_content.clone());
-  let host_config_changed =
-    sync_managed_text_file(ctx, BACKEND_CONFIG_TOML_DEST, &desired_host_config_toml, "600")?;
+  let host_config_changed = sync_managed_text_file(
+    ctx,
+    BACKEND_CONFIG_TOML_DEST,
+    &desired_host_config_toml,
+    "600",
+  )?;
   let host_blocked_changed =
     sync_managed_text_file(ctx, BACKEND_BLOCKED_DEST, &desired_host_blocked, "600")?;
   let host_license_changed = sync_optional_managed_text_file(
@@ -1694,11 +1984,9 @@ fn sync_platform_release(
     reference_files.license_content.as_deref(),
     "644",
   )?;
-  sync_deployment_exports(
-    ctx,
-    &desired_values,
-    storage_manifest.as_deref(),
-  )?;
+  sync_deployment_exports(ctx, &desired_values, storage_manifest.as_deref())?;
+  cluster_access.apply_manifest(ctx, BACKEND_INIT_MANIFEST_DEST)?;
+  ensure_platform_tls_secret(ctx, &cluster_access, &summary)?;
   let cluster_state = query_cluster_release_state(ctx, &cluster_access, &helm_envs)?;
   let report = PlatformSyncReport {
     release_exists: cluster_state.release_exists,
@@ -1710,7 +1998,8 @@ fn sync_platform_release(
     config_changed: host_config_changed
       || cluster_state.config_toml.as_deref() != Some(rendered_artifacts.config_toml.as_str()),
     blocked_changed: host_blocked_changed
-      || cluster_state.blocked_content.as_deref() != Some(rendered_artifacts.blocked_content.as_str()),
+      || cluster_state.blocked_content.as_deref()
+        != Some(rendered_artifacts.blocked_content.as_str()),
     storage_changed,
   };
 
@@ -1744,6 +2033,48 @@ fn sync_platform_release(
   }
 
   Ok(report)
+}
+
+fn ensure_platform_tls_secret(
+  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess, summary: &PlatformPlanSummary,
+) -> Result<()> {
+  if summary.application_exposure != ApplicationExposureMode::Ingress || !summary.tls_enabled {
+    return Ok(());
+  }
+
+  let secret_name = summary
+    .tls_secret_name
+    .as_deref()
+    .ok_or_else(|| anyhow!("a TLS secret name is required for ingress TLS"))?;
+  let (certificate_path, key_path) = resolved_managed_tls_material_paths(&ctx.as_plan_context())?;
+
+  if !Path::new(&certificate_path).is_file() {
+    bail!("the managed TLS certificate file `{certificate_path}` is missing");
+  }
+  if !Path::new(&key_path).is_file() {
+    bail!("the managed TLS key file `{key_path}` is missing");
+  }
+
+  let secret_manifest = cluster_access.capture(
+    ctx,
+    &[
+      "-n".to_string(),
+      PLATFORM_NAMESPACE.to_string(),
+      "create".to_string(),
+      "secret".to_string(),
+      "tls".to_string(),
+      secret_name.to_string(),
+      format!("--cert={certificate_path}"),
+      format!("--key={key_path}"),
+      "--dry-run=client".to_string(),
+      "-o".to_string(),
+      "yaml".to_string(),
+    ],
+  )?;
+  let staged_secret = stage_text_file("platform-tls-secret", "yaml", secret_manifest)?;
+  let apply_result = cluster_access.apply_manifest(ctx, &staged_secret.display().to_string());
+  let _ = fs::remove_file(&staged_secret);
+  apply_result
 }
 
 fn resolve_chart_reference(
@@ -1894,9 +2225,8 @@ fn prepare_patched_chart(
   )?;
 
   let platform_template_path = format!("{BACKEND_CHART_DIR}/templates/platform.yaml");
-  let original_template = read_privileged_text_file(ctx, &platform_template_path)?.ok_or_else(|| {
-    anyhow!("the extracted ret2shell chart is missing `templates/platform.yaml`")
-  })?;
+  let original_template = read_privileged_text_file(ctx, &platform_template_path)?
+    .ok_or_else(|| anyhow!("the extracted ret2shell chart is missing `templates/platform.yaml`"))?;
   let patched_template = patch_platform_chart_template(&original_template)?;
   let _ = sync_managed_text_file(ctx, &platform_template_path, &patched_template, "644")?;
   patch_postgresql_chart_templates(ctx)?;
@@ -1930,7 +2260,9 @@ fn patch_platform_chart_template(contents: &str) -> Result<String> {
 }
 
 fn patch_postgresql_chart_templates(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  for template_path in find_chart_template_paths(Path::new(&format!("{BACKEND_CHART_DIR}/templates")))? {
+  for template_path in
+    find_chart_template_paths(Path::new(&format!("{BACKEND_CHART_DIR}/templates")))?
+  {
     let display_path = template_path.display().to_string();
     let Some(original_template) = read_privileged_text_file(ctx, &display_path)? else {
       continue;
@@ -1962,11 +2294,17 @@ fn find_chart_template_paths(root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn collect_chart_template_paths(root: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
-  for entry in fs::read_dir(root)
-    .with_context(|| format!("failed to read chart template directory `{}`", root.display()))?
-  {
+  for entry in fs::read_dir(root).with_context(|| {
+    format!(
+      "failed to read chart template directory `{}`",
+      root.display()
+    )
+  })? {
     let entry = entry.with_context(|| {
-      format!("failed to inspect chart template directory `{}`", root.display())
+      format!(
+        "failed to inspect chart template directory `{}`",
+        root.display()
+      )
     })?;
     let path = entry.path();
 
@@ -1989,15 +2327,13 @@ fn collect_chart_template_paths(root: &Path, paths: &mut Vec<PathBuf>) -> Result
 fn replace_first_block(
   contents: &str, start_marker: &str, end_marker: &str, replacement: &str,
 ) -> Result<String> {
-  let start = contents.find(start_marker).ok_or_else(|| {
-    anyhow!("unable to find the expected chart template marker `{start_marker}`")
-  })?;
+  let (start, start_marker_len) = find_block_marker(contents, start_marker)
+    .ok_or_else(|| anyhow!("unable to find the expected chart template marker `{start_marker}`"))?;
   let end = if start_marker == end_marker {
-    start + start_marker.len()
+    start + start_marker_len
   } else {
-    contents[start..]
-      .find(end_marker)
-      .map(|offset| start + offset)
+    find_block_marker(&contents[start..], end_marker)
+      .map(|(offset, _)| start + offset)
       .ok_or_else(|| anyhow!("unable to find the expected chart template marker `{end_marker}`"))?
   };
 
@@ -2007,6 +2343,21 @@ fn replace_first_block(
     replacement,
     &contents[end..]
   ))
+}
+
+fn find_block_marker(contents: &str, marker: &str) -> Option<(usize, usize)> {
+  if let Some(index) = contents.find(marker) {
+    return Some((index, marker.len()));
+  }
+
+  let trimmed = marker.trim_start();
+  contents.find(trimmed).map(|index| {
+    let line_start = contents[..index]
+      .rfind('\n')
+      .map(|newline| newline + 1)
+      .unwrap_or(0);
+    (line_start, index - line_start + trimmed.len())
+  })
 }
 
 fn detect_node_hostname_label(
@@ -2023,7 +2374,12 @@ fn detect_node_hostname_label(
 
   let nodes_output = cluster_access.capture(
     ctx,
-    &["get".to_string(), "nodes".to_string(), "-o".to_string(), "json".to_string()],
+    &[
+      "get".to_string(),
+      "nodes".to_string(),
+      "-o".to_string(),
+      "json".to_string(),
+    ],
   )?;
   let nodes: ClusterNodeList =
     serde_json::from_str(&nodes_output).context("failed to parse `kubectl get nodes -o json`")?;
@@ -2041,7 +2397,10 @@ fn detect_node_hostname_label(
         .metadata
         .labels
         .contains_key("node-role.kubernetes.io/control-plane")
-        || node.metadata.labels.contains_key("node-role.kubernetes.io/master");
+        || node
+          .metadata
+          .labels
+          .contains_key("node-role.kubernetes.io/master");
 
       ClusterNodeIdentity {
         name: node.metadata.name,
@@ -2214,11 +2573,6 @@ fn sync_optional_managed_text_file(
 fn sync_runtime_registry_config(
   ctx: &StepExecutionContext<'_>, summary: &PlatformPlanSummary,
 ) -> Result<bool> {
-  let registry = planned_service(summary, PlatformServiceId::Registry)?;
-  if registry.deployment != PlatformServiceDeploymentMode::Local {
-    return Ok(false);
-  }
-
   let destination = match ctx
     .as_plan_context()
     .kubernetes_distribution()
@@ -2227,21 +2581,32 @@ fn sync_runtime_registry_config(
     KubernetesDistribution::K3s => K3S_REGISTRIES_DEST,
     KubernetesDistribution::Rke2 => RKE2_REGISTRIES_DEST,
   };
+  let registry = planned_service(summary, PlatformServiceId::Registry)?;
+  let internal_registry_host = if registry.deployment == PlatformServiceDeploymentMode::Local {
+    Some(summary.internal_registry_host.as_str())
+  } else {
+    None
+  };
+  let Some(contents) = render_container_registry_config(
+    ctx
+      .as_plan_context()
+      .kubernetes_enable_china_registry_mirrors()
+      .unwrap_or(false),
+    internal_registry_host,
+  ) else {
+    return Ok(false);
+  };
 
-  sync_managed_text_file(
-    ctx,
-    destination,
-    &render_runtime_registry_config(&summary.internal_registry_host),
-    "600",
-  )
+  sync_managed_text_file(ctx, destination, &contents, "600")
 }
 
 fn restart_cluster_runtime_service(ctx: &StepExecutionContext<'_>) -> Result<()> {
   let service_name = match ctx
     .as_plan_context()
     .kubernetes_distribution()
-    .ok_or_else(|| anyhow!("kubernetes distribution is required before restarting the cluster runtime"))?
-  {
+    .ok_or_else(|| {
+      anyhow!("kubernetes distribution is required before restarting the cluster runtime")
+    })? {
     KubernetesDistribution::K3s => "k3s",
     KubernetesDistribution::Rke2 => "rke2-server",
   };
@@ -2250,14 +2615,6 @@ fn restart_cluster_runtime_service(ctx: &StepExecutionContext<'_>) -> Result<()>
     "systemctl",
     &["restart".to_string(), service_name.to_string()],
     &[],
-  )
-}
-
-fn render_runtime_registry_config(registry_host: &str) -> String {
-  format!(
-    "mirrors:\n  {quoted}:\n    endpoint:\n      - {endpoint}\nconfigs:\n  {quoted}:\n    tls:\n      insecure_skip_verify: true\n",
-    quoted = yaml_quote(registry_host),
-    endpoint = yaml_quote(&format!("http://{registry_host}")),
   )
 }
 
@@ -2320,8 +2677,7 @@ fn sync_deployment_exports(
   )?;
 
   if let Some(storage_manifest) = storage_manifest {
-    let _ =
-      sync_managed_text_file(ctx, BACKEND_VOLUMES_MANIFEST_DEST, storage_manifest, "644")?;
+    let _ = sync_managed_text_file(ctx, BACKEND_VOLUMES_MANIFEST_DEST, storage_manifest, "644")?;
   }
 
   let _ = sync_managed_text_file(
@@ -2356,7 +2712,10 @@ fn sync_deployment_exports(
 fn load_reference_config_files() -> Result<ReferenceConfigFiles> {
   Ok(ReferenceConfigFiles {
     config_toml: read_first_existing_text(&["config.toml", "Raw_Config_files/config/config.toml"])?,
-    blocked_content: read_first_existing_text(&["blocked.txt", "Raw_Config_files/config/blocked.txt"])?,
+    blocked_content: read_first_existing_text(&[
+      "blocked.txt",
+      "Raw_Config_files/config/blocked.txt",
+    ])?,
     license_content: read_first_existing_text(&["license", "Raw_Config_files/config/license"])?,
   })
 }
@@ -2368,17 +2727,19 @@ fn read_first_existing_text(paths: &[&str]) -> Result<Option<String>> {
       continue;
     }
 
-    let contents = fs::read_to_string(candidate)
-      .with_context(|| format!("failed to read reference config file `{}`", candidate.display()))?;
+    let contents = fs::read_to_string(candidate).with_context(|| {
+      format!(
+        "failed to read reference config file `{}`",
+        candidate.display()
+      )
+    })?;
     return Ok(Some(contents));
   }
 
   Ok(None)
 }
 
-fn merge_runtime_config_with_reference(
-  generated: &str, reference: Option<&str>,
-) -> Result<String> {
+fn merge_runtime_config_with_reference(generated: &str, reference: Option<&str>) -> Result<String> {
   let Some(reference) = reference else {
     return Ok(generated.to_string());
   };
@@ -2759,12 +3120,7 @@ fn query_cluster_release_state(
       "{{index .data \"blocked.txt\"}}",
     )?,
     platform_mount_layout: cluster_access
-      .capture_namespaced_object_yaml(
-        ctx,
-        PLATFORM_NAMESPACE,
-        "statefulset",
-        "ret2shell-platform",
-      )?
+      .capture_namespaced_object_yaml(ctx, PLATFORM_NAMESPACE, "statefulset", "ret2shell-platform")?
       .map(|document| extract_platform_mount_layout(&document)),
   })
 }
@@ -2896,7 +3252,9 @@ fn extract_platform_mount_layout(document: &YamlValue) -> YamlValue {
   let platform_volume_mounts = template_spec["containers"]
     .as_sequence()
     .and_then(|containers| {
-      containers.iter().find(|container| container["name"].as_str() == Some("platform"))
+      containers
+        .iter()
+        .find(|container| container["name"].as_str() == Some("platform"))
     })
     .map(|container| {
       YamlValue::Sequence(
@@ -2906,10 +3264,7 @@ fn extract_platform_mount_layout(document: &YamlValue) -> YamlValue {
           .flatten()
           .map(|mount| {
             let mut normalized = Mapping::new();
-            normalized.insert(
-              YamlValue::String("name".to_string()),
-              mount["name"].clone(),
-            );
+            normalized.insert(YamlValue::String("name".to_string()), mount["name"].clone());
             normalized.insert(
               YamlValue::String("mountPath".to_string()),
               mount["mountPath"].clone(),
@@ -2957,10 +3312,8 @@ fn extract_platform_mount_layout(document: &YamlValue) -> YamlValue {
               .flatten()
               .map(|mount| {
                 let mut normalized_mount = Mapping::new();
-                normalized_mount.insert(
-                  YamlValue::String("name".to_string()),
-                  mount["name"].clone(),
-                );
+                normalized_mount
+                  .insert(YamlValue::String("name".to_string()), mount["name"].clone());
                 normalized_mount.insert(
                   YamlValue::String("mountPath".to_string()),
                   mount["mountPath"].clone(),
@@ -3064,10 +3417,7 @@ fn extract_platform_mount_layout(document: &YamlValue) -> YamlValue {
     YamlValue::String("initContainers".to_string()),
     normalized_init_containers,
   );
-  layout.insert(
-    YamlValue::String("volumes".to_string()),
-    normalized_volumes,
-  );
+  layout.insert(YamlValue::String("volumes".to_string()), normalized_volumes);
   layout.insert(
     YamlValue::String("platformVolumeMounts".to_string()),
     platform_volume_mounts,
@@ -3087,7 +3437,7 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
   let queue = planned_service(summary, PlatformServiceId::Queue)?;
   let registry = planned_service(summary, PlatformServiceId::Registry)?;
   let logs = planned_service(summary, PlatformServiceId::Logs)?;
-  let external_https = summary.application_exposure == ApplicationExposureMode::Ingress;
+  let external_https = summary.tls_enabled;
   let external_origin = derive_external_origin(&summary.public_host, external_https);
 
   let mut lines = vec!["platform:".to_string()];
@@ -3100,6 +3450,17 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
         "    className: {}",
         yaml_quote(&summary.ingress_class_name)
       ));
+      lines.push("    annotations:".to_string());
+      lines.push(format!(
+        "      kubernetes.io/ingress.class: {}",
+        yaml_quote(&summary.ingress_class_name)
+      ));
+      if summary.tls_enabled {
+        lines.push(format!(
+          "      nginx.ingress.kubernetes.io/ssl-redirect: {}",
+          yaml_quote("true")
+        ));
+      }
       lines.push("    hosts:".to_string());
       lines.push(format!(
         "      - host: {}",
@@ -3113,6 +3474,15 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
       lines.push(format!(
         "            pathType: {PLATFORM_INGRESS_PATH_TYPE}"
       ));
+      if let Some(tls_secret_name) = &summary.tls_secret_name {
+        lines.push("    tls:".to_string());
+        lines.push(format!(
+          "      - secretName: {}",
+          yaml_quote(tls_secret_name)
+        ));
+        lines.push("        hosts:".to_string());
+        lines.push(format!("          - {}", yaml_quote(&summary.ingress_host)));
+      }
     }
     ApplicationExposureMode::NodePortExternalNginx => {
       lines.push("    type: nodePort".to_string());
@@ -3352,8 +3722,13 @@ fn render_platform_storage_manifest(
       lines.push("---".to_string());
     }
 
-    let storage_class = service.storage_class_name.as_deref().expect("local service has storage class");
-    let size_gib = service.persistence_size_gib.expect("local service has persistence size");
+    let storage_class = service
+      .storage_class_name
+      .as_deref()
+      .expect("local service has storage class");
+    let size_gib = service
+      .persistence_size_gib
+      .expect("local service has persistence size");
     lines.push("apiVersion: v1".to_string());
     lines.push("kind: PersistentVolume".to_string());
     lines.push("metadata:".to_string());
@@ -3555,7 +3930,9 @@ fn validate_public_host_for_profile(host: &str, profile: DeploymentProfile) -> R
     }
     DeploymentProfile::PublicDomain => {
       if public_host_is_ipv4(host) {
-        bail!("the public-domain profile requires a bound DNS hostname and does not accept a bare IPv4 address");
+        bail!(
+          "the public-domain profile requires a bound DNS hostname and does not accept a bare IPv4 address"
+        );
       }
       if host.ends_with(".nip.io") || host.ends_with(".sslip.io") {
         bail!(
@@ -3583,14 +3960,27 @@ fn canonical_public_host_input(raw: &str) -> Result<&str> {
     bail!("the public host must be a domain name or IPv4 address");
   }
 
-  Ok(trimmed
-    .split_once(':')
-    .map(|(host, _)| host)
-    .unwrap_or(trimmed))
+  Ok(
+    trimmed
+      .split_once(':')
+      .map(|(host, _)| host)
+      .unwrap_or(trimmed),
+  )
 }
 
 fn derive_internal_registry_host(public_host: &str) -> String {
   format!("{public_host}:{INTERNAL_REGISTRY_NODE_PORT}")
+}
+
+fn resolved_managed_tls_material_paths(ctx: &StepPlanContext<'_>) -> Result<(String, String)> {
+  let secret_name = ctx
+    .platform_tls_secret_name()
+    .ok_or_else(|| anyhow!("a TLS secret name is required before resolving managed TLS paths"))?;
+
+  Ok((
+    managed_tls_certificate_path(secret_name),
+    managed_tls_key_path(secret_name),
+  ))
 }
 
 fn derive_external_origin(public_host: &str, external_https: bool) -> String {
@@ -3617,9 +4007,7 @@ fn derive_internal_ingress_host_from_ipv4(public_host: &str) -> String {
 
 fn public_host_prompt(profile: DeploymentProfile) -> String {
   match profile {
-    DeploymentProfile::LocalLab => {
-      t!("install.platform.public_host.prompt.local_lab").to_string()
-    }
+    DeploymentProfile::LocalLab => t!("install.platform.public_host.prompt.local_lab").to_string(),
     DeploymentProfile::CampusInternal => {
       t!("install.platform.public_host.prompt.campus_internal").to_string()
     }
@@ -3643,7 +4031,7 @@ fn deployment_profile_label(profile: DeploymentProfile) -> String {
 
 fn platform_ingress_class(distribution: KubernetesDistribution) -> &'static str {
   match distribution {
-    KubernetesDistribution::K3s => "traefik",
+    KubernetesDistribution::K3s => "nginx",
     KubernetesDistribution::Rke2 => "nginx",
   }
 }
@@ -3926,7 +4314,11 @@ mod tests {
     );
     assert_eq!(
       parsed["platform"]["ingress"]["className"],
-      Value::String("traefik".to_string())
+      Value::String("nginx".to_string())
+    );
+    assert_eq!(
+      parsed["platform"]["ingress"]["tls"][0]["secretName"],
+      Value::String("ret2shell-tls".to_string())
     );
     assert_eq!(
       parsed["platform"]["config"]["auth"]["signingKey"],
@@ -3958,6 +4350,7 @@ mod tests {
   fn render_platform_values_yaml_maps_local_lab_profile_to_nodeport() {
     let mut summary = sample_summary();
     summary.application_exposure = ApplicationExposureMode::NodePortExternalNginx;
+    summary.tls_enabled = false;
     summary.public_host = "192.168.23.132".to_string();
     summary.ingress_host = "ret2shell-192-168-23-132.ret2boot.invalid".to_string();
     summary.internal_registry_host = "192.168.23.132:30310".to_string();
@@ -3968,7 +4361,10 @@ mod tests {
       parsed["platform"]["exposure"]["type"],
       Value::String("nodePort".to_string())
     );
-    assert_eq!(parsed["platform"]["service"]["nodePort"], Value::Number(30307.into()));
+    assert_eq!(
+      parsed["platform"]["service"]["nodePort"],
+      Value::Number(30307.into())
+    );
     assert_eq!(
       parsed["platform"]["config"]["server"]["externalDomain"],
       Value::String("192.168.23.132".to_string())
@@ -4006,7 +4402,7 @@ mod tests {
       ApplicationExposureMode::Ingress,
       DeploymentProfile::LocalLab,
     )
-      .expect("bare IPv4 input should derive a DNS host before Helm rendering");
+    .expect("bare IPv4 input should derive a DNS host before Helm rendering");
 
     assert_eq!(endpoint.public_host, "ret2shell-103-151-173-97.nip.io");
     assert_eq!(endpoint.ingress_host, "ret2shell-103-151-173-97.nip.io");
@@ -4031,9 +4427,8 @@ mod tests {
   #[test]
   fn render_platform_storage_manifest_emits_local_pvs_and_storage_classes() {
     let summary = sample_summary();
-    let rendered =
-      render_platform_storage_manifest(&summary, Some("ret2shell-node-master"))
-        .expect("storage manifest exists");
+    let rendered = render_platform_storage_manifest(&summary, Some("ret2shell-node-master"))
+      .expect("storage manifest exists");
     let documents = Deserializer::from_str(&rendered)
       .map(Value::deserialize)
       .collect::<std::result::Result<Vec<_>, _>>()
@@ -4146,7 +4541,7 @@ spec:\n\
     let patched = patch_platform_chart_template(original).expect("template patch succeeds");
 
     assert!(patched.contains("initContainers:"));
-    assert!(patched.contains("containers:\n        - name: platform"));
+    assert!(patched.contains("- name: platform"));
     assert!(patched.contains("mountPath: /var/www/html"));
     assert!(patched.contains("path: /srv/ret2shell/frontend"));
     assert!(patched.contains("mountPath: /etc/ret2shell"));
@@ -4157,7 +4552,8 @@ spec:\n\
 
   #[test]
   fn chart_cache_copy_is_skipped_when_source_is_already_in_system_cache() {
-    let path = Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.4/ret2shell-3.10.4.tgz");
+    let path =
+      Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.4/ret2shell-3.10.4.tgz");
 
     assert!(!chart_cache_copy_required(path, path));
   }
@@ -4201,7 +4597,11 @@ spec:\n\
     )
     .expect_err("campus internal deployments should require internal DNS hostnames");
 
-    assert!(error.to_string().contains("requires an internal DNS hostname"));
+    assert!(
+      error
+        .to_string()
+        .contains("requires an internal DNS hostname")
+    );
   }
 
   #[test]
@@ -4339,7 +4739,10 @@ limit = 5
     let parsed: TomlValue = toml::from_str(&merged).expect("merged config parses");
 
     assert_eq!(parsed["cluster"]["auto_infer"], TomlValue::Boolean(false));
-    assert_eq!(parsed["cluster"]["kube_config_path"], TomlValue::String(String::new()));
+    assert_eq!(
+      parsed["cluster"]["kube_config_path"],
+      TomlValue::String(String::new())
+    );
     assert_eq!(
       parsed["cluster"]["node_selector"],
       TomlValue::String("challenge".to_string())
@@ -4352,7 +4755,10 @@ limit = 5
       parsed["logging"]["directory"],
       TomlValue::String("/var/lib/ret2shell/log".to_string())
     );
-    assert_eq!(parsed["server"]["external_https"], TomlValue::Boolean(false));
+    assert_eq!(
+      parsed["server"]["external_https"],
+      TomlValue::Boolean(false)
+    );
     assert_eq!(
       parsed["server"]["cors_origins"],
       TomlValue::String("*".to_string())
@@ -4364,11 +4770,13 @@ limit = 5
 
   #[test]
   fn render_runtime_registry_config_marks_registry_as_insecure_http() {
-    let rendered = render_runtime_registry_config("192.168.23.132:30310");
+    let rendered = render_container_registry_config(true, Some("192.168.23.132:30310"))
+      .expect("registry config should render");
 
     assert!(rendered.contains("'192.168.23.132:30310'"));
     assert!(rendered.contains("'http://192.168.23.132:30310'"));
     assert!(rendered.contains("insecure_skip_verify: true"));
+    assert!(rendered.contains("'https://docker.1ms.run'"));
   }
 
   fn sample_summary() -> PlatformPlanSummary {
@@ -4380,7 +4788,9 @@ limit = 5
       application_exposure: ApplicationExposureMode::Ingress,
       public_host: "ctf.example.com".to_string(),
       ingress_host: "ctf.example.com".to_string(),
-      ingress_class_name: "traefik".to_string(),
+      ingress_class_name: "nginx".to_string(),
+      tls_enabled: true,
+      tls_secret_name: Some("ret2shell-tls".to_string()),
       signing_key: "signing-key".to_string(),
       blocked_content: String::new(),
       internal_database_password: "database-secret".to_string(),
