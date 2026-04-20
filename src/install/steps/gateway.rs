@@ -6,6 +6,7 @@ use rust_i18n::t;
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   SystemPackageManager,
+  cluster::CLUSTER_CIDR,
   platform::{PLATFORM_NODE_PORT, resolve_public_endpoint},
   support::{
     command_exists, detect_nginx_binary_path, ensure_symlink, install_directory,
@@ -37,6 +38,12 @@ pub struct ApplicationGatewayStep;
 struct ManagedTlsMaterial {
   certificate_path: String,
   key_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum NodePortGuardTarget {
+  Interface(String),
+  SourceCidr(String),
 }
 
 impl AtomicInstallStep for ApplicationGatewayStep {
@@ -586,24 +593,9 @@ fn ensure_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
     return Ok(());
   }
 
-  let cluster_interface = resolve_nodeport_cluster_interface()?;
+  let cluster_target = resolve_nodeport_guard_target()?;
   for args in [
-    vec![
-      "-t".to_string(),
-      "raw".to_string(),
-      "-C".to_string(),
-      "PREROUTING".to_string(),
-      "-i".to_string(),
-      cluster_interface.clone(),
-      "-p".to_string(),
-      "tcp".to_string(),
-      "-m".to_string(),
-      "multiport".to_string(),
-      "--dports".to_string(),
-      format!("{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"),
-      "-j".to_string(),
-      "ACCEPT".to_string(),
-    ],
+    nodeport_guard_rule_args("-C", &cluster_target, "ACCEPT"),
     vec![
       "-t".to_string(),
       "raw".to_string(),
@@ -648,27 +640,12 @@ fn ensure_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
 }
 
 fn remove_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let cluster_interface = match resolve_nodeport_cluster_interface() {
-    Ok(interface) => interface,
+  let cluster_target = match resolve_nodeport_guard_target() {
+    Ok(target) => target,
     Err(_) => return Ok(()),
   };
   for args in [
-    vec![
-      "-t".to_string(),
-      "raw".to_string(),
-      "-D".to_string(),
-      "PREROUTING".to_string(),
-      "-i".to_string(),
-      cluster_interface.clone(),
-      "-p".to_string(),
-      "tcp".to_string(),
-      "-m".to_string(),
-      "multiport".to_string(),
-      "--dports".to_string(),
-      format!("{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"),
-      "-j".to_string(),
-      "ACCEPT".to_string(),
-    ],
+    nodeport_guard_rule_args("-D", &cluster_target, "ACCEPT"),
     vec![
       "-t".to_string(),
       "raw".to_string(),
@@ -910,14 +887,14 @@ fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
   }
 }
 
-fn resolve_nodeport_cluster_interface() -> Result<String> {
+fn resolve_nodeport_guard_target() -> Result<NodePortGuardTarget> {
   let interfaces = discover_network_interfaces()?;
-  choose_cluster_bridge_interface(&interfaces).ok_or_else(|| {
-    anyhow!(
-      "unable to detect the cluster bridge interface for NodePort guard rules; detected interfaces: {}",
-      interfaces.join(", ")
-    )
-  })
+
+  if let Some(interface) = choose_cluster_bridge_interface(&interfaces) {
+    return Ok(NodePortGuardTarget::Interface(interface));
+  }
+
+  Ok(NodePortGuardTarget::SourceCidr(CLUSTER_CIDR.to_string()))
 }
 
 fn discover_network_interfaces() -> Result<Vec<String>> {
@@ -946,11 +923,45 @@ fn choose_cluster_bridge_interface(interfaces: &[String]) -> Option<String> {
   None
 }
 
+fn nodeport_guard_rule_args(
+  operation: &str, target: &NodePortGuardTarget, verdict: &str,
+) -> Vec<String> {
+  let mut args = vec![
+    "-t".to_string(),
+    "raw".to_string(),
+    operation.to_string(),
+    "PREROUTING".to_string(),
+  ];
+
+  match target {
+    NodePortGuardTarget::Interface(interface) => {
+      args.push("-i".to_string());
+      args.push(interface.clone());
+    }
+    NodePortGuardTarget::SourceCidr(cidr) => {
+      args.push("-s".to_string());
+      args.push(cidr.clone());
+    }
+  }
+
+  args.extend([
+    "-p".to_string(),
+    "tcp".to_string(),
+    "-m".to_string(),
+    "multiport".to_string(),
+    "--dports".to_string(),
+    format!("{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"),
+    "-j".to_string(),
+    verdict.to_string(),
+  ]);
+  args
+}
+
 #[cfg(test)]
 mod tests {
   use super::{
-    ManagedTlsMaterial, choose_cluster_bridge_interface, remove_custom_site_include_line,
-    render_nginx_site,
+    ManagedTlsMaterial, NodePortGuardTarget, choose_cluster_bridge_interface,
+    nodeport_guard_rule_args, remove_custom_site_include_line, render_nginx_site,
   };
 
   #[test]
@@ -1015,5 +1026,29 @@ mod tests {
       choose_cluster_bridge_interface(&interfaces),
       Some("flannel.1".to_string())
     );
+  }
+
+  #[test]
+  fn nodeport_guard_rule_uses_interface_when_detected() {
+    let args = nodeport_guard_rule_args(
+      "-C",
+      &NodePortGuardTarget::Interface("cni0".to_string()),
+      "ACCEPT",
+    );
+
+    assert!(args.windows(2).any(|pair| pair == ["-i", "cni0"]));
+    assert!(!args.iter().any(|value| value == "-s"));
+  }
+
+  #[test]
+  fn nodeport_guard_rule_falls_back_to_cluster_cidr_source_match() {
+    let args = nodeport_guard_rule_args(
+      "-C",
+      &NodePortGuardTarget::SourceCidr("10.42.0.0/16".to_string()),
+      "ACCEPT",
+    );
+
+    assert!(args.windows(2).any(|pair| pair == ["-s", "10.42.0.0/16"]));
+    assert!(!args.iter().any(|value| value == "-i"));
   }
 }
