@@ -1104,35 +1104,32 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
       )?;
     }
     PlatformTlsMode::ProvidedFiles => {
-      let certificate_path =
-        InputCollector::new(t!("install.platform.tls.certificate_path.prompt"))
-          .with_default(
-            ctx
-              .as_plan_context()
-              .platform_tls_certificate_path()
-              .unwrap_or("/etc/ssl/certs/fullchain.pem")
-              .to_string(),
-          )
-          .collect()?
-          .trim()
-          .to_string();
+      let certificate_path = collect_existing_host_file_path(
+        ctx,
+        t!("install.platform.tls.certificate_path.prompt").to_string(),
+        ctx
+          .as_plan_context()
+          .platform_tls_certificate_path()
+          .unwrap_or("/etc/ssl/certs/fullchain.pem")
+          .to_string(),
+        t!("install.platform.tls.certificate_path.missing").to_string(),
+      )?;
       ctx.persist_change(
         "install.questionnaire.platform.tls.certificate_path",
         &certificate_path,
         |config| config.set_platform_tls_certificate_path(certificate_path.clone()),
       )?;
 
-      let key_path = InputCollector::new(t!("install.platform.tls.key_path.prompt"))
-        .with_default(
-          ctx
-            .as_plan_context()
-            .platform_tls_key_path()
-            .unwrap_or("/etc/ssl/private/privkey.pem")
-            .to_string(),
-        )
-        .collect()?
-        .trim()
-        .to_string();
+      let key_path = collect_existing_host_file_path(
+        ctx,
+        t!("install.platform.tls.key_path.prompt").to_string(),
+        ctx
+          .as_plan_context()
+          .platform_tls_key_path()
+          .unwrap_or("/etc/ssl/private/privkey.pem")
+          .to_string(),
+        t!("install.platform.tls.key_path.missing").to_string(),
+      )?;
       ctx.persist_change(
         "install.questionnaire.platform.tls.key_path",
         &key_path,
@@ -1142,6 +1139,30 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
   }
 
   Ok(())
+}
+
+fn collect_existing_host_file_path(
+  ctx: &StepQuestionContext<'_>, prompt: String, default: String, missing_message: String,
+) -> Result<String> {
+  loop {
+    let path = InputCollector::new(prompt.clone())
+      .with_default(default.clone())
+      .collect()?
+      .trim()
+      .to_string();
+
+    if host_regular_file_exists(ctx, &path) {
+      return Ok(path);
+    }
+
+    println!("{}", ui::warning(format!("{missing_message} ({path})")));
+  }
+}
+
+fn host_regular_file_exists(ctx: &StepQuestionContext<'_>, path: &str) -> bool {
+  ctx
+    .run_privileged_command("test", &["-f".to_string(), path.to_string()], &[])
+    .is_ok()
 }
 
 fn collect_nodeport_security(ctx: &mut StepQuestionContext<'_>) -> Result<()> {

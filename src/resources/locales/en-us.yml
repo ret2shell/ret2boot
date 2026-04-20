@@ -265,6 +265,8 @@ install.platform.tls.acme_dns_provider.prompt: "acme.sh DNS provider code (for e
 install.platform.tls.acme_dns_credentials.prompt: "DNS provider credentials as shell assignments (example: DP_Id=1234;DP_Key=abcd)"
 install.platform.tls.certificate_path.prompt: "TLS fullchain certificate path"
 install.platform.tls.key_path.prompt: "TLS private key path"
+install.platform.tls.certificate_path.missing: "The certificate file does not exist on the target host or is not a regular file. Enter a valid fullchain path, for example /etc/letsencrypt/live/<domain>/fullchain.pem"
+install.platform.tls.key_path.missing: "The private key file does not exist on the target host or is not a regular file. Enter a valid key path, for example /etc/letsencrypt/live/<domain>/privkey.pem"
 install.platform.nodeport_security.guard_prompt: "Protect the internal NodePort services with iptables raw rules?"
 install.platform.nodeport_security.interface_prompt: "Cluster bridge interface used by the NodePort allow rules"
 install.platform.public_host.prompt.nodeport: "Enter the address users will use for Scheme A. You may use a hostname or a bare IPv4 address."

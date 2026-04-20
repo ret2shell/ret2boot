@@ -558,6 +558,9 @@ fn ensure_managed_tls_assets(ctx: &StepExecutionContext<'_>) -> Result<Option<Ma
         .platform_tls_key_path()
         .ok_or_else(|| anyhow!("a TLS key path is required when TLS mode is provided-files"))?;
 
+      ensure_host_file_exists(ctx, source_certificate_path, "TLS certificate")?;
+      ensure_host_file_exists(ctx, source_key_path, "TLS private key")?;
+
       ctx.run_privileged_command(
         "install",
         &[
@@ -585,6 +588,17 @@ fn ensure_managed_tls_assets(ctx: &StepExecutionContext<'_>) -> Result<Option<Ma
     certificate_path,
     key_path,
   }))
+}
+
+fn ensure_host_file_exists(ctx: &StepExecutionContext<'_>, path: &str, label: &str) -> Result<()> {
+  if ctx
+    .run_privileged_command("test", &["-f".to_string(), path.to_string()], &[])
+    .is_ok()
+  {
+    return Ok(());
+  }
+
+  bail!("{label} file `{path}` is missing on the target host or is not a regular file")
 }
 
 fn install_acme_certificate(

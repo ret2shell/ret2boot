@@ -583,6 +583,20 @@ impl<'a> StepQuestionContext<'a> {
     StepPlanContext::new(self.config, self.runtime, self.config_path)
   }
 
+  pub fn run_privileged_command(
+    &self, program: &str, args: &[String], envs: &[(String, String)],
+  ) -> Result<()> {
+    self.runtime.run_privileged_command(program, args, envs)
+  }
+
+  pub fn run_privileged_command_capture(
+    &self, program: &str, args: &[String], envs: &[(String, String)],
+  ) -> Result<String> {
+    self
+      .runtime
+      .run_privileged_command_capture(program, args, envs)
+  }
+
   pub fn persist_change<F>(&mut self, field: &'static str, value: &str, update: F) -> Result<bool>
   where
     F: FnOnce(&mut Ret2BootConfig) -> bool, {
