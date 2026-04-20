@@ -18,8 +18,8 @@ use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   support::{
     command_exists, find_existing_path, install_directory, install_staged_file,
-    managed_tls_certificate_path, managed_tls_key_path, render_container_registry_config,
-    stage_text_file, yaml_quote,
+    managed_tls_asset_name, managed_tls_certificate_path, managed_tls_key_path,
+    render_container_registry_config, stage_text_file, yaml_quote,
   },
 };
 use crate::{
@@ -391,13 +391,21 @@ impl AtomicInstallStep for PlatformDeploymentStep {
     ];
 
     if summary.tls_enabled {
-      details.push(format!(
-        "TLS is enabled for external access using secret `{}`",
-        summary
-          .tls_secret_name
-          .as_deref()
-          .unwrap_or("ret2shell-tls")
-      ));
+      match summary.application_exposure {
+        ApplicationExposureMode::Ingress => details.push(
+          t!(
+            "install.steps.platform_plan.tls_ingress_secret",
+            secret = summary
+              .tls_secret_name
+              .as_deref()
+              .unwrap_or("ret2shell-tls")
+          )
+          .to_string(),
+        ),
+        ApplicationExposureMode::NodePortExternalNginx => {
+          details.push(t!("install.steps.platform_plan.tls_external_gateway").to_string());
+        }
+      }
     }
 
     if summary.unallocated_local_disk_gib > 0 {
@@ -675,7 +683,7 @@ fn platform_plan_summary(ctx: &StepPlanContext<'_>) -> Result<PlatformPlanSummar
     .to_string();
   let tls_enabled =
     ctx.platform_tls_mode().unwrap_or(PlatformTlsMode::Disabled) != PlatformTlsMode::Disabled;
-  let tls_secret_name = if tls_enabled {
+  let tls_secret_name = if tls_enabled && application_exposure == ApplicationExposureMode::Ingress {
     Some(
       ctx
         .platform_tls_secret_name()
@@ -974,11 +982,9 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
       ApplicationExposureMode::NodePortExternalNginx => PlatformTlsMode::Disabled,
     });
   let enable_tls_default = existing_mode != PlatformTlsMode::Disabled;
-  let enable_tls = ConfirmCollector::new(
-    "Enable TLS for external platform access?",
-    enable_tls_default,
-  )
-  .collect()?;
+  let enable_tls =
+    ConfirmCollector::new(t!("install.platform.tls.enable_prompt"), enable_tls_default)
+      .collect()?;
 
   if !enable_tls {
     ctx.persist_change(
@@ -991,8 +997,8 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
 
   let tls_modes = [PlatformTlsMode::AcmeDns, PlatformTlsMode::ProvidedFiles];
   let tls_mode_labels = vec![
-    "Automatic ACME DNS challenge (recommended)".to_string(),
-    "Use existing certificate and key files".to_string(),
+    t!("install.platform.tls.mode.acme_dns").to_string(),
+    t!("install.platform.tls.mode.provided_files").to_string(),
   ];
   let default_tls_mode = if existing_mode == PlatformTlsMode::ProvidedFiles {
     1
@@ -1000,7 +1006,7 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
     0
   };
   let tls_mode =
-    tls_modes[SingleSelectCollector::new("Select the TLS provisioning mode", tls_mode_labels)
+    tls_modes[SingleSelectCollector::new(t!("install.platform.tls.mode.prompt"), tls_mode_labels)
       .with_default(default_tls_mode)
       .collect_index()?];
 
@@ -1010,28 +1016,30 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
     |config| config.set_platform_tls_mode(tls_mode),
   )?;
 
-  let default_secret_name = ctx
-    .as_plan_context()
-    .platform_tls_secret_name()
-    .unwrap_or("ret2shell-tls")
-    .to_string();
-  let secret_name = InputCollector::new("Kubernetes TLS secret name")
-    .with_default(default_secret_name)
-    .collect()?
-    .trim()
-    .to_string();
-  ctx.persist_change(
-    "install.questionnaire.platform.tls.secret_name",
-    &secret_name,
-    |config| config.set_platform_tls_secret_name(secret_name.clone()),
-  )?;
+  if exposure == ApplicationExposureMode::Ingress {
+    let default_secret_name = ctx
+      .as_plan_context()
+      .platform_tls_secret_name()
+      .unwrap_or("ret2shell-tls")
+      .to_string();
+    let secret_name = InputCollector::new(t!("install.platform.tls.secret_name.prompt"))
+      .with_default(default_secret_name)
+      .collect()?
+      .trim()
+      .to_string();
+    ctx.persist_change(
+      "install.questionnaire.platform.tls.secret_name",
+      &secret_name,
+      |config| config.set_platform_tls_secret_name(secret_name.clone()),
+    )?;
+  }
 
   let default_domains = if ctx.as_plan_context().platform_tls_domains().is_empty() {
     public_host.clone()
   } else {
     ctx.as_plan_context().platform_tls_domains().join(",")
   };
-  let domains = InputCollector::new("TLS certificate domains (comma-separated)")
+  let domains = InputCollector::new(t!("install.platform.tls.domains.prompt"))
     .with_default(default_domains)
     .collect()?;
   let domains = domains
@@ -1041,7 +1049,7 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
     .map(str::to_string)
     .collect::<Vec<_>>();
   if domains.is_empty() {
-    bail!("at least one TLS certificate domain is required when TLS is enabled");
+    bail!("{}", t!("install.platform.tls.domains.required"));
   }
   ctx.persist_change(
     "install.questionnaire.platform.tls.domains",
@@ -1056,12 +1064,10 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
         || public_host.ends_with(".nip.io")
         || public_host.ends_with(".sslip.io")
       {
-        bail!(
-          "automatic ACME DNS issuance requires a user-controlled DNS hostname and cannot be used with a bare IPv4 address or a derived wildcard DNS hostname"
-        );
+        bail!("{}", t!("install.platform.tls.acme_dns.public_host_error"));
       }
 
-      let acme_email = InputCollector::new("ACME account email")
+      let acme_email = InputCollector::new(t!("install.platform.tls.acme_email.prompt"))
         .with_default(
           ctx
             .as_plan_context()
@@ -1078,26 +1084,24 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
         |config| config.set_platform_tls_acme_email(acme_email.clone()),
       )?;
 
-      let dns_provider =
-        InputCollector::new("acme.sh DNS provider code (for example: dns_dp, dns_cf, dns_ali)")
-          .with_default(
-            ctx
-              .as_plan_context()
-              .platform_tls_acme_dns_provider()
-              .unwrap_or("dns_dp")
-              .to_string(),
-          )
-          .collect()?
-          .trim()
-          .to_string();
+      let dns_provider = InputCollector::new(t!("install.platform.tls.acme_dns_provider.prompt"))
+        .with_default(
+          ctx
+            .as_plan_context()
+            .platform_tls_acme_dns_provider()
+            .unwrap_or("dns_dp")
+            .to_string(),
+        )
+        .collect()?
+        .trim()
+        .to_string();
       ctx.persist_change(
         "install.questionnaire.platform.tls.acme_dns_provider",
         &dns_provider,
         |config| config.set_platform_tls_acme_dns_provider(dns_provider.clone()),
       )?;
 
-      let credentials_prompt =
-        "DNS provider credentials as shell assignments (example: DP_Id=1234;DP_Key=abcd)";
+      let credentials_prompt = t!("install.platform.tls.acme_dns_credentials.prompt");
       let credentials = match ctx.as_plan_context().platform_tls_acme_dns_credentials() {
         Some(existing_value) => SecretCollector::new(credentials_prompt)
           .with_existing_value(existing_value.to_string())
@@ -1111,24 +1115,25 @@ fn collect_platform_tls(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
       )?;
     }
     PlatformTlsMode::ProvidedFiles => {
-      let certificate_path = InputCollector::new("TLS fullchain certificate path")
-        .with_default(
-          ctx
-            .as_plan_context()
-            .platform_tls_certificate_path()
-            .unwrap_or("/etc/ssl/certs/fullchain.pem")
-            .to_string(),
-        )
-        .collect()?
-        .trim()
-        .to_string();
+      let certificate_path =
+        InputCollector::new(t!("install.platform.tls.certificate_path.prompt"))
+          .with_default(
+            ctx
+              .as_plan_context()
+              .platform_tls_certificate_path()
+              .unwrap_or("/etc/ssl/certs/fullchain.pem")
+              .to_string(),
+          )
+          .collect()?
+          .trim()
+          .to_string();
       ctx.persist_change(
         "install.questionnaire.platform.tls.certificate_path",
         &certificate_path,
         |config| config.set_platform_tls_certificate_path(certificate_path.clone()),
       )?;
 
-      let key_path = InputCollector::new("TLS private key path")
+      let key_path = InputCollector::new(t!("install.platform.tls.key_path.prompt"))
         .with_default(
           ctx
             .as_plan_context()
@@ -1168,7 +1173,7 @@ fn collect_nodeport_security(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
   }
 
   let guard_enabled = ConfirmCollector::new(
-    "Protect the internal NodePort services with iptables raw rules?",
+    t!("install.platform.nodeport_security.guard_prompt"),
     ctx
       .as_plan_context()
       .platform_nodeport_guard_enabled()
@@ -1185,17 +1190,18 @@ fn collect_nodeport_security(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
     return Ok(());
   }
 
-  let cluster_interface = InputCollector::new("Cluster bridge interface for NodePort allow rules")
-    .with_default(
-      ctx
-        .as_plan_context()
-        .platform_nodeport_cluster_interface()
-        .unwrap_or("cni0")
-        .to_string(),
-    )
-    .collect()?
-    .trim()
-    .to_string();
+  let cluster_interface =
+    InputCollector::new(t!("install.platform.nodeport_security.interface_prompt"))
+      .with_default(
+        ctx
+          .as_plan_context()
+          .platform_nodeport_cluster_interface()
+          .unwrap_or("cni0")
+          .to_string(),
+      )
+      .collect()?
+      .trim()
+      .to_string();
   ctx.persist_change(
     "install.questionnaire.platform.nodeport_security.cluster_interface",
     &cluster_interface,
@@ -3973,13 +3979,14 @@ fn derive_internal_registry_host(public_host: &str) -> String {
 }
 
 fn resolved_managed_tls_material_paths(ctx: &StepPlanContext<'_>) -> Result<(String, String)> {
-  let secret_name = ctx
-    .platform_tls_secret_name()
-    .ok_or_else(|| anyhow!("a TLS secret name is required before resolving managed TLS paths"))?;
+  let exposure = ctx.application_exposure().ok_or_else(|| {
+    anyhow!("application exposure mode is required before resolving managed TLS paths")
+  })?;
+  let asset_name = managed_tls_asset_name(exposure, ctx.platform_tls_secret_name())?;
 
   Ok((
-    managed_tls_certificate_path(secret_name),
-    managed_tls_key_path(secret_name),
+    managed_tls_certificate_path(&asset_name),
+    managed_tls_key_path(&asset_name),
   ))
 }
 

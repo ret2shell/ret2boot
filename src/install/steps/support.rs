@@ -12,6 +12,9 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::blocking::Client;
 
 use super::context::StepExecutionContext;
+use crate::config::ApplicationExposureMode;
+
+const EXTERNAL_NGINX_TLS_ASSET_NAME: &str = "external-nginx";
 
 pub(crate) fn stage_remote_script(url: &str, prefix: &str) -> Result<PathBuf> {
   let client = Client::builder()
@@ -324,6 +327,21 @@ pub(crate) fn managed_tls_directory(secret_name: &str) -> String {
   format!("/etc/ret2shell/tls/{secret_name}")
 }
 
+pub(crate) fn managed_tls_asset_name(
+  exposure: ApplicationExposureMode, kubernetes_tls_secret_name: Option<&str>,
+) -> Result<String> {
+  match exposure {
+    ApplicationExposureMode::Ingress => {
+      kubernetes_tls_secret_name
+        .map(str::to_string)
+        .ok_or_else(|| {
+          anyhow!("a Kubernetes TLS secret name is required when ingress TLS is enabled")
+        })
+    }
+    ApplicationExposureMode::NodePortExternalNginx => Ok(EXTERNAL_NGINX_TLS_ASSET_NAME.to_string()),
+  }
+}
+
 pub(crate) fn managed_tls_certificate_path(secret_name: &str) -> String {
   format!("{}/fullchain.pem", managed_tls_directory(secret_name))
 }
@@ -336,7 +354,10 @@ pub(crate) fn managed_tls_key_path(secret_name: &str) -> String {
 mod tests {
   use std::path::Path;
 
-  use super::{render_container_registry_config, script_invocation_from_contents};
+  use super::{
+    managed_tls_asset_name, render_container_registry_config, script_invocation_from_contents,
+  };
+  use crate::config::ApplicationExposureMode;
 
   #[test]
   fn uses_script_shebang_when_present() {
@@ -379,5 +400,21 @@ mod tests {
     assert!(rendered.contains("'registry.internal:30310'"));
     assert!(rendered.contains("'http://registry.internal:30310'"));
     assert!(rendered.contains("insecure_skip_verify: true"));
+  }
+
+  #[test]
+  fn managed_tls_asset_name_uses_secret_for_ingress() {
+    let name = managed_tls_asset_name(ApplicationExposureMode::Ingress, Some("ret2shell-tls"))
+      .expect("ingress TLS should use the kubernetes secret name");
+
+    assert_eq!(name, "ret2shell-tls");
+  }
+
+  #[test]
+  fn managed_tls_asset_name_uses_fixed_scope_for_external_nginx() {
+    let name = managed_tls_asset_name(ApplicationExposureMode::NodePortExternalNginx, None)
+      .expect("external nginx TLS should not require a kubernetes secret");
+
+    assert_eq!(name, "external-nginx");
   }
 }

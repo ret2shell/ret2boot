@@ -9,8 +9,9 @@ use super::{
   platform::{PLATFORM_NODE_PORT, resolve_public_endpoint},
   support::{
     command_exists, detect_nginx_binary_path, ensure_symlink, install_directory,
-    install_staged_file, managed_tls_certificate_path, managed_tls_directory, managed_tls_key_path,
-    nginx_service_exists, stage_remote_script, stage_text_file,
+    install_staged_file, managed_tls_asset_name, managed_tls_certificate_path,
+    managed_tls_directory, managed_tls_key_path, nginx_service_exists, stage_remote_script,
+    stage_text_file,
   },
 };
 use crate::{
@@ -110,7 +111,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
         .map(application_exposure_label)
         .collect::<Vec<_>>();
 
-      supported_exposures[SingleSelectCollector::new(t!("install.exposure.prompt"), options)
+      supported_exposures[SingleSelectCollector::new(t!("install.exposure.entry_prompt"), options)
         .with_default(default)
         .collect_index()?]
     };
@@ -184,26 +185,21 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     match exposure {
       ApplicationExposureMode::Ingress => {
         details.push(t!("install.steps.gateway.ingress_detail").to_string());
-        details.push("ingress-nginx will be installed as a host-network daemonset".to_string());
+        details.push(t!("install.steps.gateway.ingress_host_network").to_string());
         if ctx.platform_tls_mode().unwrap_or(PlatformTlsMode::Disabled) != PlatformTlsMode::Disabled
         {
-          details.push(
-            "TLS certificates will be prepared before the platform helm release is installed"
-              .to_string(),
-          );
+          details.push(t!("install.steps.gateway.ingress_tls_prepare").to_string());
         }
       }
       ApplicationExposureMode::NodePortExternalNginx => {
         details.push(t!("install.steps.gateway.nodeport_detail").to_string());
         details.push(t!("install.steps.gateway.port_reservation").to_string());
         if ctx.platform_nodeport_guard_enabled().unwrap_or(false) {
-          details.push("iptables raw rules will block direct access to NodePort services except from the cluster bridge and loopback interfaces".to_string());
+          details.push(t!("install.steps.gateway.nodeport_guard").to_string());
         }
         if ctx.platform_tls_mode().unwrap_or(PlatformTlsMode::Disabled) != PlatformTlsMode::Disabled
         {
-          details.push(
-            "the external nginx gateway will terminate TLS with managed certificates".to_string(),
-          );
+          details.push(t!("install.steps.gateway.nodeport_tls_termination").to_string());
         }
 
         if let Some(path) = detect_nginx_binary_path() {
@@ -570,12 +566,13 @@ fn ensure_managed_tls_assets(ctx: &StepExecutionContext<'_>) -> Result<Option<Ma
     return Ok(None);
   }
 
-  let secret_name = plan_context
-    .platform_tls_secret_name()
-    .ok_or_else(|| anyhow!("a TLS secret name is required when TLS is enabled"))?;
-  let certificate_path = managed_tls_certificate_path(secret_name);
-  let key_path = managed_tls_key_path(secret_name);
-  let tls_directory = managed_tls_directory(secret_name);
+  let exposure = plan_context
+    .application_exposure()
+    .ok_or_else(|| anyhow!("application exposure mode is required before preparing TLS assets"))?;
+  let asset_name = managed_tls_asset_name(exposure, plan_context.platform_tls_secret_name())?;
+  let certificate_path = managed_tls_certificate_path(&asset_name);
+  let key_path = managed_tls_key_path(&asset_name);
+  let tls_directory = managed_tls_directory(&asset_name);
   install_directory(ctx, "/etc/ret2shell")?;
   install_directory(ctx, "/etc/ret2shell/tls")?;
   install_directory(ctx, &tls_directory)?;
@@ -1061,9 +1058,9 @@ fn remove_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
 
 fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
   match exposure {
-    ApplicationExposureMode::Ingress => t!("install.exposure.options.ingress").to_string(),
+    ApplicationExposureMode::Ingress => t!("install.exposure.entry_options.ingress").to_string(),
     ApplicationExposureMode::NodePortExternalNginx => {
-      t!("install.exposure.options.nodeport_external_nginx").to_string()
+      t!("install.exposure.entry_options.nodeport_external_nginx").to_string()
     }
   }
 }

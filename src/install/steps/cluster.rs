@@ -233,14 +233,14 @@ impl AtomicInstallStep for ClusterBootstrapStep {
   fn describe(&self, ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
     let spec = ClusterInstallSpec::from_plan_context(ctx)?;
 
-    let (title, detail) = match spec.role {
+    let (title, detail): (String, String) = match spec.role {
       InstallTargetRole::ControlPlane => (
-        t!("install.steps.cluster.control_plane"),
-        t!("install.steps.cluster.control_plane_detail"),
+        t!("install.steps.cluster.control_plane").to_string(),
+        t!("install.steps.cluster.control_plane_detail").to_string(),
       ),
       InstallTargetRole::Worker => (
-        t!("install.steps.cluster.worker"),
-        t!("install.steps.cluster.worker_detail"),
+        t!("install.steps.cluster.worker").to_string(),
+        t!("install.steps.cluster.worker_detail").to_string(),
       ),
     };
 
@@ -266,14 +266,14 @@ impl AtomicInstallStep for ClusterBootstrapStep {
     ];
 
     if spec.distribution == KubernetesDistribution::K3s && spec.disable_traefik {
-      details.push("k3s builtin traefik will be disabled during cluster bootstrap".to_string());
+      details.push(t!("install.steps.cluster.disable_traefik").to_string());
     }
 
     if ctx
       .kubernetes_enable_china_registry_mirrors()
       .unwrap_or(false)
     {
-      details.push("container registry mirrors will be configured for docker.io, ghcr.io, gcr.io, quay.io, and registry.k8s.io".to_string());
+      details.push(t!("install.steps.cluster.registry_mirrors").to_string());
     }
 
     if let Some(exposure) = spec.application_exposure {
@@ -863,9 +863,9 @@ fn kubernetes_source_label(
 
 fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
   match exposure {
-    ApplicationExposureMode::Ingress => t!("install.exposure.options.ingress").to_string(),
+    ApplicationExposureMode::Ingress => t!("install.exposure.entry_options.ingress").to_string(),
     ApplicationExposureMode::NodePortExternalNginx => {
-      t!("install.exposure.options.nodeport_external_nginx").to_string()
+      t!("install.exposure.entry_options.nodeport_external_nginx").to_string()
     }
   }
 }
