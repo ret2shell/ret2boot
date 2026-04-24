@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use anyhow::{Context, Result, anyhow, bail};
 use rust_i18n::t;
@@ -6,7 +6,6 @@ use rust_i18n::t;
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   SystemPackageManager,
-  cluster::CLUSTER_CIDR,
   platform::{PLATFORM_NODE_PORT, resolve_public_endpoint},
   support::{
     command_exists, detect_nginx_binary_path, ensure_symlink, install_directory,
@@ -16,7 +15,7 @@ use super::{
 };
 use crate::{
   config::{ApplicationExposureMode, InstallStepId, InstallTargetRole, PlatformTlsMode},
-  install::collectors::SingleSelectCollector,
+  install::collectors::{Collector, InputCollector, SingleSelectCollector},
   ui,
 };
 
@@ -32,6 +31,10 @@ const NGINX_SITE_INCLUDE_MARKER_DEFAULT: &str = "include /etc/nginx/sites-enable
 const NGINX_STREAM_INCLUDE_MARKER: &str = "include /etc/nginx/ret2boot-stream-enabled/*.conf;";
 const INGRESS_RELEASE_NAME: &str = "ingress-nginx";
 const INGRESS_NAMESPACE: &str = "ingress-nginx";
+const KUBERNETES_API_PORT: u16 = 6443;
+const KUBELET_SECURE_PORT: u16 = 10250;
+const INGRESS_GATEWAY_HTTP_PORT: u16 = 10080;
+const INGRESS_GATEWAY_HTTPS_PORT: u16 = 10443;
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
 pub struct ApplicationGatewayStep;
 
@@ -43,7 +46,6 @@ struct ManagedTlsMaterial {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum NodePortGuardTarget {
   Interface(String),
-  SourceCidr(String),
 }
 
 impl AtomicInstallStep for ApplicationGatewayStep {
@@ -142,6 +144,9 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       ApplicationExposureMode::Ingress => {
         details.push(t!("install.steps.gateway.ingress_detail").to_string());
         details.push(t!("install.steps.gateway.ingress_host_network").to_string());
+        if ctx.platform_nodeport_guard_enabled().unwrap_or(false) {
+          details.push(t!("install.steps.gateway.nodeport_guard").to_string());
+        }
         if ctx.platform_tls_mode().unwrap_or(PlatformTlsMode::Disabled) != PlatformTlsMode::Disabled
         {
           details.push(t!("install.steps.gateway.ingress_tls_prepare").to_string());
@@ -197,6 +202,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
 
     if exposure == ApplicationExposureMode::Ingress {
       let installed_by_ret2boot = install_ingress_nginx(ctx)?;
+      ensure_gateway_guard_rules(ctx)?;
       ctx.persist_change(
         "install.execution.gateway.ingress",
         INGRESS_RELEASE_NAME,
@@ -251,7 +257,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       &endpoint.public_host,
       tls_material.as_ref(),
     )?;
-    ensure_nodeport_guard_rules(ctx)?;
+    ensure_gateway_guard_rules(ctx)?;
     let nginx_binary = detect_nginx_binary_path();
     let nginx_command = nginx_binary
       .as_ref()
@@ -310,6 +316,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .unwrap_or(ApplicationExposureMode::Ingress.as_config_value());
 
     if mode == ApplicationExposureMode::Ingress.as_config_value() {
+      let _ = remove_gateway_guard_rules(ctx);
       if ctx
         .config()
         .install_step_metadata(self.id(), "ingress_installed_by_ret2boot")
@@ -330,7 +337,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     }
 
     cleanup_external_nginx_gateway(ctx)?;
-    let _ = remove_nodeport_guard_rules(ctx);
+    let _ = remove_gateway_guard_rules(ctx);
 
     if let Some(nginx_binary) = detect_nginx_binary_path() {
       let _ = ctx.run_privileged_command(
@@ -584,103 +591,71 @@ fn ensure_host_file_exists(ctx: &StepExecutionContext<'_>, path: &str, label: &s
   bail!("{label} file `{path}` is missing on the target host or is not a regular file")
 }
 
-fn ensure_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let plan_context = ctx.as_plan_context();
-  if !plan_context
+fn ensure_gateway_guard_rules(ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+  let guard_enabled = ctx
+    .as_plan_context()
     .platform_nodeport_guard_enabled()
-    .unwrap_or(false)
-  {
+    .unwrap_or(false);
+  if !guard_enabled {
     return Ok(());
   }
 
-  let cluster_target = resolve_nodeport_guard_target()?;
-  for args in [
-    nodeport_guard_rule_args("-C", &cluster_target, "ACCEPT"),
-    vec![
-      "-t".to_string(),
-      "raw".to_string(),
-      "-C".to_string(),
-      "PREROUTING".to_string(),
-      "-i".to_string(),
-      "lo".to_string(),
-      "-p".to_string(),
-      "tcp".to_string(),
-      "-m".to_string(),
-      "multiport".to_string(),
-      "--dports".to_string(),
-      format!("{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"),
-      "-j".to_string(),
-      "ACCEPT".to_string(),
-    ],
-    vec![
-      "-t".to_string(),
-      "raw".to_string(),
-      "-C".to_string(),
-      "PREROUTING".to_string(),
-      "-p".to_string(),
-      "tcp".to_string(),
-      "-m".to_string(),
-      "multiport".to_string(),
-      "--dports".to_string(),
-      format!("{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"),
-      "-j".to_string(),
-      "DROP".to_string(),
-    ],
-  ] {
-    if ctx.run_privileged_command("iptables", &args, &[]).is_err() {
-      let mut insert_args = args.clone();
-      insert_args[2] = "-I".to_string();
-      insert_args[3] = "PREROUTING".to_string();
-      insert_args.insert(4, "1".to_string());
-      ctx.run_privileged_command("iptables", &insert_args, &[])?;
-    }
+  let exposure = ctx
+    .as_plan_context()
+    .application_exposure()
+    .ok_or_else(|| {
+      anyhow!("application exposure mode is required before building gateway guard rules")
+    })?;
+  let protected_ports = protected_gateway_ports(exposure);
+  let cluster_target = resolve_nodeport_guard_target_for_install(ctx)?;
+  purge_gateway_guard_rules(ctx, &cluster_target, &protected_ports);
+  if let Some(legacy_ports) = legacy_protected_gateway_ports(exposure) {
+    purge_gateway_guard_rules(ctx, &cluster_target, &legacy_ports);
   }
+  insert_gateway_guard_rules(ctx, &cluster_target, &protected_ports)?;
 
   persist_iptables_rules(ctx)
 }
 
-fn remove_nodeport_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let cluster_target = match resolve_nodeport_guard_target() {
+fn remove_gateway_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  let exposure = match ctx.as_plan_context().application_exposure() {
+    Some(exposure) => exposure,
+    None => return Ok(()),
+  };
+  let protected_ports = protected_gateway_ports(exposure);
+  let cluster_target = match resolve_nodeport_guard_target_for_cleanup(ctx) {
     Ok(target) => target,
     Err(_) => return Ok(()),
   };
-  for args in [
-    nodeport_guard_rule_args("-D", &cluster_target, "ACCEPT"),
-    vec![
-      "-t".to_string(),
-      "raw".to_string(),
-      "-D".to_string(),
-      "PREROUTING".to_string(),
-      "-i".to_string(),
-      "lo".to_string(),
-      "-p".to_string(),
-      "tcp".to_string(),
-      "-m".to_string(),
-      "multiport".to_string(),
-      "--dports".to_string(),
-      format!("{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"),
-      "-j".to_string(),
-      "ACCEPT".to_string(),
-    ],
-    vec![
-      "-t".to_string(),
-      "raw".to_string(),
-      "-D".to_string(),
-      "PREROUTING".to_string(),
-      "-p".to_string(),
-      "tcp".to_string(),
-      "-m".to_string(),
-      "multiport".to_string(),
-      "--dports".to_string(),
-      format!("{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"),
-      "-j".to_string(),
-      "DROP".to_string(),
-    ],
-  ] {
-    let _ = ctx.run_privileged_command("iptables", &args, &[]);
+  purge_gateway_guard_rules(ctx, &cluster_target, &protected_ports);
+  if let Some(legacy_ports) = legacy_protected_gateway_ports(exposure) {
+    purge_gateway_guard_rules(ctx, &cluster_target, &legacy_ports);
   }
 
   let _ = persist_iptables_rules(ctx);
+  Ok(())
+}
+
+fn purge_gateway_guard_rules(
+  ctx: &StepExecutionContext<'_>, cluster_target: &NodePortGuardTarget, protected_ports: &str,
+) {
+  for args in gateway_guard_rules("-D", cluster_target, protected_ports) {
+    while ctx.run_privileged_command("iptables", &args, &[]).is_ok() {}
+  }
+}
+
+fn insert_gateway_guard_rules(
+  ctx: &StepExecutionContext<'_>, cluster_target: &NodePortGuardTarget, protected_ports: &str,
+) -> Result<()> {
+  for args in gateway_guard_rules("-I", cluster_target, protected_ports)
+    .into_iter()
+    .rev()
+  {
+    let mut insert_args = args;
+    insert_args.insert(4, "1".to_string());
+    ctx.run_privileged_command("iptables", &insert_args, &[])?;
+  }
+
   Ok(())
 }
 
@@ -887,14 +862,40 @@ fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
   }
 }
 
-fn resolve_nodeport_guard_target() -> Result<NodePortGuardTarget> {
-  let interfaces = discover_network_interfaces()?;
-
-  if let Some(interface) = choose_cluster_bridge_interface(&interfaces) {
+fn resolve_nodeport_guard_target_for_install(
+  ctx: &mut StepExecutionContext<'_>,
+) -> Result<NodePortGuardTarget> {
+  if let Some(interface) =
+    stored_cluster_bridge_interface(ctx).filter(|interface| network_interface_exists(interface))
+  {
     return Ok(NodePortGuardTarget::Interface(interface));
   }
 
-  Ok(NodePortGuardTarget::SourceCidr(CLUSTER_CIDR.to_string()))
+  let interfaces = discover_network_interfaces()?;
+  if interfaces.iter().any(|name| name == "cni0") {
+    return Ok(NodePortGuardTarget::Interface("cni0".to_string()));
+  }
+
+  let interface = prompt_cluster_bridge_interface(ctx, &interfaces)?;
+  Ok(NodePortGuardTarget::Interface(interface))
+}
+
+fn resolve_nodeport_guard_target_for_cleanup(
+  ctx: &StepExecutionContext<'_>,
+) -> Result<NodePortGuardTarget> {
+  if let Some(interface) = stored_cluster_bridge_interface(ctx) {
+    return Ok(NodePortGuardTarget::Interface(interface));
+  }
+
+  let interfaces = discover_network_interfaces()?;
+  if interfaces.iter().any(|name| name == "cni0") {
+    return Ok(NodePortGuardTarget::Interface("cni0".to_string()));
+  }
+
+  bail!(
+    "unable to determine the cluster bridge interface for gateway guard cleanup; detected interfaces: {}",
+    interfaces.join(", ")
+  )
 }
 
 fn discover_network_interfaces() -> Result<Vec<String>> {
@@ -905,6 +906,69 @@ fn discover_network_interfaces() -> Result<Vec<String>> {
     .collect::<Vec<_>>();
   interfaces.sort();
   Ok(interfaces)
+}
+
+fn stored_cluster_bridge_interface(ctx: &StepExecutionContext<'_>) -> Option<String> {
+  ctx
+    .config()
+    .install_step_metadata(InstallStepId::ApplicationGateway, "cluster_interface")
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn prompt_cluster_bridge_interface(
+  ctx: &mut StepExecutionContext<'_>, interfaces: &[String],
+) -> Result<String> {
+  let detected_interfaces = interfaces.join(", ");
+  println!(
+    "{}",
+    ui::note(t!(
+      "install.platform.nodeport_security.interface_detect_failed",
+      interfaces = detected_interfaces.as_str()
+    ))
+  );
+
+  let default_interface = choose_cluster_bridge_interface(interfaces)
+    .or_else(|| {
+      interfaces
+        .iter()
+        .find(|name| name.as_str() != "lo")
+        .cloned()
+    })
+    .unwrap_or_else(|| "cni0".to_string());
+
+  loop {
+    let interface = InputCollector::new(t!("install.platform.nodeport_security.interface_prompt"))
+      .with_default(default_interface.clone())
+      .collect()?
+      .trim()
+      .to_string();
+
+    if network_interface_exists(&interface) {
+      ctx.persist_change(
+        "install.execution.gateway.cluster_interface",
+        &interface,
+        |config| {
+          config.set_install_step_metadata(
+            InstallStepId::ApplicationGateway,
+            "cluster_interface",
+            interface.clone(),
+          )
+        },
+      )?;
+      return Ok(interface);
+    }
+
+    println!(
+      "{}",
+      ui::warning(t!(
+        "install.platform.nodeport_security.interface_invalid",
+        interface = interface.as_str(),
+        interfaces = detected_interfaces.as_str()
+      ))
+    );
+  }
 }
 
 fn choose_cluster_bridge_interface(interfaces: &[String]) -> Option<String> {
@@ -923,8 +987,68 @@ fn choose_cluster_bridge_interface(interfaces: &[String]) -> Option<String> {
   None
 }
 
-fn nodeport_guard_rule_args(
-  operation: &str, target: &NodePortGuardTarget, verdict: &str,
+fn network_interface_exists(interface: &str) -> bool {
+  Path::new("/sys/class/net").join(interface).exists()
+}
+
+fn protected_gateway_ports(exposure: ApplicationExposureMode) -> String {
+  let ports = match exposure {
+    ApplicationExposureMode::NodePortExternalNginx => [
+      KUBERNETES_API_PORT,
+      KUBELET_SECURE_PORT,
+      PLATFORM_NODE_PORT,
+      INTERNAL_REGISTRY_NODE_PORT,
+    ],
+    ApplicationExposureMode::Ingress => [
+      KUBERNETES_API_PORT,
+      KUBELET_SECURE_PORT,
+      INGRESS_GATEWAY_HTTP_PORT,
+      INGRESS_GATEWAY_HTTPS_PORT,
+    ],
+  };
+
+  ports
+    .into_iter()
+    .map(|port| port.to_string())
+    .collect::<Vec<_>>()
+    .join(",")
+}
+
+fn legacy_protected_gateway_ports(exposure: ApplicationExposureMode) -> Option<String> {
+  let ports = match exposure {
+    ApplicationExposureMode::NodePortExternalNginx => [
+      KUBELET_SECURE_PORT,
+      PLATFORM_NODE_PORT,
+      INTERNAL_REGISTRY_NODE_PORT,
+    ],
+    ApplicationExposureMode::Ingress => [
+      KUBELET_SECURE_PORT,
+      INGRESS_GATEWAY_HTTP_PORT,
+      INGRESS_GATEWAY_HTTPS_PORT,
+    ],
+  };
+
+  Some(
+    ports
+      .into_iter()
+      .map(|port| port.to_string())
+      .collect::<Vec<_>>()
+      .join(","),
+  )
+}
+
+fn gateway_guard_rules(
+  operation: &str, cluster_target: &NodePortGuardTarget, protected_ports: &str,
+) -> [Vec<String>; 3] {
+  [
+    gateway_guard_loopback_rule_args(operation, protected_ports, "ACCEPT"),
+    gateway_guard_rule_args(operation, cluster_target, protected_ports, "ACCEPT"),
+    gateway_guard_any_rule_args(operation, protected_ports, "DROP"),
+  ]
+}
+
+fn gateway_guard_rule_args(
+  operation: &str, target: &NodePortGuardTarget, protected_ports: &str, verdict: &str,
 ) -> Vec<String> {
   let mut args = vec![
     "-t".to_string(),
@@ -938,10 +1062,6 @@ fn nodeport_guard_rule_args(
       args.push("-i".to_string());
       args.push(interface.clone());
     }
-    NodePortGuardTarget::SourceCidr(cidr) => {
-      args.push("-s".to_string());
-      args.push(cidr.clone());
-    }
   }
 
   args.extend([
@@ -950,19 +1070,63 @@ fn nodeport_guard_rule_args(
     "-m".to_string(),
     "multiport".to_string(),
     "--dports".to_string(),
-    format!("{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"),
+    protected_ports.to_string(),
     "-j".to_string(),
     verdict.to_string(),
   ]);
   args
 }
 
+fn gateway_guard_loopback_rule_args(
+  operation: &str, protected_ports: &str, verdict: &str,
+) -> Vec<String> {
+  vec![
+    "-t".to_string(),
+    "raw".to_string(),
+    operation.to_string(),
+    "PREROUTING".to_string(),
+    "-i".to_string(),
+    "lo".to_string(),
+    "-p".to_string(),
+    "tcp".to_string(),
+    "-m".to_string(),
+    "multiport".to_string(),
+    "--dports".to_string(),
+    protected_ports.to_string(),
+    "-j".to_string(),
+    verdict.to_string(),
+  ]
+}
+
+fn gateway_guard_any_rule_args(
+  operation: &str, protected_ports: &str, verdict: &str,
+) -> Vec<String> {
+  vec![
+    "-t".to_string(),
+    "raw".to_string(),
+    operation.to_string(),
+    "PREROUTING".to_string(),
+    "-p".to_string(),
+    "tcp".to_string(),
+    "-m".to_string(),
+    "multiport".to_string(),
+    "--dports".to_string(),
+    protected_ports.to_string(),
+    "-j".to_string(),
+    verdict.to_string(),
+  ]
+}
+
 #[cfg(test)]
 mod tests {
   use super::{
-    ManagedTlsMaterial, NodePortGuardTarget, choose_cluster_bridge_interface,
-    nodeport_guard_rule_args, remove_custom_site_include_line, render_nginx_site,
+    INGRESS_GATEWAY_HTTP_PORT, INGRESS_GATEWAY_HTTPS_PORT, INTERNAL_REGISTRY_NODE_PORT,
+    KUBELET_SECURE_PORT, KUBERNETES_API_PORT, ManagedTlsMaterial, NodePortGuardTarget,
+    choose_cluster_bridge_interface, gateway_guard_any_rule_args, gateway_guard_loopback_rule_args,
+    gateway_guard_rule_args, gateway_guard_rules, remove_custom_site_include_line,
+    render_nginx_site,
   };
+  use crate::install::steps::platform::PLATFORM_NODE_PORT;
 
   #[test]
   fn renders_nginx_site_with_original_host_forwarding() {
@@ -1030,25 +1194,62 @@ mod tests {
 
   #[test]
   fn nodeport_guard_rule_uses_interface_when_detected() {
-    let args = nodeport_guard_rule_args(
+    let args = gateway_guard_rule_args(
       "-C",
       &NodePortGuardTarget::Interface("cni0".to_string()),
+      &format!(
+        "{KUBERNETES_API_PORT},{KUBELET_SECURE_PORT},{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"
+      ),
       "ACCEPT",
     );
 
     assert!(args.windows(2).any(|pair| pair == ["-i", "cni0"]));
-    assert!(!args.iter().any(|value| value == "-s"));
   }
 
   #[test]
-  fn nodeport_guard_rule_falls_back_to_cluster_cidr_source_match() {
-    let args = nodeport_guard_rule_args(
-      "-C",
-      &NodePortGuardTarget::SourceCidr("10.42.0.0/16".to_string()),
-      "ACCEPT",
+  fn gateway_guard_loopback_rule_includes_requested_ingress_ports() {
+    let protected_ports = format!(
+      "{KUBERNETES_API_PORT},{KUBELET_SECURE_PORT},{INGRESS_GATEWAY_HTTP_PORT},{INGRESS_GATEWAY_HTTPS_PORT}"
+    );
+    let args = gateway_guard_loopback_rule_args("-C", &protected_ports, "ACCEPT");
+
+    assert!(args.windows(2).any(|pair| pair == ["-i", "lo"]));
+    assert!(
+      args
+        .windows(2)
+        .any(|pair| pair == ["--dports", protected_ports.as_str()])
+    );
+  }
+
+  #[test]
+  fn gateway_guard_drop_rule_targets_all_sources() {
+    let protected_ports = format!(
+      "{KUBERNETES_API_PORT},{KUBELET_SECURE_PORT},{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"
+    );
+    let args = gateway_guard_any_rule_args("-C", &protected_ports, "DROP");
+
+    assert!(!args.iter().any(|value| value == "-i"));
+    assert!(!args.iter().any(|value| value == "-s"));
+    assert!(
+      args
+        .windows(2)
+        .any(|pair| pair == ["--dports", protected_ports.as_str()])
+    );
+  }
+
+  #[test]
+  fn gateway_guard_rules_are_ordered_as_accept_accept_drop() {
+    let protected_ports = format!(
+      "{KUBERNETES_API_PORT},{KUBELET_SECURE_PORT},{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"
+    );
+    let rules = gateway_guard_rules(
+      "-I",
+      &NodePortGuardTarget::Interface("cni0".to_string()),
+      &protected_ports,
     );
 
-    assert!(args.windows(2).any(|pair| pair == ["-s", "10.42.0.0/16"]));
-    assert!(!args.iter().any(|value| value == "-i"));
+    assert!(rules[0].windows(2).any(|pair| pair == ["-i", "lo"]));
+    assert!(rules[1].windows(2).any(|pair| pair == ["-i", "cni0"]));
+    assert_eq!(rules[2].last().map(String::as_str), Some("DROP"));
   }
 }

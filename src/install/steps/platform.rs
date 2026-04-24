@@ -1079,21 +1079,12 @@ fn default_tls_key_path(ctx: &StepQuestionContext<'_>, public_host: &str) -> Str
 }
 
 fn collect_nodeport_security(ctx: &mut StepQuestionContext<'_>) -> Result<()> {
-  let exposure = ctx
+  let _exposure = ctx
     .as_plan_context()
     .application_exposure()
     .ok_or_else(|| {
-      anyhow!("application exposure mode is required before collecting nodeport security settings")
+      anyhow!("application exposure mode is required before collecting gateway guard settings")
     })?;
-
-  if exposure != ApplicationExposureMode::NodePortExternalNginx {
-    let _ = ctx.persist_change(
-      "install.questionnaire.platform.nodeport_security.guard_enabled",
-      "false",
-      |config| config.set_platform_nodeport_guard_enabled(false),
-    )?;
-    return Ok(());
-  }
 
   let guard_enabled = ConfirmCollector::new(
     t!("install.platform.nodeport_security.guard_prompt"),
