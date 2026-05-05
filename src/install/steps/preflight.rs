@@ -1,22 +1,26 @@
-use std::{fs, path::Path};
+use std::{
+  fs,
+  path::{Path, PathBuf},
+};
 
 use anyhow::{Result, bail};
 use reqwest::blocking::Client;
 use rust_i18n::t;
+use tracing::{info, warn};
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepPlanContext, StepPreflightContext, SystemPackageManager,
   support::{
-    cgroup_memory_available, command_exists, disk_free_bytes, file_contains, format_gib,
-    format_ports, listening_tcp_ports, memory_total_bytes, modprobe_can_load,
+    cgroup_memory_available, command_exists, disk_free_bytes, file_contains, find_existing_path,
+    format_gib, format_ports, listening_tcp_ports, memory_total_bytes,
   },
 };
-use crate::{config::InstallStepId, ui};
+use crate::{config::InstallStepId, startup::RuntimeState, ui};
 
 const PREFLIGHT_MIN_DISK_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 const PREFLIGHT_WARN_DISK_FREE_BYTES: u64 = 20 * 1024 * 1024 * 1024;
-const PREFLIGHT_MIN_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-const PREFLIGHT_WARN_MEMORY_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const PREFLIGHT_MIN_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const PREFLIGHT_WARN_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 pub struct PreflightValidationStep;
 
@@ -26,7 +30,7 @@ impl AtomicInstallStep for PreflightValidationStep {
   }
 
   fn preflight(&self, ctx: &mut StepPreflightContext<'_>) -> Result<bool> {
-    let (report, state) = PreflightReport::collect()?;
+    let (report, state) = PreflightReport::collect(ctx.runtime())?;
     *ctx.state_mut() = state;
     report.print();
 
@@ -67,7 +71,7 @@ struct PreflightReport {
 }
 
 impl PreflightReport {
-  fn collect() -> Result<(Self, super::PreflightState)> {
+  fn collect(runtime: &RuntimeState) -> Result<(Self, super::PreflightState)> {
     let client = Client::builder()
       .https_only(true)
       .timeout(std::time::Duration::from_secs(5))
@@ -185,6 +189,20 @@ impl PreflightReport {
       t!("install.preflight.checks.ports").to_string(),
       check_port_state,
     ));
+
+    let overlay_label = t!("install.preflight.checks.overlay").to_string();
+    checks.push(run_preflight_check(overlay_label.clone(), || {
+      check_kernel_feature(overlay_label, kernel_feature_state_overlay(runtime))
+    }));
+
+    let br_netfilter_label = t!("install.preflight.checks.br_netfilter").to_string();
+    checks.push(run_preflight_check(br_netfilter_label.clone(), || {
+      check_kernel_feature(
+        br_netfilter_label,
+        kernel_feature_state_br_netfilter(runtime),
+      )
+    }));
+
     checks.push(run_preflight_check(
       t!("install.preflight.checks.sysctl").to_string(),
       check_sysctl_state,
@@ -193,16 +211,6 @@ impl PreflightReport {
       t!("install.preflight.checks.cgroup_memory").to_string(),
       check_cgroup_memory,
     ));
-
-    let overlay_label = t!("install.preflight.checks.overlay").to_string();
-    checks.push(run_preflight_check(overlay_label.clone(), || {
-      check_kernel_feature(overlay_label, kernel_feature_state_overlay())
-    }));
-
-    let br_netfilter_label = t!("install.preflight.checks.br_netfilter").to_string();
-    checks.push(run_preflight_check(br_netfilter_label.clone(), || {
-      check_kernel_feature(br_netfilter_label, kernel_feature_state_br_netfilter())
-    }));
 
     Ok((Self { checks }, state))
   }
@@ -243,7 +251,6 @@ struct EndpointReachability<'a> {
 
 enum KernelFeatureState {
   Ready,
-  Loadable,
   Missing,
 }
 
@@ -592,10 +599,6 @@ fn check_kernel_feature(label: String, state: KernelFeatureState) -> PreflightCh
       t!("install.preflight.details.kernel_ready").to_string(),
       PreflightStatus::Passed,
     ),
-    KernelFeatureState::Loadable => (
-      t!("install.preflight.details.kernel_loadable").to_string(),
-      PreflightStatus::Warning,
-    ),
     KernelFeatureState::Missing => (
       t!("install.preflight.details.kernel_missing").to_string(),
       PreflightStatus::Failed,
@@ -636,8 +639,9 @@ fn probe_public_network(client: &Client) -> Option<super::context::PublicNetwork
     .ok()
 }
 
-fn kernel_feature_state_overlay() -> KernelFeatureState {
+fn kernel_feature_state_overlay(runtime: &RuntimeState) -> KernelFeatureState {
   kernel_feature_state(
+    runtime,
     "/sys/module/overlay",
     "/proc/filesystems",
     "overlay",
@@ -645,8 +649,9 @@ fn kernel_feature_state_overlay() -> KernelFeatureState {
   )
 }
 
-fn kernel_feature_state_br_netfilter() -> KernelFeatureState {
+fn kernel_feature_state_br_netfilter(runtime: &RuntimeState) -> KernelFeatureState {
   kernel_feature_state(
+    runtime,
     "/sys/module/br_netfilter",
     "/proc/sys/net/bridge/bridge-nf-call-iptables",
     "",
@@ -655,20 +660,63 @@ fn kernel_feature_state_br_netfilter() -> KernelFeatureState {
 }
 
 fn kernel_feature_state(
-  module_path: &str, marker_path: &str, marker_text: &str, module_name: &str,
+  runtime: &RuntimeState, module_path: &str, marker_path: &str, marker_text: &str,
+  module_name: &str,
 ) -> KernelFeatureState {
-  if Path::new(module_path).exists()
-    || (Path::new(marker_path).is_file()
-      && (marker_text.is_empty() || file_contains(marker_path, marker_text)))
-  {
+  if kernel_feature_available(module_path, marker_path, marker_text) {
     return KernelFeatureState::Ready;
   }
 
-  if modprobe_can_load(module_name) {
-    return KernelFeatureState::Loadable;
+  let Some(modprobe) = modprobe_program() else {
+    return KernelFeatureState::Missing;
+  };
+
+  info!(
+    module = module_name,
+    "kernel feature is inactive; attempting to load module"
+  );
+
+  match runtime.run_privileged_command(&modprobe, &[module_name.to_string()], &[]) {
+    Ok(()) if kernel_feature_available(module_path, marker_path, marker_text) => {
+      info!(module = module_name, "kernel module loaded for preflight");
+      KernelFeatureState::Ready
+    }
+    Ok(()) => {
+      warn!(
+        module = module_name,
+        marker_path, "modprobe completed but the kernel feature marker is still unavailable"
+      );
+      KernelFeatureState::Missing
+    }
+    Err(error) => {
+      warn!(
+        module = module_name,
+        error = %error,
+        "failed to load kernel module during preflight"
+      );
+      KernelFeatureState::Missing
+    }
+  }
+}
+
+fn kernel_feature_available(module_path: &str, marker_path: &str, marker_text: &str) -> bool {
+  Path::new(module_path).exists()
+    || (Path::new(marker_path).is_file()
+      && (marker_text.is_empty() || file_contains(marker_path, marker_text)))
+}
+
+fn modprobe_program() -> Option<String> {
+  if command_exists("modprobe") {
+    return Some("modprobe".to_string());
   }
 
-  KernelFeatureState::Missing
+  find_existing_path(&[
+    PathBuf::from("/usr/sbin/modprobe"),
+    PathBuf::from("/sbin/modprobe"),
+    PathBuf::from("/usr/bin/modprobe"),
+    PathBuf::from("/bin/modprobe"),
+  ])
+  .map(|path| path.display().to_string())
 }
 
 fn preflight_status_tag(status: &PreflightStatus) -> String {

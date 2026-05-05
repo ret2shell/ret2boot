@@ -401,6 +401,7 @@ impl ClusterInstallSpec {
 pub(crate) fn install_k3s(
   ctx: &mut StepExecutionContext<'_>, spec: &ClusterInstallSpec,
 ) -> Result<()> {
+  info!("syncing k3s registry configuration");
   sync_cluster_registry_config(
     ctx,
     K3S_REGISTRIES_DEST,
@@ -410,10 +411,16 @@ pub(crate) fn install_k3s(
       .unwrap_or(false),
   )?;
 
+  info!("writing k3s configuration files");
   let staged = stage_k3s_config(spec)?;
   install_staged_file(ctx, &staged.config, K3S_CONFIG_DEST)?;
   install_staged_file(ctx, &staged.kubelet_config, K3S_KUBELET_CONFIG_DEST)?;
 
+  info!(
+    source = spec.source.as_config_value(),
+    role = spec.role.as_config_value(),
+    "downloading k3s install script"
+  );
   let script_path = stage_remote_script(k3s_script_url(spec.source), "k3s-install")?;
   let mut envs = vec![(
     "INSTALL_K3S_EXEC".to_string(),
@@ -427,6 +434,7 @@ pub(crate) fn install_k3s(
     envs.push(("INSTALL_K3S_MIRROR".to_string(), "cn".to_string()));
   }
 
+  info!("running k3s install script");
   let result = run_staged_script(ctx, &script_path, &envs);
   let _ = fs::remove_file(&script_path);
   staged.cleanup();
@@ -454,6 +462,7 @@ pub(crate) fn uninstall_k3s(
 pub(crate) fn install_rke2(
   ctx: &mut StepExecutionContext<'_>, spec: &ClusterInstallSpec,
 ) -> Result<()> {
+  info!("syncing rke2 registry configuration");
   sync_cluster_registry_config(
     ctx,
     RKE2_REGISTRIES_DEST,
@@ -464,6 +473,10 @@ pub(crate) fn install_rke2(
   )?;
 
   if let Some((http_port, https_port)) = selected_gateway_ports_for_cluster(ctx, spec)? {
+    info!(
+      http_port,
+      https_port, "writing rke2 ingress gateway port override manifests"
+    );
     let traefik_manifest = stage_text_file(
       "rke2-traefik-config",
       "yaml",
@@ -481,10 +494,16 @@ pub(crate) fn install_rke2(
     let _ = fs::remove_file(&ingress_manifest);
   }
 
+  info!("writing rke2 configuration files");
   let staged = stage_rke2_config(spec)?;
   install_staged_file(ctx, &staged.config, RKE2_CONFIG_DEST)?;
   install_staged_file(ctx, &staged.kubelet_config, RKE2_KUBELET_CONFIG_DEST)?;
 
+  info!(
+    source = spec.source.as_config_value(),
+    role = spec.role.as_config_value(),
+    "downloading rke2 install script"
+  );
   let script_path = stage_remote_script(rke2_script_url(spec.source), "rke2-install")?;
   let mut envs = vec![
     ("INSTALL_RKE2_METHOD".to_string(), "tar".to_string()),
@@ -501,6 +520,7 @@ pub(crate) fn install_rke2(
     envs.push(("INSTALL_RKE2_MIRROR".to_string(), "cn".to_string()));
   }
 
+  info!("running rke2 install script");
   let install_result = run_staged_script(ctx, &script_path, &envs);
   let _ = fs::remove_file(&script_path);
   staged.cleanup();
@@ -511,6 +531,10 @@ pub(crate) fn install_rke2(
     InstallTargetRole::Worker => "rke2-agent.service",
   };
 
+  info!(
+    service = service_name,
+    "enabling kubernetes runtime service"
+  );
   ctx.run_privileged_command(
     "systemctl",
     &[

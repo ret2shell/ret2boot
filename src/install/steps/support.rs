@@ -269,15 +269,6 @@ pub(crate) fn file_contains(path: &str, needle: &str) -> bool {
     .unwrap_or(false)
 }
 
-pub(crate) fn modprobe_can_load(module_name: &str) -> bool {
-  command_exists("modprobe")
-    && Command::new("modprobe")
-      .args(["-n", "-q", module_name])
-      .status()
-      .map(|status| status.success())
-      .unwrap_or(false)
-}
-
 pub(crate) fn yaml_quote(value: &str) -> String {
   format!("'{}'", value.replace('\'', "''"))
 }

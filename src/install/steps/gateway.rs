@@ -1,20 +1,25 @@
-use std::{fs, path::Path};
+use std::{fs, path::Path, thread, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail};
 use rust_i18n::t;
+use serde::Deserialize;
+use tracing::info;
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   SystemPackageManager,
   platform::{PLATFORM_NODE_PORT, resolve_public_endpoint},
   support::{
-    command_exists, detect_nginx_binary_path, ensure_symlink, install_directory,
-    install_staged_file, managed_tls_asset_name, managed_tls_certificate_path,
+    command_exists, detect_nginx_binary_path, ensure_symlink, find_existing_path,
+    install_directory, install_staged_file, managed_tls_asset_name, managed_tls_certificate_path,
     managed_tls_directory, managed_tls_key_path, nginx_service_exists, stage_text_file,
   },
 };
 use crate::{
-  config::{ApplicationExposureMode, InstallStepId, InstallTargetRole, PlatformTlsMode},
+  config::{
+    ApplicationExposureMode, InstallStepId, InstallTargetRole, KubernetesDistribution,
+    PlatformTlsMode,
+  },
   install::collectors::{Collector, InputCollector, SingleSelectCollector},
   ui,
 };
@@ -36,6 +41,9 @@ const KUBELET_SECURE_PORT: u16 = 10250;
 const INGRESS_GATEWAY_HTTP_PORT: u16 = 10080;
 const INGRESS_GATEWAY_HTTPS_PORT: u16 = 10443;
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
+const CLUSTER_READY_WAIT_TIMEOUT: &str = "10s";
+const CLUSTER_READY_WAIT_RETRIES: usize = 120;
+const CLUSTER_READY_RETRY_INTERVAL_SECONDS: u64 = 5;
 pub struct ApplicationGatewayStep;
 
 struct ManagedTlsMaterial {
@@ -46,6 +54,44 @@ struct ManagedTlsMaterial {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum NodePortGuardTarget {
   Interface(String),
+}
+
+#[derive(Debug, Deserialize)]
+struct ClusterPodList {
+  items: Vec<ClusterPodItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClusterPodItem {
+  metadata: ClusterPodMetadata,
+  status: ClusterPodStatus,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClusterPodMetadata {
+  #[serde(default)]
+  namespace: String,
+  name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClusterPodStatus {
+  phase: Option<String>,
+  #[serde(default)]
+  conditions: Vec<ClusterPodCondition>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClusterPodCondition {
+  #[serde(rename = "type")]
+  condition_type: String,
+  status: String,
+}
+
+struct GatewayClusterAccess {
+  program: String,
+  prefix_args: Vec<String>,
+  envs: Vec<(String, String)>,
 }
 
 impl AtomicInstallStep for ApplicationGatewayStep {
@@ -201,6 +247,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     let tls_material = ensure_managed_tls_assets(ctx)?;
 
     if exposure == ApplicationExposureMode::Ingress {
+      info!("installing or updating ingress-nginx gateway");
       let installed_by_ret2boot = install_ingress_nginx(ctx)?;
       ensure_gateway_guard_rules(ctx)?;
       ctx.persist_change(
@@ -235,6 +282,10 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .is_some_and(|value| value == "true");
 
     if !nginx_existed {
+      info!(
+        package_manager = package_manager.label(),
+        "installing nginx for external gateway"
+      );
       package_manager.install_nginx(ctx)?;
     }
 
@@ -250,6 +301,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     let backend_host = "127.0.0.1".to_string();
     let backend_http_port = PLATFORM_NODE_PORT;
 
+    info!("writing external nginx gateway configuration");
     install_external_nginx_gateway(
       ctx,
       backend_host.as_str(),
@@ -263,6 +315,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
       .as_ref()
       .map(|path| path.display().to_string())
       .unwrap_or_else(|| "nginx".to_string());
+    info!("enabling and validating nginx service");
     ctx.run_privileged_command(
       "systemctl",
       &[
@@ -440,6 +493,7 @@ fn install_external_nginx_gateway(
 fn install_ingress_nginx(ctx: &StepExecutionContext<'_>) -> Result<bool> {
   let release_existed = helm_release_exists(ctx, INGRESS_NAMESPACE, INGRESS_RELEASE_NAME)?;
 
+  info!("adding ingress-nginx helm repository");
   ctx.run_privileged_command(
     "helm",
     &[
@@ -451,7 +505,13 @@ fn install_ingress_nginx(ctx: &StepExecutionContext<'_>) -> Result<bool> {
     ],
     &[],
   )?;
+  info!("updating helm repositories before ingress-nginx install");
   ctx.run_privileged_command("helm", &["repo".to_string(), "update".to_string()], &[])?;
+  info!(
+    release = INGRESS_RELEASE_NAME,
+    namespace = INGRESS_NAMESPACE,
+    "running helm upgrade for ingress-nginx"
+  );
   ctx.run_privileged_command(
     "helm",
     &[
@@ -597,6 +657,7 @@ fn ensure_gateway_guard_rules(ctx: &mut StepExecutionContext<'_>) -> Result<()> 
     .platform_nodeport_guard_enabled()
     .unwrap_or(false);
   if !guard_enabled {
+    info!("gateway guard is disabled; skipping iptables raw rules");
     return Ok(());
   }
 
@@ -608,6 +669,11 @@ fn ensure_gateway_guard_rules(ctx: &mut StepExecutionContext<'_>) -> Result<()> 
     })?;
   let protected_ports = protected_gateway_ports(exposure);
   let cluster_target = resolve_nodeport_guard_target_for_install(ctx)?;
+  info!(
+    protected_ports,
+    target = ?cluster_target,
+    "installing gateway guard iptables raw rules"
+  );
   purge_gateway_guard_rules(ctx, &cluster_target, &protected_ports);
   if let Some(legacy_ports) = legacy_protected_gateway_ports(exposure) {
     purge_gateway_guard_rules(ctx, &cluster_target, &legacy_ports);
@@ -661,6 +727,7 @@ fn insert_gateway_guard_rules(
 
 fn persist_iptables_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
   if command_exists("netfilter-persistent") {
+    info!("saving iptables rules with netfilter-persistent");
     return ctx.run_privileged_command("netfilter-persistent", &["save".to_string()], &[]);
   }
 
@@ -669,6 +736,7 @@ fn persist_iptables_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
     .package_manager()
     .or_else(SystemPackageManager::detect);
   if matches!(package_manager, Some(SystemPackageManager::Apt)) {
+    info!("installing iptables-persistent so gateway guard rules survive reboot");
     ctx.run_privileged_command(
       "apt-get",
       &[
@@ -862,18 +930,242 @@ fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
   }
 }
 
+fn wait_for_cluster_network_ready(ctx: &StepExecutionContext<'_>) -> Result<()> {
+  let cluster_access = GatewayClusterAccess::from_execution_context(ctx)?;
+
+  cluster_access.wait_for_nodes_ready(ctx)?;
+  cluster_access.wait_for_kube_system_pods_ready(ctx)
+}
+
+impl GatewayClusterAccess {
+  fn from_execution_context(ctx: &StepExecutionContext<'_>) -> Result<Self> {
+    let plan_context = ctx.as_plan_context();
+    let distribution = plan_context.kubernetes_distribution().ok_or_else(|| {
+      anyhow!("kubernetes distribution is required before detecting the cluster bridge interface")
+    })?;
+
+    match distribution {
+      KubernetesDistribution::K3s => {
+        if !command_exists("k3s") {
+          bail!("unable to locate the k3s binary required for cluster bridge detection");
+        }
+
+        Ok(Self {
+          program: "k3s".to_string(),
+          prefix_args: vec!["kubectl".to_string()],
+          envs: Vec::new(),
+        })
+      }
+      KubernetesDistribution::Rke2 => {
+        let kubectl = find_existing_path(&[
+          std::path::PathBuf::from("/var/lib/rancher/rke2/bin/kubectl"),
+          std::path::PathBuf::from("/usr/local/bin/kubectl"),
+        ])
+        .ok_or_else(|| {
+          anyhow!("unable to locate the rke2 kubectl binary for cluster bridge detection")
+        })?;
+
+        Ok(Self {
+          program: kubectl.display().to_string(),
+          prefix_args: Vec::new(),
+          envs: vec![(
+            "KUBECONFIG".to_string(),
+            "/etc/rancher/rke2/rke2.yaml".to_string(),
+          )],
+        })
+      }
+    }
+  }
+
+  fn wait_for_nodes_ready(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
+    let args = [
+      "wait".to_string(),
+      "--for=condition=Ready".to_string(),
+      "node".to_string(),
+      "--all".to_string(),
+      format!("--timeout={CLUSTER_READY_WAIT_TIMEOUT}"),
+    ];
+    let mut last_error = None;
+
+    info!(
+      attempts = CLUSTER_READY_WAIT_RETRIES,
+      "waiting for kubernetes nodes before detecting cluster bridge interface"
+    );
+
+    for attempt in 1..=CLUSTER_READY_WAIT_RETRIES {
+      match self.run(ctx, &args) {
+        Ok(()) => {
+          info!("kubernetes nodes are ready");
+          return Ok(());
+        }
+        Err(error) => {
+          info!(
+            attempt,
+            attempts = CLUSTER_READY_WAIT_RETRIES,
+            error = %error,
+            "kubernetes nodes are not ready yet"
+          );
+          last_error = Some(error);
+        }
+      }
+
+      thread::sleep(Duration::from_secs(CLUSTER_READY_RETRY_INTERVAL_SECONDS));
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+      anyhow!("timed out waiting for kubernetes nodes before cluster bridge detection")
+    }))
+  }
+
+  fn wait_for_kube_system_pods_ready(&self, ctx: &StepExecutionContext<'_>) -> Result<()> {
+    let mut last_error = None;
+    let mut last_pending = Vec::new();
+
+    info!(
+      attempts = CLUSTER_READY_WAIT_RETRIES,
+      "waiting for kube-system pods before detecting cluster bridge interface"
+    );
+
+    for attempt in 1..=CLUSTER_READY_WAIT_RETRIES {
+      match self.kube_system_pod_status(ctx) {
+        Ok(status) if status.pending.is_empty() => {
+          info!(pod_count = status.ready_count, "kube-system pods are ready");
+          return Ok(());
+        }
+        Ok(status) => {
+          last_pending = status.pending;
+          info!(
+            attempt,
+            attempts = CLUSTER_READY_WAIT_RETRIES,
+            pending = %last_pending.join(", "),
+            "kube-system pods are not ready yet"
+          );
+          last_error = None;
+        }
+        Err(error) => {
+          info!(
+            attempt,
+            attempts = CLUSTER_READY_WAIT_RETRIES,
+            error = %error,
+            "unable to read kube-system pod status yet"
+          );
+          last_pending.clear();
+          last_error = Some(error);
+        }
+      }
+
+      thread::sleep(Duration::from_secs(CLUSTER_READY_RETRY_INTERVAL_SECONDS));
+    }
+
+    Err(last_error.unwrap_or_else(|| match last_pending.is_empty() {
+      true => anyhow!("timed out waiting for kube-system pods before cluster bridge detection"),
+      false => anyhow!(
+        "timed out waiting for kube-system pods before cluster bridge detection; pending pods: {}",
+        last_pending.join(", ")
+      ),
+    }))
+  }
+
+  fn kube_system_pod_status(&self, ctx: &StepExecutionContext<'_>) -> Result<KubeSystemPodStatus> {
+    let output = self.capture(
+      ctx,
+      &[
+        "get".to_string(),
+        "pods".to_string(),
+        "-n".to_string(),
+        "kube-system".to_string(),
+        "-o".to_string(),
+        "json".to_string(),
+        "--request-timeout=10s".to_string(),
+      ],
+    )?;
+    let pods: ClusterPodList =
+      serde_json::from_str(&output).context("failed to parse `kubectl get pods` output")?;
+    let ready_count = pods.items.len();
+    let pending = if pods.items.is_empty() {
+      vec!["kube-system/<none> (Pending)".to_string()]
+    } else {
+      pods
+        .items
+        .iter()
+        .filter(|pod| !pod_is_ready(pod))
+        .map(pod_status_summary)
+        .collect::<Vec<_>>()
+    };
+
+    Ok(KubeSystemPodStatus {
+      ready_count,
+      pending,
+    })
+  }
+
+  fn capture(&self, ctx: &StepExecutionContext<'_>, args: &[String]) -> Result<String> {
+    let mut command_args = self.prefix_args.clone();
+    command_args.extend_from_slice(args);
+    ctx.run_privileged_command_capture(&self.program, &command_args, &self.envs)
+  }
+
+  fn run(&self, ctx: &StepExecutionContext<'_>, args: &[String]) -> Result<()> {
+    let mut command_args = self.prefix_args.clone();
+    command_args.extend_from_slice(args);
+    ctx.run_privileged_command(&self.program, &command_args, &self.envs)
+  }
+}
+
+struct KubeSystemPodStatus {
+  ready_count: usize,
+  pending: Vec<String>,
+}
+
+fn pod_is_ready(pod: &ClusterPodItem) -> bool {
+  if pod.status.phase.as_deref() == Some("Succeeded") {
+    return true;
+  }
+
+  pod.status.phase.as_deref() == Some("Running")
+    && pod
+      .status
+      .conditions
+      .iter()
+      .any(|condition| condition.condition_type == "Ready" && condition.status == "True")
+}
+
+fn pod_status_summary(pod: &ClusterPodItem) -> String {
+  let namespace = if pod.metadata.namespace.is_empty() {
+    "kube-system"
+  } else {
+    pod.metadata.namespace.as_str()
+  };
+  let phase = pod.status.phase.as_deref().unwrap_or("Unknown");
+
+  format!("{namespace}/{} ({phase})", pod.metadata.name)
+}
+
 fn resolve_nodeport_guard_target_for_install(
   ctx: &mut StepExecutionContext<'_>,
 ) -> Result<NodePortGuardTarget> {
+  wait_for_cluster_network_ready(ctx)?;
+
   if let Some(interface) =
     stored_cluster_bridge_interface(ctx).filter(|interface| network_interface_exists(interface))
   {
+    info!(
+      interface,
+      "reusing recorded cluster bridge interface for gateway guard"
+    );
     return Ok(NodePortGuardTarget::Interface(interface));
   }
 
   let interfaces = discover_network_interfaces()?;
   if interfaces.iter().any(|name| name == "cni0") {
-    return Ok(NodePortGuardTarget::Interface("cni0".to_string()));
+    let interface = "cni0".to_string();
+    persist_cluster_bridge_interface(ctx, &interface)?;
+    info!(
+      interface,
+      interfaces = %interfaces.join(", "),
+      "detected cluster bridge interface for gateway guard"
+    );
+    return Ok(NodePortGuardTarget::Interface(interface));
   }
 
   let interface = prompt_cluster_bridge_interface(ctx, &interfaces)?;
@@ -946,17 +1238,7 @@ fn prompt_cluster_bridge_interface(
       .to_string();
 
     if network_interface_exists(&interface) {
-      ctx.persist_change(
-        "install.execution.gateway.cluster_interface",
-        &interface,
-        |config| {
-          config.set_install_step_metadata(
-            InstallStepId::ApplicationGateway,
-            "cluster_interface",
-            interface.clone(),
-          )
-        },
-      )?;
+      persist_cluster_bridge_interface(ctx, &interface)?;
       return Ok(interface);
     }
 
@@ -969,6 +1251,24 @@ fn prompt_cluster_bridge_interface(
       ))
     );
   }
+}
+
+fn persist_cluster_bridge_interface(
+  ctx: &mut StepExecutionContext<'_>, interface: &str,
+) -> Result<()> {
+  ctx.persist_change(
+    "install.execution.gateway.cluster_interface",
+    interface,
+    |config| {
+      config.set_install_step_metadata(
+        InstallStepId::ApplicationGateway,
+        "cluster_interface",
+        interface.to_string(),
+      )
+    },
+  )?;
+
+  Ok(())
 }
 
 fn choose_cluster_bridge_interface(interfaces: &[String]) -> Option<String> {

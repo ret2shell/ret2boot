@@ -13,6 +13,7 @@ use rust_i18n::t;
 use serde::Deserialize;
 use serde_yaml::{Deserializer, Mapping, Value as YamlValue};
 use toml::Value as TomlValue;
+use tracing::info;
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
@@ -1851,25 +1852,33 @@ fn run_worker_probe_command(
 fn sync_platform_release(
   step: &PlatformDeploymentStep, ctx: &mut StepExecutionContext<'_>, mode: PlatformSyncMode,
 ) -> Result<PlatformSyncReport> {
+  info!("preparing platform release synchronization");
   let summary = platform_plan_summary(&ctx.as_plan_context())?;
   let cluster_access = ClusterAccess::from_plan_context(&ctx.as_plan_context())?;
   let helm_envs = helm_envs(&ctx.as_plan_context())?;
+  info!("resolving ret2shell chart reference");
   let chart = resolve_chart_reference(ctx, step, mode)?;
+  info!("detecting local kubernetes node label for local persistent volumes");
   let node_hostname = detect_node_hostname_label(ctx, &cluster_access)?;
 
+  info!("preparing ret2shell host directories and runtime files");
   install_directory(ctx, "/etc/ret2shell")?;
   ensure_platform_host_layout(ctx, &summary)?;
   if sync_runtime_registry_config(ctx, &summary)? {
+    info!("cluster registry configuration changed; restarting kubernetes runtime");
     restart_cluster_runtime_service(ctx)?;
   }
+  info!("waiting for kubernetes nodes before applying platform resources");
   cluster_access.wait_for_nodes_ready(ctx)?;
 
+  info!("rendering and syncing platform values and storage manifests");
   let desired_values = render_platform_values_yaml(&summary)?;
   let _ = sync_managed_text_file(ctx, PLATFORM_VALUES_DEST, &desired_values, "600")?;
   let storage_manifest = render_platform_storage_manifest(&summary, Some(&node_hostname));
   let storage_changed =
     sync_storage_manifest(ctx, step, &cluster_access, storage_manifest.clone())?;
 
+  info!("rendering chart artifacts and syncing platform host config");
   let rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
   let reference_files = load_reference_config_files()?;
   let desired_host_config_toml = merge_runtime_config_with_reference(
@@ -1895,8 +1904,10 @@ fn sync_platform_release(
     "644",
   )?;
   sync_deployment_exports(ctx, &desired_values, storage_manifest.as_deref())?;
+  info!("applying platform bootstrap manifest");
   cluster_access.apply_manifest(ctx, BACKEND_INIT_MANIFEST_DEST)?;
   ensure_platform_tls_secret(ctx, &cluster_access, &summary)?;
+  info!("querying current platform release state");
   let cluster_state = query_cluster_release_state(ctx, &cluster_access, &helm_envs)?;
   let report = PlatformSyncReport {
     release_exists: cluster_state.release_exists,
@@ -1916,9 +1927,16 @@ fn sync_platform_release(
   persist_platform_chart_metadata(step, ctx, &chart)?;
 
   if !report.has_changes() {
+    info!("platform release is already in desired state");
     return Ok(report);
   }
 
+  info!(
+    release = HELM_RELEASE_NAME,
+    namespace = PLATFORM_NAMESPACE,
+    timeout = HELM_RELEASE_TIMEOUT,
+    "running helm upgrade for platform release"
+  );
   ctx.run_privileged_command(
     "helm",
     &[
@@ -1939,6 +1957,7 @@ fn sync_platform_release(
   )?;
 
   if report.release_exists {
+    info!("restarting existing platform workloads after release update");
     cluster_access.restart_release_workloads(ctx)?;
   }
 
@@ -1992,6 +2011,7 @@ fn resolve_chart_reference(
 ) -> Result<ChartReference> {
   match mode {
     PlatformSyncMode::InstallLatest | PlatformSyncMode::UpdateLatest => {
+      info!("downloading latest ret2shell chart release metadata and package");
       let chart = update::download_ret2shell_chart()?;
       let chart = copy_chart_to_system_cache(
         ctx,
@@ -2007,6 +2027,7 @@ fn resolve_chart_reference(
       prepare_patched_chart(ctx, chart)
     }
     PlatformSyncMode::SyncRecorded => {
+      info!("reusing recorded ret2shell chart from installer state");
       let chart_version = ctx
         .config()
         .install_step_metadata(step.id(), "chart_version")
@@ -2070,6 +2091,11 @@ fn copy_chart_to_system_cache(
 ) -> Result<ChartReference> {
   let system_chart_path = system_chart_cache_path(&chart.version);
   if !chart_cache_copy_required(&chart.source_path, &system_chart_path) {
+    info!(
+      chart_version = %chart.version,
+      path = %system_chart_path.display(),
+      "ret2shell chart is already in the system cache"
+    );
     return Ok(ChartReference {
       source_path: system_chart_path.clone(),
       path: system_chart_path,
@@ -2079,6 +2105,12 @@ fn copy_chart_to_system_cache(
 
   let system_chart_dir = system_chart_path.parent().expect("chart cache has parent");
 
+  info!(
+    chart_version = %chart.version,
+    source = %chart.source_path.display(),
+    target = %system_chart_path.display(),
+    "copying ret2shell chart into system cache"
+  );
   install_directory(ctx, &system_chart_dir.display().to_string())?;
   ctx.run_privileged_command(
     "install",
@@ -2113,6 +2145,12 @@ fn system_chart_cache_path(version: &str) -> PathBuf {
 fn prepare_patched_chart(
   ctx: &StepExecutionContext<'_>, chart: ChartReference,
 ) -> Result<ChartReference> {
+  info!(
+    chart_version = %chart.version,
+    source = %chart.source_path.display(),
+    target = BACKEND_CHART_DIR,
+    "extracting and patching ret2shell chart"
+  );
   install_directory(ctx, RET2SHELL_ROOT_DIR)?;
   install_directory(ctx, BACKEND_ROOT_DIR)?;
   install_directory(ctx, BACKEND_DEPLOYMENTS_DIR)?;
@@ -4052,10 +4090,27 @@ impl ClusterAccess {
     ];
     let mut last_error = None;
 
-    for _ in 0..NODE_READY_WAIT_RETRIES {
+    info!(
+      attempts = NODE_READY_WAIT_RETRIES,
+      timeout = NODE_READY_WAIT_TIMEOUT,
+      "waiting for kubernetes nodes to become ready"
+    );
+
+    for attempt in 1..=NODE_READY_WAIT_RETRIES {
       match self.run(ctx, &args) {
-        Ok(()) => return Ok(()),
-        Err(error) => last_error = Some(error),
+        Ok(()) => {
+          info!("kubernetes nodes are ready");
+          return Ok(());
+        }
+        Err(error) => {
+          info!(
+            attempt,
+            attempts = NODE_READY_WAIT_RETRIES,
+            error = %error,
+            "kubernetes nodes are not ready yet"
+          );
+          last_error = Some(error);
+        }
       }
 
       thread::sleep(Duration::from_secs(5));
