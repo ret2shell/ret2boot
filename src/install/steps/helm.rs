@@ -10,14 +10,16 @@ use anyhow::{Context, Result, anyhow, bail};
 use reqwest::{blocking::Client, header::USER_AGENT};
 use rust_i18n::t;
 use semver::Version;
-use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   support::{find_command_path, unique_temp_path},
 };
-use crate::config::{InstallStepId, InstallTargetRole};
+use crate::{
+  checksum::sha256_bytes_hex,
+  config::{InstallStepId, InstallTargetRole},
+};
 
 const HELM_LATEST_VERSION_URL: &str = "https://get.helm.sh/helm3-latest-version";
 const HELM_DOWNLOAD_BASE_URL: &str = "https://get.helm.sh";
@@ -193,7 +195,7 @@ fn stage_helm_release_package() -> Result<HelmReleasePackage> {
   let archive = download_bytes_with_retries(&client, &download_url, "helm archive")?;
   let checksum = download_text_with_retries(&client, &checksum_url, "helm checksum")?;
   let expected_checksum = parse_helm_archive_checksum(&checksum, &archive_name)?;
-  let actual_checksum = format!("{:x}", Sha256::digest(&archive));
+  let actual_checksum = sha256_bytes_hex(&archive);
 
   if actual_checksum != expected_checksum {
     bail!(

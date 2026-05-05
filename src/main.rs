@@ -1,3 +1,4 @@
+mod checksum;
 mod cli;
 mod config;
 mod errors;

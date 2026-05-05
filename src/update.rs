@@ -1,7 +1,7 @@
 use std::{
   env,
   fs::{self, File},
-  io::{self, Read},
+  io,
   path::{Path, PathBuf},
   process::Command,
   time::Duration,
@@ -15,8 +15,9 @@ use reqwest::{
 };
 use semver::Version;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
+
+use crate::checksum::sha256_file_hex;
 
 pub const DEFAULT_RELEASE_SOURCE_NAME: &str = "github";
 pub const DEFAULT_REPOSITORY_URL: &str = "https://github.com/ret2shell/ret2boot";
@@ -294,7 +295,7 @@ impl Ret2ShellChartManager {
     let expected_checksum = parse_sha256sum_line(&checksum, &chart_name)?;
 
     if chart_path.is_file() {
-      if compute_sha256(&chart_path)? == expected_checksum {
+      if sha256_file_hex(&chart_path)? == expected_checksum {
         return Ok(Ret2ShellChartDownload {
           version,
           path: chart_path,
@@ -314,7 +315,7 @@ impl Ret2ShellChartManager {
     let temp_path = chart_path.with_extension("tgz.download");
     download_asset_to_path(&self.client, chart_asset, &temp_path)?;
 
-    let actual_checksum = compute_sha256(&temp_path)?;
+    let actual_checksum = sha256_file_hex(&temp_path)?;
     if actual_checksum != expected_checksum {
       let _ = fs::remove_file(&temp_path);
       return Err(anyhow!(
@@ -658,27 +659,6 @@ fn parse_sha256sum_line(contents: &str, expected_name: &str) -> Result<String> {
 
 fn checksum_entry_base_name(path: &str) -> &str {
   path.rsplit(['/', '\\']).next().unwrap_or(path)
-}
-
-fn compute_sha256(path: &Path) -> Result<String> {
-  let mut file =
-    File::open(path).with_context(|| format!("failed to open `{}`", path.display()))?;
-  let mut digest = Sha256::new();
-  let mut buffer = [0_u8; 8192];
-
-  loop {
-    let read = file
-      .read(&mut buffer)
-      .with_context(|| format!("failed to read `{}`", path.display()))?;
-
-    if read == 0 {
-      break;
-    }
-
-    digest.update(&buffer[..read]);
-  }
-
-  Ok(format!("{:x}", digest.finalize()))
 }
 
 fn parse_release_version(raw: &str) -> Result<Version> {
