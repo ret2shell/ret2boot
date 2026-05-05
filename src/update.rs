@@ -767,8 +767,8 @@ mod tests {
   #[test]
   fn parses_standard_sha256sum_output() {
     let checksum = parse_sha256sum_line(
-      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  ret2shell-3.10.4.tgz\n",
-      "ret2shell-3.10.4.tgz",
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  ret2shell-3.10.6.tgz\n",
+      "ret2shell-3.10.6.tgz",
     )
     .expect("checksum should parse");
 
@@ -781,8 +781,8 @@ mod tests {
   #[test]
   fn parses_sha256sum_output_with_path_prefix() {
     let checksum = parse_sha256sum_line(
-      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  /home/runner1/_work/_temp/helm-dist/ret2shell-3.10.4.tgz\n",
-      "ret2shell-3.10.4.tgz",
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  /home/runner1/_work/_temp/helm-dist/ret2shell-3.10.6.tgz\n",
+      "ret2shell-3.10.6.tgz",
     )
     .expect("checksum should parse when the checksum file includes a path prefix");
 
@@ -795,8 +795,8 @@ mod tests {
   #[test]
   fn parses_binary_sha256sum_output_with_windows_path_prefix() {
     let checksum = parse_sha256sum_line(
-      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef *C:\\artifacts\\ret2shell-3.10.4.tgz\n",
-      "ret2shell-3.10.4.tgz",
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef *C:\\artifacts\\ret2shell-3.10.6.tgz\n",
+      "ret2shell-3.10.6.tgz",
     )
     .expect("checksum should parse when the checksum file includes a binary-mode path");
 
@@ -809,12 +809,12 @@ mod tests {
   #[test]
   fn extracts_checksum_entry_base_name_from_either_path_separator() {
     assert_eq!(
-      checksum_entry_base_name("/home/runner1/_work/ret2shell-3.10.4.tgz"),
-      "ret2shell-3.10.4.tgz"
+      checksum_entry_base_name("/home/runner1/_work/ret2shell-3.10.6.tgz"),
+      "ret2shell-3.10.6.tgz"
     );
     assert_eq!(
-      checksum_entry_base_name("C:\\artifacts\\ret2shell-3.10.4.tgz"),
-      "ret2shell-3.10.4.tgz"
+      checksum_entry_base_name("C:\\artifacts\\ret2shell-3.10.6.tgz"),
+      "ret2shell-3.10.6.tgz"
     );
   }
 
@@ -822,14 +822,14 @@ mod tests {
   fn rejects_checksum_for_unexpected_file_name() {
     let error = parse_sha256sum_line(
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  other.tgz\n",
-      "ret2shell-3.10.4.tgz",
+      "ret2shell-3.10.6.tgz",
     )
     .expect_err("checksum parser should reject mismatched asset names");
 
     assert!(
       error
         .to_string()
-        .contains("checksum asset references `other.tgz` instead of `ret2shell-3.10.4.tgz`")
+        .contains("checksum asset references `other.tgz` instead of `ret2shell-3.10.6.tgz`")
     );
   }
 }

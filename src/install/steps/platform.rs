@@ -71,6 +71,14 @@ const INTERNAL_INGRESS_HOST_SUFFIX: &str = "ret2boot.invalid";
 const POSTGRESQL_STORAGE_ROOT_MODE: &str = "1777";
 const POSTGRESQL_LEGACY_MOUNT_PATH: &str = "mountPath: /var/lib/postgresql/data";
 const POSTGRESQL_PERSISTENT_MOUNT_PATH: &str = "mountPath: /var/lib/postgresql";
+const GLOBAL_TEST_IMAGE_TAG: &str = "8.20.0";
+const POSTGRESQL_IMAGE_TAG: &str = "18.3-alpine";
+const POSTGRESQL_EXPORTER_IMAGE_TAG: &str = "v0.19.1";
+const VALKEY_IMAGE_TAG: &str = "9.0.3-alpine";
+const REDIS_EXPORTER_IMAGE_TAG: &str = "v1.83.0";
+const NATS_IMAGE_TAG: &str = "2.14.0-alpine";
+const REGISTRY_IMAGE_TAG: &str = "3.1.1";
+const VICTORIA_LOGS_IMAGE_TAG: &str = "v1.50.0";
 const PLATFORM_TEMPLATE_CONTAINERS_MARKER: &str = "      containers:\n";
 const PLATFORM_TEMPLATE_VOLUME_MOUNTS_MARKER: &str = "          volumeMounts:\n";
 const PLATFORM_TEMPLATE_RESOURCES_MARKER: &str =
@@ -3392,7 +3400,12 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
   let external_https = summary.tls_enabled;
   let external_origin = derive_external_origin(&summary.public_host, external_https);
 
-  let mut lines = vec!["platform:".to_string()];
+  let mut lines = vec!["global:".to_string()];
+  lines.push("  testImage:".to_string());
+  lines.push(format!("    tag: {}", yaml_quote(GLOBAL_TEST_IMAGE_TAG)));
+
+  lines.push(String::new());
+  lines.push("platform:".to_string());
   lines.push("  exposure:".to_string());
   match summary.application_exposure {
     ApplicationExposureMode::Ingress => {
@@ -3464,6 +3477,8 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
 
   lines.push(String::new());
   lines.push("postgresql:".to_string());
+  append_image_tag(&mut lines, "  ", POSTGRESQL_IMAGE_TAG);
+  append_metrics_image_tag(&mut lines, "  ", POSTGRESQL_EXPORTER_IMAGE_TAG);
   match database.deployment {
     PlatformServiceDeploymentMode::Local => {
       lines.push("  mode: internal".to_string());
@@ -3509,6 +3524,8 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
 
   lines.push(String::new());
   lines.push("valkey:".to_string());
+  append_image_tag(&mut lines, "  ", VALKEY_IMAGE_TAG);
+  append_metrics_image_tag(&mut lines, "  ", REDIS_EXPORTER_IMAGE_TAG);
   match cache.deployment {
     PlatformServiceDeploymentMode::Local => {
       lines.push("  mode: internal".to_string());
@@ -3535,6 +3552,7 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
 
   lines.push(String::new());
   lines.push("nats:".to_string());
+  append_image_tag(&mut lines, "  ", NATS_IMAGE_TAG);
   match queue.deployment {
     PlatformServiceDeploymentMode::Local => {
       lines.push("  mode: internal".to_string());
@@ -3566,6 +3584,7 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
 
   lines.push(String::new());
   lines.push("registry:".to_string());
+  append_image_tag(&mut lines, "  ", REGISTRY_IMAGE_TAG);
   match registry.deployment {
     PlatformServiceDeploymentMode::Disabled => {
       lines.push("  mode: disabled".to_string());
@@ -3609,6 +3628,7 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
 
   lines.push(String::new());
   lines.push("victoriaLogs:".to_string());
+  append_image_tag(&mut lines, "  ", VICTORIA_LOGS_IMAGE_TAG);
   match logs.deployment {
     PlatformServiceDeploymentMode::Disabled => {
       lines.push("  mode: disabled".to_string());
@@ -3629,6 +3649,16 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
 
   lines.push(String::new());
   Ok(lines.join("\n"))
+}
+
+fn append_image_tag(lines: &mut Vec<String>, indent: &str, tag: &str) {
+  lines.push(format!("{indent}image:"));
+  lines.push(format!("{indent}  tag: {}", yaml_quote(tag)));
+}
+
+fn append_metrics_image_tag(lines: &mut Vec<String>, indent: &str, tag: &str) {
+  lines.push(format!("{indent}metrics:"));
+  append_image_tag(lines, &format!("{indent}  "), tag);
 }
 
 fn render_platform_storage_manifest(
@@ -4227,6 +4257,10 @@ mod tests {
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
+      parsed["global"]["testImage"]["tag"],
+      Value::String("8.20.0".to_string())
+    );
+    assert_eq!(
       parsed["platform"]["exposure"]["type"],
       Value::String("ingress".to_string())
     );
@@ -4247,6 +4281,14 @@ mod tests {
       Value::String("signing-key".to_string())
     );
     assert_eq!(
+      parsed["postgresql"]["image"]["tag"],
+      Value::String("18.3-alpine".to_string())
+    );
+    assert_eq!(
+      parsed["postgresql"]["metrics"]["image"]["tag"],
+      Value::String("v0.19.1".to_string())
+    );
+    assert_eq!(
       parsed["postgresql"]["mode"],
       Value::String("external".to_string())
     );
@@ -4255,12 +4297,32 @@ mod tests {
       Value::String("db.example.com".to_string())
     );
     assert_eq!(
+      parsed["valkey"]["image"]["tag"],
+      Value::String("9.0.3-alpine".to_string())
+    );
+    assert_eq!(
+      parsed["valkey"]["metrics"]["image"]["tag"],
+      Value::String("v1.83.0".to_string())
+    );
+    assert_eq!(
       parsed["valkey"]["auth"]["password"],
       Value::String("cache-secret".to_string())
     );
     assert_eq!(
+      parsed["nats"]["image"]["tag"],
+      Value::String("2.14.0-alpine".to_string())
+    );
+    assert_eq!(
+      parsed["registry"]["image"]["tag"],
+      Value::String("3.1.1".to_string())
+    );
+    assert_eq!(
       parsed["registry"]["externalAccess"]["host"],
       Value::String("localhost:30310".to_string())
+    );
+    assert_eq!(
+      parsed["victoriaLogs"]["image"]["tag"],
+      Value::String("v1.50.0".to_string())
     );
     assert_eq!(
       parsed["victoriaLogs"]["mode"],
@@ -4467,7 +4529,7 @@ spec:\n\
   #[test]
   fn chart_cache_copy_is_skipped_when_source_is_already_in_system_cache() {
     let path =
-      Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.4/ret2shell-3.10.4.tgz");
+      Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.6/ret2shell-3.10.6.tgz");
 
     assert!(!chart_cache_copy_required(path, path));
   }
@@ -4475,8 +4537,8 @@ spec:\n\
   #[test]
   fn chart_cache_copy_runs_when_source_and_target_differ() {
     assert!(chart_cache_copy_required(
-      Path::new("/tmp/ret2shell-3.10.4.tgz"),
-      Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.4/ret2shell-3.10.4.tgz")
+      Path::new("/tmp/ret2shell-3.10.6.tgz"),
+      Path::new("/var/cache/ret2shell/ret2boot/charts/ret2shell/3.10.6/ret2shell-3.10.6.tgz")
     ));
   }
 
