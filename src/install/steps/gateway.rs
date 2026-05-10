@@ -847,8 +847,7 @@ fn render_nginx_site(
 }
 
 fn ensure_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let contents = fs::read_to_string(NGINX_MAIN_CONF)
-    .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))?;
+  let contents = read_nginx_main_conf(ctx)?;
 
   if contents.contains(NGINX_SITE_INCLUDE_MARKER_DEFAULT)
     && contents.contains(NGINX_SITE_INCLUDE_MARKER)
@@ -885,8 +884,7 @@ fn ensure_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
 }
 
 fn remove_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let contents = fs::read_to_string(NGINX_MAIN_CONF)
-    .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))?;
+  let contents = read_nginx_main_conf(ctx)?;
 
   if !contents.contains(NGINX_SITE_INCLUDE_MARKER) {
     return Ok(());
@@ -906,8 +904,7 @@ fn remove_custom_site_include_line(contents: &str) -> String {
 }
 
 fn remove_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
-  let contents = fs::read_to_string(NGINX_MAIN_CONF)
-    .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))?;
+  let contents = read_nginx_main_conf(ctx)?;
 
   if !contents.contains(NGINX_STREAM_INCLUDE_MARKER) {
     return Ok(());
@@ -919,6 +916,12 @@ fn remove_nginx_stream_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
   install_staged_file(ctx, &staged, NGINX_MAIN_CONF)?;
   let _ = fs::remove_file(&staged);
   Ok(())
+}
+
+fn read_nginx_main_conf(ctx: &StepExecutionContext<'_>) -> Result<String> {
+  ctx
+    .run_privileged_command_capture("cat", &[NGINX_MAIN_CONF.to_string()], &[])
+    .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))
 }
 
 fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
