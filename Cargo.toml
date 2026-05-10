@@ -1,24 +1,28 @@
 [package]
-name = "ret2boot"
-version = "0.2.3"
-edition = "2024"
 description = "Bootstrap and lifecycle management tool for Ret2Shell clusters"
-homepage = "https://ret.sh.cn/"
-repository = "https://github.com/ret2shell/ret2boot"
-license = "GPL-3.0-only"
-readme = "README.md"
+edition     = "2024"
+homepage    = "https://ret.sh.cn/"
+license     = "GPL-3.0-only"
+name        = "ret2boot"
+readme      = "README.md"
+repository  = "https://github.com/ret2shell/ret2boot"
+version     = "0.2.4"
 
 [package.metadata.binstall]
-pkg-url = "https://github.com/ret2shell/ret2boot/releases/download/{ version }/{ name }-{ version }-{ target }.tar.gz"
-pkg-fmt = "tgz"
 bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+pkg-url = "https://github.com/ret2shell/ret2boot/releases/download/{ version }/{ name }-{ version }-{ target }.tar.gz"
 
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
 dialoguer = "0.12.0"
 libc = "0.2.186"
-reqwest = { version = "0.13.3", default-features = false, features = ["blocking", "json", "rustls"] }
+reqwest = { version = "0.13.3", default-features = false, features = [
+  "blocking",
+  "json",
+  "rustls",
+] }
 rust-embed = "8.11.0"
 rust-i18n = "4.0.0"
 semver = "1.0.28"
