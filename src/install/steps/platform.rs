@@ -4351,10 +4351,9 @@ mod tests {
 
   #[test]
   fn helm_release_summary_parses_status_from_helm_list_output() {
-    let release: HelmReleaseSummary = serde_json::from_str(
-      r#"{"name":"ret2shell","chart":"ret2shell-3.10.9","status":"failed"}"#,
-    )
-    .expect("helm release summary parses");
+    let release: HelmReleaseSummary =
+      serde_json::from_str(r#"{"name":"ret2shell","chart":"ret2shell-3.10.9","status":"failed"}"#)
+        .expect("helm release summary parses");
 
     assert_eq!(release.name, "ret2shell");
     assert_eq!(release.chart, "ret2shell-3.10.9");
