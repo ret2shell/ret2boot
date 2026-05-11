@@ -211,6 +211,7 @@ pub(crate) enum PlatformSyncMode {
 
 pub(crate) struct PlatformSyncReport {
   pub release_exists: bool,
+  pub release_status_changed: bool,
   pub chart_changed: bool,
   pub workload_changed: bool,
   pub values_changed: bool,
@@ -222,6 +223,7 @@ pub(crate) struct PlatformSyncReport {
 impl PlatformSyncReport {
   pub(crate) fn has_changes(&self) -> bool {
     !self.release_exists
+      || self.release_status_changed
       || self.chart_changed
       || self.workload_changed
       || self.values_changed
@@ -255,6 +257,8 @@ struct ReferenceConfigFiles {
 struct HelmReleaseSummary {
   name: String,
   chart: String,
+  #[serde(default)]
+  status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,6 +288,7 @@ struct ClusterNodeIdentity {
 #[derive(Default)]
 struct ClusterReleaseState {
   release_exists: bool,
+  release_status: Option<String>,
   chart_version: Option<String>,
   values: Option<YamlValue>,
   config_toml: Option<String>,
@@ -1911,6 +1916,8 @@ fn sync_platform_release(
   let cluster_state = query_cluster_release_state(ctx, &cluster_access, &helm_envs)?;
   let report = PlatformSyncReport {
     release_exists: cluster_state.release_exists,
+    release_status_changed: cluster_state.release_exists
+      && !helm_release_status_is_deployed(cluster_state.release_status.as_deref()),
     chart_changed: cluster_state.chart_version.as_deref() != Some(chart.version.as_str()),
     workload_changed: cluster_state.platform_mount_layout.as_ref()
       != Some(&rendered_artifacts.platform_mount_layout)
@@ -1955,6 +1962,7 @@ fn sync_platform_release(
     ],
     &helm_envs,
   )?;
+  ensure_platform_release_is_deployed(ctx, &helm_envs)?;
 
   if report.release_exists {
     info!("restarting existing platform workloads after release update");
@@ -3101,6 +3109,7 @@ fn query_cluster_release_state(
 
   Ok(ClusterReleaseState {
     release_exists: true,
+    release_status: release.status.clone(),
     chart_version: parse_release_chart_version(&release.chart),
     values: Some(current_release_values(ctx, helm_envs)?),
     config_toml: cluster_access.capture_namespaced_object_template(
@@ -3147,6 +3156,25 @@ fn current_helm_release(
       .into_iter()
       .find(|release| release.name == HELM_RELEASE_NAME),
   )
+}
+
+fn ensure_platform_release_is_deployed(
+  ctx: &StepExecutionContext<'_>, helm_envs: &[(String, String)],
+) -> Result<()> {
+  let release = current_helm_release(ctx, helm_envs)?.ok_or_else(|| {
+    anyhow!(
+      "helm upgrade completed but release `{HELM_RELEASE_NAME}` was not found in namespace `{PLATFORM_NAMESPACE}`"
+    )
+  })?;
+
+  if helm_release_status_is_deployed(release.status.as_deref()) {
+    return Ok(());
+  }
+
+  let status = release.status.as_deref().unwrap_or("unknown");
+  bail!(
+    "helm release `{HELM_RELEASE_NAME}` in namespace `{PLATFORM_NAMESPACE}` is not healthy after upgrade: status `{status}`"
+  );
 }
 
 fn current_release_values(
@@ -3243,6 +3271,10 @@ fn parse_yaml_value(contents: &str) -> Result<YamlValue> {
   }
 
   serde_yaml::from_str(contents).context("failed to parse yaml content")
+}
+
+fn helm_release_status_is_deployed(status: Option<&str>) -> bool {
+  status.is_some_and(|status| status.trim().eq_ignore_ascii_case("deployed"))
 }
 
 fn extract_platform_mount_layout(document: &YamlValue) -> YamlValue {
@@ -4292,6 +4324,42 @@ mod tests {
   use serde_yaml::{Deserializer, Value};
 
   use super::*;
+
+  #[test]
+  fn platform_sync_report_treats_unhealthy_release_as_drift() {
+    let report = PlatformSyncReport {
+      release_exists: true,
+      release_status_changed: true,
+      chart_changed: false,
+      workload_changed: false,
+      values_changed: false,
+      config_changed: false,
+      blocked_changed: false,
+      storage_changed: false,
+    };
+
+    assert!(report.has_changes());
+  }
+
+  #[test]
+  fn helm_release_status_helper_only_accepts_deployed_status() {
+    assert!(helm_release_status_is_deployed(Some("deployed")));
+    assert!(helm_release_status_is_deployed(Some("Deployed")));
+    assert!(!helm_release_status_is_deployed(Some("failed")));
+    assert!(!helm_release_status_is_deployed(None));
+  }
+
+  #[test]
+  fn helm_release_summary_parses_status_from_helm_list_output() {
+    let release: HelmReleaseSummary = serde_json::from_str(
+      r#"{"name":"ret2shell","chart":"ret2shell-3.10.9","status":"failed"}"#,
+    )
+    .expect("helm release summary parses");
+
+    assert_eq!(release.name, "ret2shell");
+    assert_eq!(release.chart, "ret2shell-3.10.9");
+    assert_eq!(release.status.as_deref(), Some("failed"));
+  }
 
   #[test]
   fn resolve_public_endpoint_strips_scheme_path_and_port_for_dns_hosts() {
