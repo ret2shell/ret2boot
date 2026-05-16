@@ -47,6 +47,9 @@ const RET2SHELL_ROOT_DIR: &str = "/srv/ret2shell";
 const FRONTEND_HOST_DIR: &str = "/srv/ret2shell/frontend";
 const FRONTEND_INDEX_PATH: &str = "/srv/ret2shell/frontend/index.html";
 const FRONTEND_VERSION_MARKER: &str = "/srv/ret2shell/frontend/.ret2shell-chart-version";
+const VALKEY_RDB_FORMAT_REQUIRING_VALKEY_9: u32 = 80;
+const VALKEY_RDB_COMPAT_IMAGE_REPOSITORY: &str = "valkey/valkey";
+const VALKEY_RDB_COMPAT_IMAGE_TAG: &str = "9.0.3-alpine";
 const BACKEND_ROOT_DIR: &str = "/srv/ret2shell/backend";
 const BACKEND_CONFIG_DIR: &str = "/srv/ret2shell/backend/config";
 const BACKEND_DEPLOYMENTS_DIR: &str = "/srv/ret2shell/backend/deployments";
@@ -265,6 +268,17 @@ struct ReferenceConfigFiles {
   license_content: Option<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct PlatformRuntimeOverrides {
+  valkey_image: Option<ContainerImageOverride>,
+}
+
+#[derive(Clone, Debug)]
+struct ContainerImageOverride {
+  repository: String,
+  tag: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct HelmReleaseSummary {
   name: String,
@@ -381,7 +395,7 @@ impl AtomicInstallStep for PlatformDeploymentStep {
 
   fn describe(&self, ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
     let summary = platform_plan_summary(ctx)?;
-    let _ = render_platform_values_yaml(&summary)?;
+    let _ = render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default())?;
     let _ = render_platform_storage_manifest(&summary, None);
     let mut details = vec![
       t!(
@@ -1889,14 +1903,27 @@ fn sync_platform_release(
   cluster_access.wait_for_nodes_ready(ctx)?;
 
   info!("rendering and syncing platform values and storage manifests");
-  let desired_values = render_platform_values_yaml(&summary)?;
-  let _ = sync_managed_text_file(ctx, PLATFORM_VALUES_DEST, &desired_values, "600")?;
+  let mut runtime_overrides = PlatformRuntimeOverrides::default();
+  let mut desired_values = render_platform_values_yaml(&summary, &runtime_overrides)?;
+  let mut values_changed =
+    sync_managed_text_file(ctx, PLATFORM_VALUES_DEST, &desired_values, "600")?;
   let storage_manifest = render_platform_storage_manifest(&summary, Some(&node_hostname));
   let storage_changed =
     sync_storage_manifest(ctx, step, &cluster_access, storage_manifest.clone())?;
 
   info!("rendering chart artifacts and syncing platform host config");
-  let rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
+  let mut rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
+  if let Some(valkey_image) = valkey_runtime_image_override_for_storage(
+    ctx,
+    &summary,
+    rendered_artifacts.valkey_image.as_deref(),
+  )? {
+    runtime_overrides.valkey_image = Some(valkey_image);
+    desired_values = render_platform_values_yaml(&summary, &runtime_overrides)?;
+    values_changed =
+      sync_managed_text_file(ctx, PLATFORM_VALUES_DEST, &desired_values, "600")? || values_changed;
+    rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
+  }
   let reference_files = load_reference_config_files()?;
   let desired_host_config_toml = merge_runtime_config_with_reference(
     &rendered_artifacts.config_toml,
@@ -1939,7 +1966,8 @@ fn sync_platform_release(
     workload_changed: cluster_state.platform_mount_layout.as_ref()
       != Some(&rendered_artifacts.platform_mount_layout)
       || host_license_changed,
-    values_changed: cluster_state.values != Some(parse_yaml_value(&desired_values)?),
+    values_changed: values_changed
+      || cluster_state.values != Some(parse_yaml_value(&desired_values)?),
     config_changed: host_config_changed
       || cluster_state.config_toml.as_deref() != Some(rendered_artifacts.config_toml.as_str()),
     blocked_changed: host_blocked_changed
@@ -3140,6 +3168,99 @@ fn frontend_assets_need_refresh(
   !index_exists || recorded_version.map(str::trim) != Some(chart_version)
 }
 
+fn valkey_runtime_image_override_for_storage(
+  ctx: &StepExecutionContext<'_>, summary: &PlatformPlanSummary, desired_image: Option<&str>,
+) -> Result<Option<ContainerImageOverride>> {
+  let cache = planned_service(summary, PlatformServiceId::Cache)?;
+  if cache.deployment != PlatformServiceDeploymentMode::Local
+    || cache.storage_mode != Some(PlatformStorageMode::LocalPath)
+  {
+    return Ok(None);
+  }
+
+  let Some(rdb_version) = detect_valkey_rdb_format_version(ctx)? else {
+    return Ok(None);
+  };
+  let Some(desired_image) = desired_image else {
+    return Ok(None);
+  };
+
+  if valkey_image_supports_rdb_format(desired_image, rdb_version) {
+    return Ok(None);
+  }
+
+  Ok(Some(ContainerImageOverride {
+    repository: VALKEY_RDB_COMPAT_IMAGE_REPOSITORY.to_string(),
+    tag: VALKEY_RDB_COMPAT_IMAGE_TAG.to_string(),
+  }))
+}
+
+fn detect_valkey_rdb_format_version(ctx: &StepExecutionContext<'_>) -> Result<Option<u32>> {
+  let script = r#"
+root="$1"
+if [ ! -d "$root" ]; then
+  exit 0
+fi
+file="$(find "$root" -type f -name '*.base.rdb' -print -quit 2>/dev/null || true)"
+if [ -z "$file" ]; then
+  exit 0
+fi
+header="$(dd if="$file" bs=1 count=9 2>/dev/null || true)"
+case "$header" in
+  REDIS[0-9][0-9][0-9][0-9])
+    printf '%s\n' "${header#REDIS}"
+    ;;
+esac
+"#;
+  let output = ctx.run_privileged_command_capture(
+    "sh",
+    &[
+      "-c".to_string(),
+      script.to_string(),
+      "ret2boot-valkey-rdb-detect".to_string(),
+      storage_host_path(PlatformServiceId::Cache).to_string(),
+    ],
+    &[],
+  )?;
+
+  parse_valkey_rdb_format_version(output.trim())
+}
+
+fn parse_valkey_rdb_format_version(raw: &str) -> Result<Option<u32>> {
+  let trimmed = raw.trim();
+  if trimmed.is_empty() {
+    return Ok(None);
+  }
+
+  trimmed
+    .parse::<u32>()
+    .map(Some)
+    .with_context(|| format!("failed to parse Valkey RDB format version `{trimmed}`"))
+}
+
+fn valkey_image_supports_rdb_format(image: &str, rdb_version: u32) -> bool {
+  if rdb_version < VALKEY_RDB_FORMAT_REQUIRING_VALKEY_9 {
+    return true;
+  }
+
+  valkey_image_major_version(image).is_some_and(|major| major >= 9)
+}
+
+fn valkey_image_major_version(image: &str) -> Option<u32> {
+  let without_digest = image.split('@').next().unwrap_or(image);
+  let (_, tag) = without_digest.rsplit_once(':')?;
+  let numeric_prefix = tag
+    .chars()
+    .take_while(|character| character.is_ascii_digit())
+    .collect::<String>();
+
+  if numeric_prefix.is_empty() {
+    return None;
+  }
+
+  numeric_prefix.parse().ok()
+}
+
 fn query_cluster_release_state(
   ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess, helm_envs: &[(String, String)],
 ) -> Result<ClusterReleaseState> {
@@ -3223,6 +3344,7 @@ struct RenderedChartArtifacts {
   config_toml: String,
   blocked_content: String,
   platform_mount_layout: YamlValue,
+  valkey_image: Option<String>,
 }
 
 fn render_chart_artifacts(
@@ -3248,6 +3370,7 @@ fn render_chart_artifacts(
   let mut config_toml = None;
   let mut blocked_content = None;
   let mut platform_mount_layout = None;
+  let mut valkey_image = None;
 
   for document in documents {
     let kind = document["kind"].as_str();
@@ -3270,6 +3393,9 @@ fn render_chart_artifacts(
       (Some("StatefulSet"), Some("ret2shell-platform")) => {
         platform_mount_layout = Some(extract_platform_mount_layout(&document));
       }
+      (Some("StatefulSet"), Some("ret2shell-valkey")) => {
+        valkey_image = extract_named_container_image(&document, "valkey");
+      }
       _ => {}
     }
   }
@@ -3284,6 +3410,7 @@ fn render_chart_artifacts(
     platform_mount_layout: platform_mount_layout.ok_or_else(|| {
       anyhow!("the rendered ret2shell chart did not contain the platform StatefulSet")
     })?,
+    valkey_image,
   })
 }
 
@@ -3300,6 +3427,15 @@ fn helm_release_needs_reconcile(status: Option<&str>) -> bool {
     .map(str::trim)
     .filter(|status| !status.is_empty())
     .is_some_and(|status| !status.eq_ignore_ascii_case("deployed"))
+}
+
+fn extract_named_container_image(document: &YamlValue, container_name: &str) -> Option<String> {
+  document["spec"]["template"]["spec"]["containers"]
+    .as_sequence()?
+    .iter()
+    .find(|container| container["name"].as_str() == Some(container_name))?["image"]
+    .as_str()
+    .map(str::to_string)
 }
 
 fn extract_platform_mount_layout(document: &YamlValue) -> YamlValue {
@@ -3485,7 +3621,9 @@ fn parse_release_chart_version(chart: &str) -> Option<String> {
   chart.strip_prefix("ret2shell-").map(str::to_string)
 }
 
-fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> {
+fn render_platform_values_yaml(
+  summary: &PlatformPlanSummary, runtime_overrides: &PlatformRuntimeOverrides,
+) -> Result<String> {
   let platform = planned_service(summary, PlatformServiceId::Platform)?;
   let database = planned_service(summary, PlatformServiceId::Database)?;
   let cache = planned_service(summary, PlatformServiceId::Cache)?;
@@ -3619,7 +3757,13 @@ fn render_platform_values_yaml(summary: &PlatformPlanSummary) -> Result<String> 
 
   lines.push(String::new());
   lines.push("valkey:".to_string());
-  append_image_tag(&mut lines, "  ", VALKEY_IMAGE_TAG);
+  if let Some(image) = &runtime_overrides.valkey_image {
+    lines.push("  image:".to_string());
+    lines.push(format!("    repository: {}", yaml_quote(&image.repository)));
+    lines.push(format!("    tag: {}", yaml_quote(&image.tag)));
+  } else {
+    append_image_tag(&mut lines, "  ", VALKEY_IMAGE_TAG);
+  }
   append_metrics_image_tag(&mut lines, "  ", REDIS_EXPORTER_IMAGE_TAG);
   match cache.deployment {
     PlatformServiceDeploymentMode::Local => {
@@ -4365,7 +4509,8 @@ mod tests {
   #[test]
   fn render_platform_values_yaml_maps_chart_settings() {
     let summary = sample_summary();
-    let rendered = render_platform_values_yaml(&summary).expect("values render");
+    let rendered = render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default())
+      .expect("values render");
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
@@ -4443,6 +4588,35 @@ mod tests {
   }
 
   #[test]
+  fn render_platform_values_yaml_can_pin_valkey_image_for_rdb_compatibility() {
+    let mut summary = sample_summary();
+    let cache = summary
+      .services
+      .iter_mut()
+      .find(|service| service.id == PlatformServiceId::Cache)
+      .expect("cache service exists");
+    cache.deployment = PlatformServiceDeploymentMode::Local;
+    cache.storage_mode = Some(PlatformStorageMode::LocalPath);
+    let overrides = PlatformRuntimeOverrides {
+      valkey_image: Some(ContainerImageOverride {
+        repository: "valkey/valkey".to_string(),
+        tag: "9.0.3-alpine".to_string(),
+      }),
+    };
+    let rendered = render_platform_values_yaml(&summary, &overrides).expect("values render");
+    let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
+
+    assert_eq!(
+      parsed["valkey"]["image"]["repository"],
+      Value::String("valkey/valkey".to_string())
+    );
+    assert_eq!(
+      parsed["valkey"]["image"]["tag"],
+      Value::String("9.0.3-alpine".to_string())
+    );
+  }
+
+  #[test]
   fn render_platform_values_yaml_maps_local_lab_profile_to_nodeport() {
     let mut summary = sample_summary();
     summary.application_exposure = ApplicationExposureMode::NodePortExternalNginx;
@@ -4450,7 +4624,8 @@ mod tests {
     summary.public_host = "192.168.23.132".to_string();
     summary.ingress_host = "ret2shell-192-168-23-132.ret2boot.invalid".to_string();
     summary.internal_registry_host = "localhost:30310".to_string();
-    let rendered = render_platform_values_yaml(&summary).expect("values render");
+    let rendered = render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default())
+      .expect("values render");
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
@@ -4478,7 +4653,8 @@ mod tests {
   #[test]
   fn render_platform_values_yaml_maps_ingress_profile_to_https_origin() {
     let summary = sample_summary();
-    let rendered = render_platform_values_yaml(&summary).expect("values render");
+    let rendered = render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default())
+      .expect("values render");
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
@@ -4659,6 +4835,45 @@ spec:\n\
       "3.10.9",
       true
     ));
+  }
+
+  #[test]
+  fn valkey_rdb_compatibility_requires_valkey_9_for_format_80() {
+    assert!(valkey_image_supports_rdb_format(
+      "valkey/valkey:9.0.3-alpine",
+      80
+    ));
+    assert!(!valkey_image_supports_rdb_format(
+      "valkey/valkey:8-alpine",
+      80
+    ));
+    assert!(valkey_image_supports_rdb_format(
+      "valkey/valkey:8-alpine",
+      12
+    ));
+  }
+
+  #[test]
+  fn valkey_image_major_version_parses_common_tags() {
+    assert_eq!(
+      valkey_image_major_version("valkey/valkey:9.0.3-alpine"),
+      Some(9)
+    );
+    assert_eq!(
+      valkey_image_major_version("valkey/valkey:8-alpine"),
+      Some(8)
+    );
+    assert_eq!(
+      valkey_image_major_version("valkey/valkey:9.0.3-alpine@sha256:abc"),
+      Some(9)
+    );
+    assert_eq!(valkey_image_major_version("valkey/valkey:latest"), None);
+  }
+
+  #[test]
+  fn parse_valkey_rdb_format_version_accepts_empty_and_numeric_output() {
+    assert_eq!(parse_valkey_rdb_format_version("").unwrap(), None);
+    assert_eq!(parse_valkey_rdb_format_version("0080\n").unwrap(), Some(80));
   }
 
   #[test]
