@@ -2000,6 +2000,7 @@ fn sync_platform_release(
       &[
         "upgrade".to_string(),
         "--install".to_string(),
+        "--force".to_string(),
         HELM_RELEASE_NAME.to_string(),
         chart.path.display().to_string(),
         "-n".to_string(),
