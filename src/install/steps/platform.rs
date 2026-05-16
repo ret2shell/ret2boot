@@ -103,16 +103,10 @@ const PATCHED_PLATFORM_INIT_CONTAINERS: &str = r#"      initContainers:
               set -eu
               mkdir -p /host-frontend
               desired_version="{{ .Chart.Version }}"
-              current_version=""
-              if [ -f /host-frontend/.ret2shell-chart-version ]; then
-                current_version="$(cat /host-frontend/.ret2shell-chart-version)"
-              fi
-              if [ ! -f /host-frontend/index.html ] || [ "$current_version" != "$desired_version" ]; then
-                find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-                cp -a /var/www/html/. /host-frontend/
-                printf '%s\n' "$desired_version" > /host-frontend/.ret2shell-chart-version
-                chmod 644 /host-frontend/.ret2shell-chart-version
-              fi
+              find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+              cp -a /var/www/html/. /host-frontend/
+              printf '%s\n' "$desired_version" > /host-frontend/.ret2shell-chart-version
+              chmod 644 /host-frontend/.ret2shell-chart-version
           volumeMounts:
             - name: frontend
               mountPath: /host-frontend
@@ -1935,6 +1929,7 @@ fn sync_platform_release(
     .unwrap_or_else(|| rendered_artifacts.blocked_content.clone());
   let frontend_marker = read_privileged_text_file(ctx, FRONTEND_VERSION_MARKER)?;
   let frontend_changed = frontend_assets_need_refresh(
+    mode,
     frontend_marker.as_deref(),
     chart.version.as_str(),
     privileged_regular_file_exists(ctx, FRONTEND_INDEX_PATH),
@@ -3163,8 +3158,15 @@ fn privileged_regular_file_exists(ctx: &StepExecutionContext<'_>, path: &str) ->
 }
 
 fn frontend_assets_need_refresh(
-  recorded_version: Option<&str>, chart_version: &str, index_exists: bool,
+  mode: PlatformSyncMode, recorded_version: Option<&str>, chart_version: &str, index_exists: bool,
 ) -> bool {
+  if matches!(
+    mode,
+    PlatformSyncMode::InstallLatest | PlatformSyncMode::UpdateLatest
+  ) {
+    return true;
+  }
+
   !index_exists || recorded_version.map(str::trim) != Some(chart_version)
 }
 
@@ -4812,26 +4814,57 @@ spec:\n\
     assert!(patched.contains("desired_version=\"{{ .Chart.Version }}\""));
     assert!(patched.contains(".ret2shell-chart-version"));
     assert!(patched.contains("find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +"));
+    assert!(patched.contains("cp -a /var/www/html/. /host-frontend/"));
+    assert!(!patched.contains("current_version="));
     assert!(!patched.contains("name: config-sync"));
     assert!(!patched.contains("name: generated-config"));
   }
 
   #[test]
   fn frontend_assets_need_refresh_detects_marker_and_content_mismatches() {
-    assert!(frontend_assets_need_refresh(None, "3.10.9", true));
-    assert!(frontend_assets_need_refresh(Some("3.10.8"), "3.10.9", true));
     assert!(frontend_assets_need_refresh(
+      PlatformSyncMode::SyncRecorded,
+      None,
+      "3.10.9",
+      true
+    ));
+    assert!(frontend_assets_need_refresh(
+      PlatformSyncMode::SyncRecorded,
+      Some("3.10.8"),
+      "3.10.9",
+      true
+    ));
+    assert!(frontend_assets_need_refresh(
+      PlatformSyncMode::SyncRecorded,
       Some("3.10.9"),
       "3.10.9",
       false
     ));
     assert!(!frontend_assets_need_refresh(
+      PlatformSyncMode::SyncRecorded,
       Some("3.10.9"),
       "3.10.9",
       true
     ));
     assert!(!frontend_assets_need_refresh(
+      PlatformSyncMode::SyncRecorded,
       Some("3.10.9\n"),
+      "3.10.9",
+      true
+    ));
+  }
+
+  #[test]
+  fn frontend_assets_need_refresh_forces_latest_modes() {
+    assert!(frontend_assets_need_refresh(
+      PlatformSyncMode::InstallLatest,
+      Some("3.10.9"),
+      "3.10.9",
+      true
+    ));
+    assert!(frontend_assets_need_refresh(
+      PlatformSyncMode::UpdateLatest,
+      Some("3.10.9"),
       "3.10.9",
       true
     ));
