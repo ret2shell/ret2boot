@@ -45,6 +45,8 @@ const NODE_READY_WAIT_TIMEOUT: &str = "10s";
 const NODE_READY_WAIT_RETRIES: usize = 60;
 const RET2SHELL_ROOT_DIR: &str = "/srv/ret2shell";
 const FRONTEND_HOST_DIR: &str = "/srv/ret2shell/frontend";
+const FRONTEND_INDEX_PATH: &str = "/srv/ret2shell/frontend/index.html";
+const FRONTEND_VERSION_MARKER: &str = "/srv/ret2shell/frontend/.ret2shell-chart-version";
 const BACKEND_ROOT_DIR: &str = "/srv/ret2shell/backend";
 const BACKEND_CONFIG_DIR: &str = "/srv/ret2shell/backend/config";
 const BACKEND_DEPLOYMENTS_DIR: &str = "/srv/ret2shell/backend/deployments";
@@ -97,8 +99,16 @@ const PATCHED_PLATFORM_INIT_CONTAINERS: &str = r#"      initContainers:
             - |
               set -eu
               mkdir -p /host-frontend
-              if [ ! -f /host-frontend/index.html ]; then
+              desired_version="{{ .Chart.Version }}"
+              current_version=""
+              if [ -f /host-frontend/.ret2shell-chart-version ]; then
+                current_version="$(cat /host-frontend/.ret2shell-chart-version)"
+              fi
+              if [ ! -f /host-frontend/index.html ] || [ "$current_version" != "$desired_version" ]; then
+                find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +
                 cp -a /var/www/html/. /host-frontend/
+                printf '%s\n' "$desired_version" > /host-frontend/.ret2shell-chart-version
+                chmod 644 /host-frontend/.ret2shell-chart-version
               fi
           volumeMounts:
             - name: frontend
@@ -211,23 +221,27 @@ pub(crate) enum PlatformSyncMode {
 
 pub(crate) struct PlatformSyncReport {
   pub release_exists: bool,
+  pub release_unhealthy: bool,
   pub chart_changed: bool,
   pub workload_changed: bool,
   pub values_changed: bool,
   pub config_changed: bool,
   pub blocked_changed: bool,
   pub storage_changed: bool,
+  pub frontend_changed: bool,
 }
 
 impl PlatformSyncReport {
   pub(crate) fn has_changes(&self) -> bool {
     !self.release_exists
+      || self.release_unhealthy
       || self.chart_changed
       || self.workload_changed
       || self.values_changed
       || self.config_changed
       || self.blocked_changed
       || self.storage_changed
+      || self.frontend_changed
   }
 }
 
@@ -255,6 +269,8 @@ struct ReferenceConfigFiles {
 struct HelmReleaseSummary {
   name: String,
   chart: String,
+  #[serde(default)]
+  status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,6 +300,7 @@ struct ClusterNodeIdentity {
 #[derive(Default)]
 struct ClusterReleaseState {
   release_exists: bool,
+  release_status: Option<String>,
   chart_version: Option<String>,
   values: Option<YamlValue>,
   config_toml: Option<String>,
@@ -1889,6 +1906,12 @@ fn sync_platform_release(
     .blocked_content
     .clone()
     .unwrap_or_else(|| rendered_artifacts.blocked_content.clone());
+  let frontend_marker = read_privileged_text_file(ctx, FRONTEND_VERSION_MARKER)?;
+  let frontend_changed = frontend_assets_need_refresh(
+    frontend_marker.as_deref(),
+    chart.version.as_str(),
+    privileged_regular_file_exists(ctx, FRONTEND_INDEX_PATH),
+  );
   let host_config_changed = sync_managed_text_file(
     ctx,
     BACKEND_CONFIG_TOML_DEST,
@@ -1911,6 +1934,7 @@ fn sync_platform_release(
   let cluster_state = query_cluster_release_state(ctx, &cluster_access, &helm_envs)?;
   let report = PlatformSyncReport {
     release_exists: cluster_state.release_exists,
+    release_unhealthy: helm_release_needs_reconcile(cluster_state.release_status.as_deref()),
     chart_changed: cluster_state.chart_version.as_deref() != Some(chart.version.as_str()),
     workload_changed: cluster_state.platform_mount_layout.as_ref()
       != Some(&rendered_artifacts.platform_mount_layout)
@@ -1922,39 +1946,51 @@ fn sync_platform_release(
       || cluster_state.blocked_content.as_deref()
         != Some(rendered_artifacts.blocked_content.as_str()),
     storage_changed,
+    frontend_changed,
   };
 
   persist_platform_chart_metadata(step, ctx, &chart)?;
 
-  if !report.has_changes() {
+  let helm_reconcile_needed = !report.release_exists
+    || report.release_unhealthy
+    || report.chart_changed
+    || report.workload_changed
+    || report.values_changed
+    || report.config_changed
+    || report.blocked_changed
+    || report.storage_changed;
+
+  if !helm_reconcile_needed && !report.frontend_changed {
     info!("platform release is already in desired state");
     return Ok(report);
   }
 
-  info!(
-    release = HELM_RELEASE_NAME,
-    namespace = PLATFORM_NAMESPACE,
-    timeout = HELM_RELEASE_TIMEOUT,
-    "running helm upgrade for platform release"
-  );
-  ctx.run_privileged_command(
-    "helm",
-    &[
-      "upgrade".to_string(),
-      "--install".to_string(),
-      HELM_RELEASE_NAME.to_string(),
-      chart.path.display().to_string(),
-      "-n".to_string(),
-      PLATFORM_NAMESPACE.to_string(),
-      "--create-namespace".to_string(),
-      "-f".to_string(),
-      PLATFORM_VALUES_DEST.to_string(),
-      "--wait".to_string(),
-      "--timeout".to_string(),
-      HELM_RELEASE_TIMEOUT.to_string(),
-    ],
-    &helm_envs,
-  )?;
+  if helm_reconcile_needed {
+    info!(
+      release = HELM_RELEASE_NAME,
+      namespace = PLATFORM_NAMESPACE,
+      timeout = HELM_RELEASE_TIMEOUT,
+      "running helm upgrade for platform release"
+    );
+    ctx.run_privileged_command(
+      "helm",
+      &[
+        "upgrade".to_string(),
+        "--install".to_string(),
+        HELM_RELEASE_NAME.to_string(),
+        chart.path.display().to_string(),
+        "-n".to_string(),
+        PLATFORM_NAMESPACE.to_string(),
+        "--create-namespace".to_string(),
+        "-f".to_string(),
+        PLATFORM_VALUES_DEST.to_string(),
+        "--wait".to_string(),
+        "--timeout".to_string(),
+        HELM_RELEASE_TIMEOUT.to_string(),
+      ],
+      &helm_envs,
+    )?;
+  }
 
   if report.release_exists {
     info!("restarting existing platform workloads after release update");
@@ -3083,13 +3119,25 @@ fn manifest_resource_type(kind: &str) -> Result<&'static str> {
 }
 
 fn read_privileged_text_file(ctx: &StepExecutionContext<'_>, path: &str) -> Result<Option<String>> {
-  if !Path::new(path).is_file() {
+  if !privileged_regular_file_exists(ctx, path) {
     return Ok(None);
   }
 
   ctx
     .run_privileged_command_capture("cat", &[path.to_string()], &[])
     .map(Some)
+}
+
+fn privileged_regular_file_exists(ctx: &StepExecutionContext<'_>, path: &str) -> bool {
+  ctx
+    .run_privileged_command("test", &["-f".to_string(), path.to_string()], &[])
+    .is_ok()
+}
+
+fn frontend_assets_need_refresh(
+  recorded_version: Option<&str>, chart_version: &str, index_exists: bool,
+) -> bool {
+  !index_exists || recorded_version.map(str::trim) != Some(chart_version)
 }
 
 fn query_cluster_release_state(
@@ -3101,6 +3149,7 @@ fn query_cluster_release_state(
 
   Ok(ClusterReleaseState {
     release_exists: true,
+    release_status: Some(release.status),
     chart_version: parse_release_chart_version(&release.chart),
     values: Some(current_release_values(ctx, helm_envs)?),
     config_toml: cluster_access.capture_namespaced_object_template(
@@ -3132,6 +3181,7 @@ fn current_helm_release(
       "list".to_string(),
       "-n".to_string(),
       PLATFORM_NAMESPACE.to_string(),
+      "--all".to_string(),
       "--filter".to_string(),
       format!("^{HELM_RELEASE_NAME}$"),
       "-o".to_string(),
@@ -3243,6 +3293,13 @@ fn parse_yaml_value(contents: &str) -> Result<YamlValue> {
   }
 
   serde_yaml::from_str(contents).context("failed to parse yaml content")
+}
+
+fn helm_release_needs_reconcile(status: Option<&str>) -> bool {
+  status
+    .map(str::trim)
+    .filter(|status| !status.is_empty())
+    .is_some_and(|status| !status.eq_ignore_ascii_case("deployed"))
 }
 
 fn extract_platform_mount_layout(document: &YamlValue) -> YamlValue {
@@ -4576,9 +4633,42 @@ spec:\n\
     assert!(patched.contains("mountPath: /var/www/html"));
     assert!(patched.contains("path: /srv/ret2shell/frontend"));
     assert!(patched.contains("mountPath: /etc/ret2shell"));
-    assert!(!patched.contains("find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +"));
+    assert!(patched.contains("desired_version=\"{{ .Chart.Version }}\""));
+    assert!(patched.contains(".ret2shell-chart-version"));
+    assert!(patched.contains("find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +"));
     assert!(!patched.contains("name: config-sync"));
     assert!(!patched.contains("name: generated-config"));
+  }
+
+  #[test]
+  fn frontend_assets_need_refresh_detects_marker_and_content_mismatches() {
+    assert!(frontend_assets_need_refresh(None, "3.10.9", true));
+    assert!(frontend_assets_need_refresh(Some("3.10.8"), "3.10.9", true));
+    assert!(frontend_assets_need_refresh(
+      Some("3.10.9"),
+      "3.10.9",
+      false
+    ));
+    assert!(!frontend_assets_need_refresh(
+      Some("3.10.9"),
+      "3.10.9",
+      true
+    ));
+    assert!(!frontend_assets_need_refresh(
+      Some("3.10.9\n"),
+      "3.10.9",
+      true
+    ));
+  }
+
+  #[test]
+  fn helm_release_needs_reconcile_only_for_non_deployed_statuses() {
+    assert!(!helm_release_needs_reconcile(Some("deployed")));
+    assert!(!helm_release_needs_reconcile(Some("DEPLOYED")));
+    assert!(!helm_release_needs_reconcile(Some("")));
+    assert!(!helm_release_needs_reconcile(None));
+    assert!(helm_release_needs_reconcile(Some("failed")));
+    assert!(helm_release_needs_reconcile(Some("pending-upgrade")));
   }
 
   #[test]

@@ -342,8 +342,14 @@ impl<'a> InstallFlow<'a> {
     if !report.release_exists {
       details.push("helm release was missing");
     }
+    if report.release_unhealthy {
+      details.push("helm release status required reconciliation");
+    }
     if report.chart_changed {
       details.push("helm chart changed");
+    }
+    if report.frontend_changed {
+      details.push("frontend assets changed");
     }
     if report.workload_changed {
       details.push("platform workload spec changed");
