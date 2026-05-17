@@ -64,28 +64,28 @@ fn try_main() -> Result<()> {
         }
       };
 
-      install::run(&mut config, &runtime)
+      install::run(&mut config, &runtime, cli.force)
     }
     CliCommand::Sync => {
       let runtime = startup::initialize_maintenance(&mut config)?;
       if let Some(system_config) = load_system_config(&runtime)? {
         config = system_config;
       }
-      install::sync_existing(&mut config, &runtime)
+      install::sync_existing(&mut config, &runtime, cli.force)
     }
     CliCommand::Update => {
       let runtime = startup::initialize_maintenance(&mut config)?;
       if let Some(system_config) = load_system_config(&runtime)? {
         config = system_config;
       }
-      install::update_existing(&mut config, &runtime)
+      install::update_existing(&mut config, &runtime, cli.force)
     }
     CliCommand::Uninstall => {
       let runtime = startup::initialize_maintenance(&mut config)?;
       if let Some(system_config) = load_system_config(&runtime)? {
         config = system_config;
       }
-      install::uninstall_existing(&mut config, &runtime)
+      install::uninstall_existing(&mut config, &runtime, cli.force)
     }
   }
 }

@@ -26,7 +26,7 @@ use crate::{
   ui::{self, BadgeTone},
 };
 
-pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
+pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState, force_upgrade: bool) -> Result<()> {
   info!(
       locale = %l10n::current_locale(),
       configured_language = ?config.language,
@@ -34,7 +34,7 @@ pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
       "starting installer workflow"
   );
 
-  let mut flow = InstallFlow::new(config, runtime)?;
+  let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
   flow.greet();
   flow.capture_stage(InstallFailureStage::Preflight, None, |flow| {
@@ -71,8 +71,10 @@ pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
   Ok(())
 }
 
-pub fn sync_existing(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
-  let mut flow = InstallFlow::new(config, runtime)?;
+pub fn sync_existing(
+  config: &mut Ret2BootConfig, runtime: &RuntimeState, force_upgrade: bool,
+) -> Result<()> {
+  let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
   telemetry::init()?;
   flow.print_maintenance_header("Synchronizing installed platform");
@@ -95,8 +97,10 @@ pub fn sync_existing(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Res
   Ok(())
 }
 
-pub fn update_existing(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
-  let mut flow = InstallFlow::new(config, runtime)?;
+pub fn update_existing(
+  config: &mut Ret2BootConfig, runtime: &RuntimeState, force_upgrade: bool,
+) -> Result<()> {
+  let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
   telemetry::init()?;
   flow.print_maintenance_header("Updating installed platform");
@@ -122,8 +126,10 @@ pub fn update_existing(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> R
   Ok(())
 }
 
-pub fn uninstall_existing(config: &mut Ret2BootConfig, runtime: &RuntimeState) -> Result<()> {
-  let mut flow = InstallFlow::new(config, runtime)?;
+pub fn uninstall_existing(
+  config: &mut Ret2BootConfig, runtime: &RuntimeState, force_upgrade: bool,
+) -> Result<()> {
+  let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
   telemetry::init()?;
   flow.print_maintenance_header("Removing installed platform");
@@ -164,16 +170,20 @@ struct InstallFlow<'a> {
   config: &'a mut Ret2BootConfig,
   runtime: &'a RuntimeState,
   config_path: String,
+  force_upgrade: bool,
   validated_steps: Vec<crate::config::InstallStepId>,
   preflight_state: PreflightState,
 }
 
 impl<'a> InstallFlow<'a> {
-  fn new(config: &'a mut Ret2BootConfig, runtime: &'a RuntimeState) -> Result<Self> {
+  fn new(
+    config: &'a mut Ret2BootConfig, runtime: &'a RuntimeState, force_upgrade: bool,
+  ) -> Result<Self> {
     Ok(Self {
       config,
       runtime,
       config_path: Ret2BootConfig::path_display()?,
+      force_upgrade,
       validated_steps: Vec::new(),
       preflight_state: PreflightState::default(),
     })
@@ -258,6 +268,7 @@ impl<'a> InstallFlow<'a> {
         self.runtime,
         &self.config_path,
         &self.preflight_state,
+        self.force_upgrade,
       );
       action(&mut execution_context)
     };
@@ -301,6 +312,7 @@ impl<'a> InstallFlow<'a> {
         self.runtime,
         &self.config_path,
         &self.preflight_state,
+        self.force_upgrade,
       );
       step.uninstall(&mut execution_context)
     };
@@ -699,6 +711,7 @@ impl<'a> InstallFlow<'a> {
           self.runtime,
           &self.config_path,
           &self.preflight_state,
+          self.force_upgrade,
         );
         step.install(&mut execution_context)
       };
@@ -774,6 +787,7 @@ impl<'a> InstallFlow<'a> {
         self.runtime,
         &self.config_path,
         &self.preflight_state,
+        self.force_upgrade,
       );
       if let Err(error) = step.rollback(&mut execution_context) {
         let error_text = error.to_string();
@@ -808,6 +822,7 @@ impl<'a> InstallFlow<'a> {
           self.runtime,
           &self.config_path,
           &self.preflight_state,
+          self.force_upgrade,
         );
         step.rollback(&mut execution_context)
       };

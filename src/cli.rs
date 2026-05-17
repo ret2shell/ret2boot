@@ -7,6 +7,11 @@ use clap::{Parser, Subcommand};
   about = "Interactive installer for the Ret2Shell platform"
 )]
 pub struct Cli {
+  /// Force StatefulSet evacuation before Helm upgrade to work around
+  /// immutable volumeClaimTemplates fields.
+  #[arg(long)]
+  pub force: bool,
+
   #[command(subcommand)]
   pub command: Option<CliCommand>,
 }

@@ -1989,6 +1989,27 @@ fn sync_platform_release(
   }
 
   if helm_reconcile_needed {
+    if ctx.force_upgrade() && report.release_exists {
+      info!(
+        release = HELM_RELEASE_NAME,
+        "force flag set: evacuating existing StatefulSets before helm upgrade"
+      );
+      cluster_access.run(
+        ctx,
+        &[
+          "-n".to_string(),
+          PLATFORM_NAMESPACE.to_string(),
+          "delete".to_string(),
+          "sts".to_string(),
+          "-l".to_string(),
+          format!("app.kubernetes.io/instance={HELM_RELEASE_NAME}"),
+          "--cascade=orphan".to_string(),
+          "--ignore-not-found".to_string(),
+          "--wait=false".to_string(),
+        ],
+      )?;
+    }
+
     info!(
       release = HELM_RELEASE_NAME,
       namespace = PLATFORM_NAMESPACE,
@@ -2000,7 +2021,6 @@ fn sync_platform_release(
       &[
         "upgrade".to_string(),
         "--install".to_string(),
-        "--force".to_string(),
         HELM_RELEASE_NAME.to_string(),
         chart.path.display().to_string(),
         "-n".to_string(),

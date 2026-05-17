@@ -629,19 +629,21 @@ pub struct StepExecutionContext<'a> {
   runtime: &'a RuntimeState,
   config_path: &'a str,
   preflight_state: &'a PreflightState,
+  force_upgrade: bool,
 }
 
 #[allow(dead_code)]
 impl<'a> StepExecutionContext<'a> {
   pub fn new(
     config: &'a mut Ret2BootConfig, runtime: &'a RuntimeState, config_path: &'a str,
-    preflight_state: &'a PreflightState,
+    preflight_state: &'a PreflightState, force_upgrade: bool,
   ) -> Self {
     Self {
       config,
       runtime,
       config_path,
       preflight_state,
+      force_upgrade,
     }
   }
 
@@ -663,6 +665,10 @@ impl<'a> StepExecutionContext<'a> {
 
   pub fn preflight_state(&self) -> &PreflightState {
     self.preflight_state
+  }
+
+  pub fn force_upgrade(&self) -> bool {
+    self.force_upgrade
   }
 
   pub fn as_plan_context(&self) -> StepPlanContext<'_> {
