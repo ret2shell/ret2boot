@@ -24,6 +24,7 @@ startup.update.no_asset: "%{source} で %{version} が公開されています�
 startup.update.download_failed: "%{source} で %{version} が公開されていますが、自動ダウンロードに失敗しました。"
 startup.update.release_page: "リリースページ: %{release_url}"
 startup.update.unreachable: "%{source}（%{repository}）に接続できなかったため、今回は自動更新を確認できません。"
+update.github_auth.missing: "GitHub CLI のログイントークンが検出されませんでした。今後の GitHub API リクエストは未認証で行われ、GitHub のレート制限を受ける可能性があります。"
 install.entry.title: インストーラーの準備ができました
 install.entry.language: 表示言語
 install.entry.config_path: 設定ファイル

@@ -24,6 +24,7 @@ startup.update.no_asset: "%{source} 上有新版本 %{version}，但当前机器
 startup.update.download_failed: "%{source} 上有新版本 %{version}，但自动下载失败。"
 startup.update.release_page: "发布页面：%{release_url}"
 startup.update.unreachable: "暂时无法连接 %{source}（%{repository}），这次不会自动检查更新。"
+update.github_auth.missing: "未检测到 GitHub CLI 登录令牌；后续 GitHub API 请求将以未认证身份进行，可能会被 GitHub 速率限制。"
 install.entry.title: 安装环境已就绪
 install.entry.language: 界面语言
 install.entry.config_path: 配置文件

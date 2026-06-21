@@ -13,6 +13,7 @@ use reqwest::{
   blocking::Client,
   header::{ACCEPT, AUTHORIZATION, USER_AGENT},
 };
+use rust_i18n::t;
 use semver::Version;
 use serde::Deserialize;
 use tracing::{debug, info, warn};
@@ -369,19 +370,19 @@ struct RemoteAsset {
 struct GitHubReleaseSource {
   repository_url: String,
   latest_release_api: String,
-  auth: GitHubAuth,
+  auth: Option<GitHubAuth>,
 }
 
 impl GitHubReleaseSource {
-  fn ret2boot(auth: GitHubAuth) -> Self {
+  fn ret2boot(auth: Option<GitHubAuth>) -> Self {
     Self::new("ret2shell", "ret2boot", DEFAULT_REPOSITORY_URL, auth)
   }
 
-  fn ret2shell(auth: GitHubAuth) -> Self {
+  fn ret2shell(auth: Option<GitHubAuth>) -> Self {
     Self::new("ret2shell", "ret2shell", RET2SHELL_REPOSITORY_URL, auth)
   }
 
-  fn new(owner: &str, repo: &str, repository_url: &str, auth: GitHubAuth) -> Self {
+  fn new(owner: &str, repo: &str, repository_url: &str, auth: Option<GitHubAuth>) -> Self {
     Self {
       latest_release_api: format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"),
       repository_url: repository_url.to_string(),
@@ -400,16 +401,16 @@ impl ReleaseSource for GitHubReleaseSource {
   }
 
   fn fetch_latest_release(&self, client: &Client) -> Result<Option<RemoteRelease>> {
-    let response = self
-      .auth
-      .apply(
-        client
-          .get(&self.latest_release_api)
-          .header(USER_AGENT, user_agent())
-          .header(ACCEPT, GITHUB_JSON_MEDIA_TYPE),
-      )
-      .send()
-      .with_context(|| format!("failed to request `{}`", self.latest_release_api))?;
+    let request = client
+      .get(&self.latest_release_api)
+      .header(USER_AGENT, user_agent())
+      .header(ACCEPT, GITHUB_JSON_MEDIA_TYPE);
+    let response = match &self.auth {
+      Some(auth) => auth.apply(request),
+      None => request,
+    }
+    .send()
+    .with_context(|| format!("failed to request `{}`", self.latest_release_api))?;
 
     if response.status() == StatusCode::NOT_FOUND {
       return Ok(None);
@@ -432,7 +433,11 @@ impl ReleaseSource for GitHubReleaseSource {
           name: asset.name,
           download_url: asset.browser_download_url,
           request_url: asset.url,
-          auth: RequestAuth::GitHub(self.auth.clone()),
+          auth: self
+            .auth
+            .clone()
+            .map(RequestAuth::GitHub)
+            .unwrap_or(RequestAuth::None),
           accept: RemoteAssetAccept::OctetStream,
         })
         .collect(),
@@ -446,29 +451,46 @@ struct GitHubAuth {
 }
 
 impl GitHubAuth {
-  fn from_gh(hostname: &str) -> Result<Self> {
-    let output = Command::new("gh")
+  fn from_gh(hostname: &str) -> Result<Option<Self>> {
+    let output = match Command::new("gh")
       .args(["auth", "token", "--hostname", hostname])
       .output()
-      .with_context(|| format!("failed to run `gh auth token --hostname {hostname}`"))?;
+    {
+      Ok(output) => output,
+      Err(error) => {
+        warn!(
+          hostname,
+          error = %error,
+          "{}",
+          t!("update.github_auth.missing")
+        );
+        return Ok(None);
+      }
+    };
 
     if !output.status.success() {
       let stderr = String::from_utf8_lossy(&output.stderr);
-      let stderr = stderr.trim();
-      let detail = if stderr.is_empty() {
-        String::new()
-      } else {
-        format!(": {stderr}")
-      };
-
-      return Err(anyhow!(
-        "`gh auth token` did not return a usable token for `{hostname}`{detail}"
-      ));
+      warn!(
+        hostname,
+        stderr = stderr.trim(),
+        "{}",
+        t!("update.github_auth.missing")
+      );
+      return Ok(None);
     }
 
-    Ok(Self {
-      token: parse_gh_auth_token(&output.stdout)?,
-    })
+    match parse_gh_auth_token(&output.stdout) {
+      Ok(token) => Ok(Some(Self { token })),
+      Err(error) => {
+        warn!(
+          hostname,
+          error = %error,
+          "{}",
+          t!("update.github_auth.missing")
+        );
+        Ok(None)
+      }
+    }
   }
 
   fn apply(&self, request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
@@ -479,12 +501,14 @@ impl GitHubAuth {
 #[derive(Clone)]
 enum RequestAuth {
   GitHub(GitHubAuth),
+  None,
 }
 
 impl RequestAuth {
   fn apply(&self, request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
     match self {
       Self::GitHub(auth) => auth.apply(request),
+      Self::None => request,
     }
   }
 }

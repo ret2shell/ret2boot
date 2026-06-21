@@ -24,6 +24,7 @@ startup.update.no_asset: "Release %{version} is available from %{source}, but th
 startup.update.download_failed: "Release %{version} is available from %{source}, but the automatic download failed."
 startup.update.release_page: "release page: %{release_url}"
 startup.update.unreachable: "Could not reach %{source} (%{repository}). Automatic update checking is unavailable for this run."
+update.github_auth.missing: "No GitHub CLI login token was detected; subsequent GitHub API requests will be unauthenticated and may be subject to GitHub rate limiting."
 install.entry.title: Installer is ready
 install.entry.language: interface language
 install.entry.config_path: config file
