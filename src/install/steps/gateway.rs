@@ -37,10 +37,13 @@ const NGINX_STREAM_INCLUDE_MARKER: &str = "include /etc/nginx/ret2boot-stream-en
 const INGRESS_RELEASE_NAME: &str = "ingress-nginx";
 const INGRESS_NAMESPACE: &str = "ingress-nginx";
 const KUBERNETES_API_PORT: u16 = 6443;
+const K3S_SUPERVISOR_PORT: u16 = 6444;
+const RKE2_SUPERVISOR_PORT: u16 = 9345;
 const KUBELET_SECURE_PORT: u16 = 10250;
 const INGRESS_GATEWAY_HTTP_PORT: u16 = 10080;
 const INGRESS_GATEWAY_HTTPS_PORT: u16 = 10443;
 const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
+const RFC1918_CIDRS: &[&str] = &["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
 const CLUSTER_READY_WAIT_TIMEOUT: &str = "10s";
 const CLUSTER_READY_WAIT_RETRIES: usize = 120;
 const CLUSTER_READY_RETRY_INTERVAL_SECONDS: u64 = 5;
@@ -667,18 +670,26 @@ fn ensure_gateway_guard_rules(ctx: &mut StepExecutionContext<'_>) -> Result<()> 
     .ok_or_else(|| {
       anyhow!("application exposure mode is required before building gateway guard rules")
     })?;
-  let protected_ports = protected_gateway_ports(exposure);
+  let distribution = ctx
+    .as_plan_context()
+    .kubernetes_distribution()
+    .ok_or_else(|| {
+      anyhow!("kubernetes distribution is required before building gateway guard rules")
+    })?;
+  let protected_ports = protected_gateway_ports(exposure, distribution);
+  let management_ports = cluster_management_ports(distribution);
   let cluster_target = resolve_nodeport_guard_target_for_install(ctx)?;
   info!(
     protected_ports,
+    management_ports,
     target = ?cluster_target,
     "installing gateway guard iptables raw rules"
   );
-  purge_gateway_guard_rules(ctx, &cluster_target, &protected_ports);
+  purge_gateway_guard_rules(ctx, &cluster_target, &protected_ports, &management_ports);
   if let Some(legacy_ports) = legacy_protected_gateway_ports(exposure) {
-    purge_gateway_guard_rules(ctx, &cluster_target, &legacy_ports);
+    purge_gateway_guard_rules(ctx, &cluster_target, &legacy_ports, &management_ports);
   }
-  insert_gateway_guard_rules(ctx, &cluster_target, &protected_ports)?;
+  insert_gateway_guard_rules(ctx, &cluster_target, &protected_ports, &management_ports)?;
 
   persist_iptables_rules(ctx)
 }
@@ -688,14 +699,19 @@ fn remove_gateway_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
     Some(exposure) => exposure,
     None => return Ok(()),
   };
-  let protected_ports = protected_gateway_ports(exposure);
+  let distribution = ctx
+    .as_plan_context()
+    .kubernetes_distribution()
+    .unwrap_or(KubernetesDistribution::K3s);
+  let protected_ports = protected_gateway_ports(exposure, distribution);
+  let management_ports = cluster_management_ports(distribution);
   let cluster_target = match resolve_nodeport_guard_target_for_cleanup(ctx) {
     Ok(target) => target,
     Err(_) => return Ok(()),
   };
-  purge_gateway_guard_rules(ctx, &cluster_target, &protected_ports);
+  purge_gateway_guard_rules(ctx, &cluster_target, &protected_ports, &management_ports);
   if let Some(legacy_ports) = legacy_protected_gateway_ports(exposure) {
-    purge_gateway_guard_rules(ctx, &cluster_target, &legacy_ports);
+    purge_gateway_guard_rules(ctx, &cluster_target, &legacy_ports, &management_ports);
   }
 
   let _ = persist_iptables_rules(ctx);
@@ -704,16 +720,18 @@ fn remove_gateway_guard_rules(ctx: &StepExecutionContext<'_>) -> Result<()> {
 
 fn purge_gateway_guard_rules(
   ctx: &StepExecutionContext<'_>, cluster_target: &NodePortGuardTarget, protected_ports: &str,
+  management_ports: &str,
 ) {
-  for args in gateway_guard_rules("-D", cluster_target, protected_ports) {
+  for args in gateway_guard_rules("-D", cluster_target, protected_ports, management_ports) {
     while ctx.run_privileged_command("iptables", &args, &[]).is_ok() {}
   }
 }
 
 fn insert_gateway_guard_rules(
   ctx: &StepExecutionContext<'_>, cluster_target: &NodePortGuardTarget, protected_ports: &str,
+  management_ports: &str,
 ) -> Result<()> {
-  for args in gateway_guard_rules("-I", cluster_target, protected_ports)
+  for args in gateway_guard_rules("-I", cluster_target, protected_ports, management_ports)
     .into_iter()
     .rev()
   {
@@ -1294,27 +1312,51 @@ fn network_interface_exists(interface: &str) -> bool {
   Path::new("/sys/class/net").join(interface).exists()
 }
 
-fn protected_gateway_ports(exposure: ApplicationExposureMode) -> String {
-  let ports = match exposure {
-    ApplicationExposureMode::NodePortExternalNginx => [
-      KUBERNETES_API_PORT,
-      KUBELET_SECURE_PORT,
-      PLATFORM_NODE_PORT,
-      INTERNAL_REGISTRY_NODE_PORT,
-    ],
-    ApplicationExposureMode::Ingress => [
-      KUBERNETES_API_PORT,
-      KUBELET_SECURE_PORT,
-      INGRESS_GATEWAY_HTTP_PORT,
-      INGRESS_GATEWAY_HTTPS_PORT,
-    ],
-  };
+fn protected_gateway_ports(
+  exposure: ApplicationExposureMode, distribution: KubernetesDistribution,
+) -> String {
+  let mut ports = cluster_management_ports_vec(distribution);
+  ports.extend(match exposure {
+    ApplicationExposureMode::NodePortExternalNginx => {
+      vec![PLATFORM_NODE_PORT, INTERNAL_REGISTRY_NODE_PORT]
+    }
+    ApplicationExposureMode::Ingress => {
+      vec![INGRESS_GATEWAY_HTTP_PORT, INGRESS_GATEWAY_HTTPS_PORT]
+    }
+  });
 
   ports
     .into_iter()
     .map(|port| port.to_string())
     .collect::<Vec<_>>()
     .join(",")
+}
+
+fn cluster_management_ports(distribution: KubernetesDistribution) -> String {
+  cluster_management_ports_vec(distribution)
+    .into_iter()
+    .map(|port| port.to_string())
+    .collect::<Vec<_>>()
+    .join(",")
+}
+
+fn cluster_management_ports_vec(distribution: KubernetesDistribution) -> Vec<u16> {
+  match distribution {
+    KubernetesDistribution::K3s => {
+      vec![
+        KUBERNETES_API_PORT,
+        K3S_SUPERVISOR_PORT,
+        KUBELET_SECURE_PORT,
+      ]
+    }
+    KubernetesDistribution::Rke2 => {
+      vec![
+        KUBERNETES_API_PORT,
+        RKE2_SUPERVISOR_PORT,
+        KUBELET_SECURE_PORT,
+      ]
+    }
+  }
 }
 
 fn legacy_protected_gateway_ports(exposure: ApplicationExposureMode) -> Option<String> {
@@ -1342,12 +1384,26 @@ fn legacy_protected_gateway_ports(exposure: ApplicationExposureMode) -> Option<S
 
 fn gateway_guard_rules(
   operation: &str, cluster_target: &NodePortGuardTarget, protected_ports: &str,
-) -> [Vec<String>; 3] {
-  [
+  management_ports: &str,
+) -> Vec<Vec<String>> {
+  let mut rules = vec![
     gateway_guard_loopback_rule_args(operation, protected_ports, "ACCEPT"),
     gateway_guard_rule_args(operation, cluster_target, protected_ports, "ACCEPT"),
-    gateway_guard_any_rule_args(operation, protected_ports, "DROP"),
-  ]
+  ];
+  for cidr in RFC1918_CIDRS {
+    rules.push(gateway_guard_source_rule_args(
+      operation,
+      cidr,
+      management_ports,
+      "ACCEPT",
+    ));
+  }
+  rules.push(gateway_guard_any_rule_args(
+    operation,
+    protected_ports,
+    "DROP",
+  ));
+  rules
 }
 
 fn gateway_guard_rule_args(
@@ -1401,6 +1457,27 @@ fn gateway_guard_loopback_rule_args(
   ]
 }
 
+fn gateway_guard_source_rule_args(
+  operation: &str, source: &str, protected_ports: &str, verdict: &str,
+) -> Vec<String> {
+  vec![
+    "-t".to_string(),
+    "raw".to_string(),
+    operation.to_string(),
+    "PREROUTING".to_string(),
+    "-s".to_string(),
+    source.to_string(),
+    "-p".to_string(),
+    "tcp".to_string(),
+    "-m".to_string(),
+    "multiport".to_string(),
+    "--dports".to_string(),
+    protected_ports.to_string(),
+    "-j".to_string(),
+    verdict.to_string(),
+  ]
+}
+
 fn gateway_guard_any_rule_args(
   operation: &str, protected_ports: &str, verdict: &str,
 ) -> Vec<String> {
@@ -1424,12 +1501,13 @@ fn gateway_guard_any_rule_args(
 mod tests {
   use super::{
     INGRESS_GATEWAY_HTTP_PORT, INGRESS_GATEWAY_HTTPS_PORT, INTERNAL_REGISTRY_NODE_PORT,
-    KUBELET_SECURE_PORT, KUBERNETES_API_PORT, ManagedTlsMaterial, NodePortGuardTarget,
-    choose_cluster_bridge_interface, gateway_guard_any_rule_args, gateway_guard_loopback_rule_args,
-    gateway_guard_rule_args, gateway_guard_rules, remove_custom_site_include_line,
-    render_nginx_site,
+    K3S_SUPERVISOR_PORT, KUBELET_SECURE_PORT, KUBERNETES_API_PORT, ManagedTlsMaterial,
+    NodePortGuardTarget, RFC1918_CIDRS, RKE2_SUPERVISOR_PORT, choose_cluster_bridge_interface,
+    cluster_management_ports, gateway_guard_any_rule_args, gateway_guard_loopback_rule_args,
+    gateway_guard_rule_args, gateway_guard_rules, gateway_guard_source_rule_args,
+    protected_gateway_ports, remove_custom_site_include_line, render_nginx_site,
   };
-  use crate::install::steps::platform::PLATFORM_NODE_PORT;
+  use crate::{config::KubernetesDistribution, install::steps::platform::PLATFORM_NODE_PORT};
 
   #[test]
   fn renders_nginx_site_with_original_host_forwarding() {
@@ -1543,16 +1621,73 @@ mod tests {
   #[test]
   fn gateway_guard_rules_are_ordered_as_accept_accept_drop() {
     let protected_ports = format!(
-      "{KUBERNETES_API_PORT},{KUBELET_SECURE_PORT},{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"
+      "{KUBERNETES_API_PORT},{K3S_SUPERVISOR_PORT},{KUBELET_SECURE_PORT},{PLATFORM_NODE_PORT},{INTERNAL_REGISTRY_NODE_PORT}"
     );
+    let management_ports =
+      format!("{KUBERNETES_API_PORT},{K3S_SUPERVISOR_PORT},{KUBELET_SECURE_PORT}");
     let rules = gateway_guard_rules(
       "-I",
       &NodePortGuardTarget::Interface("cni0".to_string()),
       &protected_ports,
+      &management_ports,
     );
 
     assert!(rules[0].windows(2).any(|pair| pair == ["-i", "lo"]));
     assert!(rules[1].windows(2).any(|pair| pair == ["-i", "cni0"]));
-    assert_eq!(rules[2].last().map(String::as_str), Some("DROP"));
+    for (index, cidr) in RFC1918_CIDRS.iter().enumerate() {
+      assert!(rules[index + 2].windows(2).any(|pair| pair == ["-s", cidr]));
+    }
+    assert_eq!(
+      rules.last().unwrap().last().map(String::as_str),
+      Some("DROP")
+    );
+  }
+
+  #[test]
+  fn gateway_guard_source_rule_uses_cidr_and_management_ports() {
+    let management_ports =
+      format!("{KUBERNETES_API_PORT},{K3S_SUPERVISOR_PORT},{KUBELET_SECURE_PORT}");
+    let args = gateway_guard_source_rule_args("-C", "10.0.0.0/8", &management_ports, "ACCEPT");
+
+    assert!(args.windows(2).any(|pair| pair == ["-s", "10.0.0.0/8"]));
+    assert!(
+      args
+        .windows(2)
+        .any(|pair| pair == ["--dports", management_ports.as_str()])
+    );
+  }
+
+  #[test]
+  fn protected_gateway_ports_includes_supervisor_port_for_k3s() {
+    let ports = protected_gateway_ports(
+      crate::config::ApplicationExposureMode::NodePortExternalNginx,
+      KubernetesDistribution::K3s,
+    );
+
+    assert!(ports.contains(&K3S_SUPERVISOR_PORT.to_string()));
+    assert!(ports.contains(&KUBERNETES_API_PORT.to_string()));
+    assert!(ports.contains(&KUBELET_SECURE_PORT.to_string()));
+  }
+
+  #[test]
+  fn protected_gateway_ports_includes_supervisor_port_for_rke2() {
+    let ports = protected_gateway_ports(
+      crate::config::ApplicationExposureMode::NodePortExternalNginx,
+      KubernetesDistribution::Rke2,
+    );
+
+    assert!(ports.contains(&RKE2_SUPERVISOR_PORT.to_string()));
+    assert!(!ports.contains(&K3S_SUPERVISOR_PORT.to_string()));
+  }
+
+  #[test]
+  fn cluster_management_ports_matches_distribution() {
+    let k3s_ports = cluster_management_ports(KubernetesDistribution::K3s);
+    assert!(k3s_ports.contains(&K3S_SUPERVISOR_PORT.to_string()));
+    assert!(!k3s_ports.contains(&RKE2_SUPERVISOR_PORT.to_string()));
+
+    let rke2_ports = cluster_management_ports(KubernetesDistribution::Rke2);
+    assert!(rke2_ports.contains(&RKE2_SUPERVISOR_PORT.to_string()));
+    assert!(!rke2_ports.contains(&K3S_SUPERVISOR_PORT.to_string()));
   }
 }

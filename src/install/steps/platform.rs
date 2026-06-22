@@ -4733,7 +4733,6 @@ mod tests {
     let persistent_volumes = documents
       .iter()
       .filter(|document| document["kind"].as_str() == Some("PersistentVolume"))
-      .into_iter()
       .map(|document| {
         (
           document["metadata"]["name"]

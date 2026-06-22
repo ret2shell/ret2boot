@@ -280,7 +280,7 @@ install.steps.cluster.disable_traefik: "The built-in Traefik component in k3s wi
 install.steps.cluster.registry_mirrors: "Registry mirrors for docker.io, ghcr.io, gcr.io, quay.io, and registry.k8s.io will be configured."
 install.steps.gateway.ingress_host_network: "ingress-nginx will be installed as a host-network DaemonSet."
 install.steps.gateway.ingress_tls_prepare: "TLS assets will be prepared before the Ret2Shell Helm release is installed."
-install.steps.gateway.nodeport_guard: "iptables raw rules will block direct access to the protected cluster access ports except from the cluster bridge and loopback interfaces."
+install.steps.gateway.nodeport_guard: "iptables raw rules will block direct access to the protected cluster access ports from the public internet; cluster management ports remain reachable from private RFC1918 networks, the cluster bridge, and loopback interfaces."
 install.steps.gateway.nodeport_tls_termination: "The host nginx gateway will terminate TLS with the managed certificate assets."
 install.steps.platform_plan.tls_ingress_secret: "TLS is enabled for the ingress entry, using Kubernetes Secret `%{secret}`."
 install.steps.platform_plan.tls_external_gateway: "TLS is enabled at the host nginx entry point."
