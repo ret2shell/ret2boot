@@ -25,6 +25,10 @@ pub struct InstallConfig {
   pub questionnaire: InstallQuestionnaire,
   pub review: InstallReview,
   pub execution: InstallExecution,
+  /// Ownership facts for resources ret2boot deployed outside the install
+  /// journal. Unlike `execution`, this map survives questionnaire changes so
+  /// `uninstall` can still identify previously installed components.
+  pub ownership: BTreeMap<String, BTreeMap<String, String>>,
   pub last_failure: Option<InstallFailureRecord>,
 }
 
@@ -1068,7 +1072,16 @@ impl Ret2BootConfig {
       .iter()
       .find(|step| step.id == step_id)
       .and_then(|step| step.metadata.get(key))
+      .or_else(|| self.install_ownership(step_id, key))
       .map(String::as_str)
+  }
+
+  pub fn install_ownership(&self, step_id: InstallStepId, key: &str) -> Option<&String> {
+    self
+      .install
+      .ownership
+      .get(step_id.as_config_value())
+      .and_then(|entries| entries.get(key))
   }
 
   pub fn mark_install_step_started(&mut self, step_id: InstallStepId) -> bool {
@@ -1111,16 +1124,36 @@ impl Ret2BootConfig {
   }
 
   pub fn reset_install_step(&mut self, step_id: InstallStepId) -> bool {
-    let step = self.ensure_install_step(step_id);
-    let previous_status = step.status;
-    let previous_error = step.last_error.clone();
-    let metadata_was_empty = step.metadata.is_empty();
+    let (previous_status, previous_error, drained_metadata) = {
+      let step = self.ensure_install_step(step_id);
+      step.status = InstallStepStatus::Pending;
+      step.last_error = None;
+      // Ownership facts (release_name, *_by_ret2boot, paths, ports) must
+      // survive a journal reset: they are the only record that lets
+      // `uninstall` find resources ret2boot deployed outside of a completed
+      // install.
+      (
+        step.status,
+        step.last_error.clone(),
+        std::mem::take(&mut step.metadata),
+      )
+    };
+    let metadata_was_empty = drained_metadata.is_empty();
+    let ownership_entries = self
+      .install
+      .ownership
+      .entry(step_id.as_config_value().to_string())
+      .or_default();
+    let mut ownership_changed = false;
+    for (key, value) in drained_metadata {
+      ownership_changed =
+        ownership_entries.insert(key, value.clone()) != Some(value) || ownership_changed;
+    }
 
-    step.status = InstallStepStatus::Pending;
-    step.last_error = None;
-    step.metadata.clear();
-
-    step.status != previous_status || step.last_error != previous_error || !metadata_was_empty
+    previous_status != InstallStepStatus::Pending
+      || previous_error.is_some()
+      || !metadata_was_empty
+      || ownership_changed
   }
 
   pub fn set_install_step_metadata(
@@ -1139,11 +1172,27 @@ impl Ret2BootConfig {
   }
 
   pub fn remove_install_step_metadata(&mut self, step_id: InstallStepId, key: &str) -> bool {
-    self
+    let journal_removed = self
       .ensure_install_step(step_id)
       .metadata
       .remove(key)
-      .is_some()
+      .is_some();
+    let ownership_removed = self
+      .install
+      .ownership
+      .get_mut(step_id.as_config_value())
+      .map(|entries| entries.remove(key).is_some())
+      .unwrap_or(false);
+    let empty_ownership = self
+      .install
+      .ownership
+      .get(step_id.as_config_value())
+      .is_some_and(|entries| entries.is_empty());
+    if empty_ownership {
+      self.install.ownership.remove(step_id.as_config_value());
+    }
+
+    journal_removed || ownership_removed
   }
 
   fn invalidate_install_pipeline(&mut self) {
