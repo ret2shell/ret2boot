@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{collections::BTreeMap, env, fs, io::Write, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -9,14 +9,7 @@ pub const ROOT_CONFIG_PATH: &str = "/etc/ret2shell/ret2boot.toml";
 #[serde(default)]
 pub struct Ret2BootConfig {
   pub language: Option<String>,
-  pub terminal: TerminalConfig,
   pub install: InstallConfig,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TerminalConfig {
-  pub charset: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -458,8 +451,24 @@ impl Ret2BootConfig {
 
     let contents = toml::to_string_pretty(self).context("failed to serialize app config")?;
 
-    fs::write(&path, format!("{contents}\n"))
-      .with_context(|| format!("failed to write config file `{}`", path.display()))
+    // Write through a same-directory temporary file and rename into place so
+    // a crash never truncates the only copy of the installer journal. The
+    // temp file is created with user-only permissions because the config
+    // holds platform credentials in plain text.
+    let temp_path = path.with_extension("toml.tmp");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::OpenOptionsExt;
+      options.mode(0o600);
+    }
+    options
+      .open(&temp_path)
+      .and_then(|mut file| file.write_all(contents.as_bytes()))
+      .with_context(|| format!("failed to write config file `{}`", temp_path.display()))?;
+    fs::rename(&temp_path, &path)
+      .with_context(|| format!("failed to replace config file `{}`", path.display()))
   }
 
   pub fn path() -> Result<PathBuf> {
@@ -491,17 +500,6 @@ impl Ret2BootConfig {
     }
 
     self.language = Some(language);
-    true
-  }
-
-  pub fn set_terminal_charset(&mut self, charset: impl Into<String>) -> bool {
-    let charset = charset.into();
-
-    if self.terminal.charset.as_deref() == Some(charset.as_str()) {
-      return false;
-    }
-
-    self.terminal.charset = Some(charset);
     true
   }
 

@@ -1,5 +1,6 @@
 use std::{
   env, fs,
+  io::Write,
   time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -42,14 +43,27 @@ impl RuntimeState {
   }
 
   pub fn persist_system_config_copy(&self, config: &Ret2BootConfig) -> Result<()> {
+    // Same-directory atomic staging relative to the temp dir; the file is
+    // created user-only because it carries platform credentials before being
+    // installed to the root-owned config path.
+    let temp_dir = env::temp_dir();
     let stamp = SystemTime::now()
       .duration_since(UNIX_EPOCH)
       .map(|duration| duration.as_nanos())
       .unwrap_or_default();
-    let temp_path = env::temp_dir().join(format!("ret2boot-system-config-{stamp}.toml"));
+    let temp_path = temp_dir.join(format!("ret2boot-system-config-{stamp}.toml"));
     let contents = toml::to_string_pretty(config).context("failed to serialize app config")?;
 
-    fs::write(&temp_path, format!("{contents}\n"))
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::OpenOptionsExt;
+      options.mode(0o600);
+    }
+    options
+      .open(&temp_path)
+      .and_then(|mut file| file.write_all(contents.as_bytes()))
       .with_context(|| format!("failed to write `{}`", temp_path.display()))?;
 
     let install_result = self.run_privileged_command(
@@ -84,15 +98,16 @@ fn initialize_with_safety_confirmation(
 ) -> Result<Option<RuntimeState>> {
   let config_path = Ret2BootConfig::path_display()?;
   let terminal_charset = TerminalCharset::detect();
-  let mut needs_save = config.set_terminal_charset(terminal_charset.as_config_value());
+  // The charset is only a runtime concern; persisting it would trigger a
+  // config write on every startup for information that is re-detected anyway.
+  let mut needs_save = false;
 
   let locale = if !terminal_charset.is_utf8() {
+    // Fall back to ASCII-safe messages for this session only. Do NOT persist
+    // this choice: the user's saved language must survive once they switch
+    // back to a UTF-8 terminal.
     let locale = l10n::DEFAULT_LOCALE.to_string();
     l10n::set_locale(&locale);
-
-    if config.set_language(locale.clone()) {
-      needs_save = true;
-    }
 
     warn!(
         config_path = %config_path,

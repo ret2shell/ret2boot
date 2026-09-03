@@ -27,13 +27,6 @@ impl TerminalCharset {
     Self::Ascii
   }
 
-  pub fn as_config_value(self) -> &'static str {
-    match self {
-      Self::Ascii => "ascii",
-      Self::Utf8 => "utf-8",
-    }
-  }
-
   pub fn is_utf8(self) -> bool {
     matches!(self, Self::Utf8)
   }
