@@ -160,7 +160,7 @@ pub enum InstallFailureStage {
   Preparation,
   Install,
   Rollback,
-  Completion,
+  Maintenance,
 }
 
 impl InstallFailureStage {
@@ -174,7 +174,7 @@ impl InstallFailureStage {
       Self::Preparation => "preparation",
       Self::Install => "install",
       Self::Rollback => "rollback",
-      Self::Completion => "completion",
+      Self::Maintenance => "maintenance",
     }
   }
 }

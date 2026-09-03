@@ -18,6 +18,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use rust_i18n::t;
 
 use crate::{
   cli::{Cli, CliCommand},
@@ -35,7 +36,7 @@ fn main() -> ExitCode {
       if let Some(config_path) = config_path {
         eprintln!(
           "{}",
-          ui::note(format!("installer state is kept at `{config_path}`"))
+          ui::note(t!("install.state_kept_at", path = config_path.as_str()).to_string())
         );
       }
 
@@ -46,9 +47,12 @@ fn main() -> ExitCode {
 
 fn try_main() -> Result<()> {
   let cli = Cli::parse();
+  let command = cli.command.unwrap_or(CliCommand::Install);
+
+  telemetry::init()?;
 
   let mut config = Ret2BootConfig::load()?;
-  match cli.command.unwrap_or(CliCommand::Install) {
+  match command {
     CliCommand::Install => {
       let runtime = match startup::initialize(&mut config) {
         Ok(Some(runtime)) => runtime,
@@ -66,26 +70,18 @@ fn try_main() -> Result<()> {
 
       install::run(&mut config, &runtime, cli.force)
     }
-    CliCommand::Sync => {
+    CliCommand::Sync | CliCommand::Update | CliCommand::Uninstall => {
       let runtime = startup::initialize_maintenance(&mut config)?;
       if let Some(system_config) = load_system_config(&runtime)? {
         config = system_config;
       }
-      install::sync_existing(&mut config, &runtime, cli.force)
-    }
-    CliCommand::Update => {
-      let runtime = startup::initialize_maintenance(&mut config)?;
-      if let Some(system_config) = load_system_config(&runtime)? {
-        config = system_config;
+
+      match command {
+        CliCommand::Sync => install::sync_existing(&mut config, &runtime, cli.force),
+        CliCommand::Update => install::update_existing(&mut config, &runtime, cli.force),
+        CliCommand::Uninstall => install::uninstall_existing(&mut config, &runtime, cli.force),
+        _ => unreachable!("only maintenance commands reach this branch"),
       }
-      install::update_existing(&mut config, &runtime, cli.force)
-    }
-    CliCommand::Uninstall => {
-      let runtime = startup::initialize_maintenance(&mut config)?;
-      if let Some(system_config) = load_system_config(&runtime)? {
-        config = system_config;
-      }
-      install::uninstall_existing(&mut config, &runtime, cli.force)
     }
   }
 }

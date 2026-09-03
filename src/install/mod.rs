@@ -22,7 +22,6 @@ use crate::{
   },
   errors, l10n,
   startup::RuntimeState,
-  telemetry,
   ui::{self, BadgeTone},
 };
 
@@ -76,8 +75,7 @@ pub fn sync_existing(
 ) -> Result<()> {
   let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
-  telemetry::init()?;
-  flow.print_maintenance_header("Synchronizing installed platform");
+  flow.print_maintenance_header(&t!("install.maintenance.sync_title").to_string());
   flow.require_control_plane_command("sync")?;
 
   let helm_step = HelmCliStep;
@@ -102,8 +100,7 @@ pub fn update_existing(
 ) -> Result<()> {
   let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
-  telemetry::init()?;
-  flow.print_maintenance_header("Updating installed platform");
+  flow.print_maintenance_header(&t!("install.maintenance.update_title").to_string());
   flow.require_control_plane_command("update")?;
 
   let cluster_step = ClusterBootstrapStep;
@@ -131,8 +128,7 @@ pub fn uninstall_existing(
 ) -> Result<()> {
   let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
-  telemetry::init()?;
-  flow.print_maintenance_header("Removing installed platform");
+  flow.print_maintenance_header(&t!("install.maintenance.uninstall_title").to_string());
   flow.require_configured_installation("uninstall")?;
 
   let plan_context = StepPlanContext::new(flow.config, flow.runtime, &flow.config_path);
@@ -165,7 +161,7 @@ pub fn uninstall_existing(
   flow.remove_installer_state()?;
   println!(
     "{}",
-    ui::success("Removed installer state and cached artifacts.")
+    ui::success(t!("install.maintenance.removed_state").to_string())
   );
 
   Ok(())
@@ -226,18 +222,27 @@ impl<'a> InstallFlow<'a> {
     );
   }
 
-  fn print_maintenance_header(&self, title: &str) {
+  fn print_maintenance_header(&self, title: impl AsRef<str>) {
     println!();
     println!(
       "{}",
       ui::banner_startup("Ret 2 Boot", env!("CARGO_PKG_VERSION"))
     );
-    println!("{}", ui::section(title));
+    println!("{}", ui::section(title.as_ref()));
     println!(
       "{}",
-      ui::note_value("language", l10n::locale_label(&self.runtime.locale))
+      ui::note_value(
+        t!("install.maintenance.language").to_string(),
+        l10n::locale_label(&self.runtime.locale),
+      )
     );
-    println!("{}", ui::note_value("config path", &self.config_path));
+    println!(
+      "{}",
+      ui::note_value(
+        t!("install.maintenance.config_path").to_string(),
+        &self.config_path
+      )
+    );
   }
 
   fn require_configured_installation(&self, command: &str) -> Result<InstallTargetRole> {
@@ -285,7 +290,16 @@ impl<'a> InstallFlow<'a> {
     let step_title = self.step_title(step);
 
     println!();
-    println!("{}", ui::section(format!("Running: {step_title}")));
+    println!(
+      "{}",
+      ui::section(
+        t!(
+          "install.maintenance.step_running",
+          step = step_title.as_str()
+        )
+        .to_string()
+      )
+    );
     self.persist_change(
       "install.execution.step",
       step_id.as_config_value(),
@@ -313,7 +327,16 @@ impl<'a> InstallFlow<'a> {
             config.set_install_phase(InstallExecutionPhase::Completed) || changed
           },
         )?;
-        println!("{}", ui::success(format!("Completed: {step_title}")));
+        println!(
+          "{}",
+          ui::success(
+            t!(
+              "install.maintenance.step_completed",
+              step = step_title.as_str()
+            )
+            .to_string()
+          )
+        );
         Ok(value)
       }
       Err(error) => {
@@ -321,9 +344,27 @@ impl<'a> InstallFlow<'a> {
         self.persist_change("install.execution.step", &error_text, |config| {
           config.mark_install_step_failed(step_id, error_text.clone())
         })?;
-        let _ = self.record_failure(InstallFailureStage::Install, Some(step_id), &error);
-        println!("{}", ui::warning(format!("Failed: {step_title}")));
-        println!("{}", ui::note(format!("error details: {error_text}")));
+        let _ = self.record_failure(InstallFailureStage::Maintenance, Some(step_id), &error);
+        println!(
+          "{}",
+          ui::warning(
+            t!(
+              "install.maintenance.step_failed",
+              step = step_title.as_str()
+            )
+            .to_string()
+          )
+        );
+        println!(
+          "{}",
+          ui::note(
+            t!(
+              "install.maintenance.step_failed_detail",
+              error = error_text.as_str()
+            )
+            .to_string()
+          )
+        );
         Err(error)
       }
     }
@@ -334,7 +375,16 @@ impl<'a> InstallFlow<'a> {
     let step_title = self.step_title(step);
 
     println!();
-    println!("{}", ui::section(format!("Removing: {step_title}")));
+    println!(
+      "{}",
+      ui::section(
+        t!(
+          "install.maintenance.step_removing",
+          step = step_title.as_str()
+        )
+        .to_string()
+      )
+    );
 
     let result = {
       let mut execution_context = StepExecutionContext::new(
@@ -354,7 +404,16 @@ impl<'a> InstallFlow<'a> {
           step_id.as_config_value(),
           |config| config.reset_install_step(step_id),
         )?;
-        println!("{}", ui::success(format!("Removed: {step_title}")));
+        println!(
+          "{}",
+          ui::success(
+            t!(
+              "install.maintenance.step_removed",
+              step = step_title.as_str()
+            )
+            .to_string()
+          )
+        );
         Ok(())
       }
       Err(error) => {
@@ -362,9 +421,27 @@ impl<'a> InstallFlow<'a> {
         self.persist_change("install.execution.uninstall", &error_text, |config| {
           config.mark_install_step_failed(step_id, error_text.clone())
         })?;
-        let _ = self.record_failure(InstallFailureStage::Rollback, Some(step_id), &error);
-        println!("{}", ui::warning(format!("Failed to remove: {step_title}")));
-        println!("{}", ui::note(format!("error details: {error_text}")));
+        let _ = self.record_failure(InstallFailureStage::Maintenance, Some(step_id), &error);
+        println!(
+          "{}",
+          ui::warning(
+            t!(
+              "install.maintenance.step_remove_failed",
+              step = step_title.as_str()
+            )
+            .to_string()
+          )
+        );
+        println!(
+          "{}",
+          ui::note(
+            t!(
+              "install.maintenance.step_failed_detail",
+              error = error_text.as_str()
+            )
+            .to_string()
+          )
+        );
         Err(error)
       }
     }
@@ -374,43 +451,49 @@ impl<'a> InstallFlow<'a> {
     println!();
 
     if !report.has_changes() {
-      println!("{}", ui::note("The installed platform is already in sync."));
+      println!(
+        "{}",
+        ui::note(t!("install.maintenance.sync_in_sync").to_string())
+      );
       return;
     }
 
-    println!("{}", ui::success("Synchronized the installed platform."));
+    println!(
+      "{}",
+      ui::success(t!("install.maintenance.sync_done").to_string())
+    );
 
     let mut details = Vec::new();
     if !report.release_exists {
-      details.push("helm release was missing");
+      details.push(t!("install.maintenance.sync.release_missing"));
     }
     if report.release_unhealthy {
-      details.push("helm release status required reconciliation");
+      details.push(t!("install.maintenance.sync.release_unhealthy"));
     }
     if report.chart_changed {
-      details.push("helm chart changed");
+      details.push(t!("install.maintenance.sync.chart_changed"));
     }
     if report.frontend_changed {
-      details.push("frontend assets changed");
+      details.push(t!("install.maintenance.sync.frontend_changed"));
     }
     if report.workload_changed {
-      details.push("platform workload spec changed");
+      details.push(t!("install.maintenance.sync.workload_changed"));
     }
     if report.values_changed {
-      details.push("helm values changed");
+      details.push(t!("install.maintenance.sync.values_changed"));
     }
     if report.config_changed {
-      details.push("platform config drift was corrected");
+      details.push(t!("install.maintenance.sync.config_changed"));
     }
     if report.blocked_changed {
-      details.push("blocked config drift was corrected");
+      details.push(t!("install.maintenance.sync.blocked_changed"));
     }
     if report.storage_changed {
-      details.push("storage class state changed");
+      details.push(t!("install.maintenance.sync.storage_changed"));
     }
 
     for detail in details {
-      println!("{}", ui::note(detail));
+      println!("{}", ui::note(detail.to_string()));
     }
   }
 
@@ -692,8 +775,6 @@ impl<'a> InstallFlow<'a> {
         |config| config.mark_install_step_completed(step_id),
       )?;
     }
-
-    telemetry::init()?;
 
     info!(
       locale = %l10n::current_locale(),
