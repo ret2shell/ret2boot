@@ -75,7 +75,7 @@ pub fn sync_existing(
 ) -> Result<()> {
   let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
-  flow.print_maintenance_header(&t!("install.maintenance.sync_title").to_string());
+  flow.print_maintenance_header(&t!("install.maintenance.sync_title"));
   flow.require_control_plane_command("sync")?;
 
   let helm_step = HelmCliStep;
@@ -100,7 +100,7 @@ pub fn update_existing(
 ) -> Result<()> {
   let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
-  flow.print_maintenance_header(&t!("install.maintenance.update_title").to_string());
+  flow.print_maintenance_header(&t!("install.maintenance.update_title"));
   flow.require_control_plane_command("update")?;
 
   let cluster_step = ClusterBootstrapStep;
@@ -128,7 +128,7 @@ pub fn uninstall_existing(
 ) -> Result<()> {
   let mut flow = InstallFlow::new(config, runtime, force_upgrade)?;
   flow.clear_recorded_failure()?;
-  flow.print_maintenance_header(&t!("install.maintenance.uninstall_title").to_string());
+  flow.print_maintenance_header(&t!("install.maintenance.uninstall_title"));
   flow.require_configured_installation("uninstall")?;
 
   let plan_context = StepPlanContext::new(flow.config, flow.runtime, &flow.config_path);
@@ -159,10 +159,7 @@ pub fn uninstall_existing(
   }
 
   flow.remove_installer_state()?;
-  println!(
-    "{}",
-    ui::success(t!("install.maintenance.removed_state").to_string())
-  );
+  println!("{}", ui::success(&t!("install.maintenance.removed_state")));
 
   Ok(())
 }
@@ -232,16 +229,13 @@ impl<'a> InstallFlow<'a> {
     println!(
       "{}",
       ui::note_value(
-        t!("install.maintenance.language").to_string(),
+        &t!("install.maintenance.language"),
         l10n::locale_label(&self.runtime.locale),
       )
     );
     println!(
       "{}",
-      ui::note_value(
-        t!("install.maintenance.config_path").to_string(),
-        &self.config_path
-      )
+      ui::note_value(&t!("install.maintenance.config_path"), &self.config_path)
     );
   }
 
@@ -292,13 +286,10 @@ impl<'a> InstallFlow<'a> {
     println!();
     println!(
       "{}",
-      ui::section(
-        t!(
-          "install.maintenance.step_running",
-          step = step_title.as_str()
-        )
-        .to_string()
-      )
+      ui::section(&t!(
+        "install.maintenance.step_running",
+        step = step_title.as_str()
+      ))
     );
     self.persist_change(
       "install.execution.step",
@@ -329,13 +320,10 @@ impl<'a> InstallFlow<'a> {
         )?;
         println!(
           "{}",
-          ui::success(
-            t!(
-              "install.maintenance.step_completed",
-              step = step_title.as_str()
-            )
-            .to_string()
-          )
+          ui::success(&t!(
+            "install.maintenance.step_completed",
+            step = step_title.as_str()
+          ))
         );
         Ok(value)
       }
@@ -347,23 +335,17 @@ impl<'a> InstallFlow<'a> {
         let _ = self.record_failure(InstallFailureStage::Maintenance, Some(step_id), &error);
         println!(
           "{}",
-          ui::warning(
-            t!(
-              "install.maintenance.step_failed",
-              step = step_title.as_str()
-            )
-            .to_string()
-          )
+          ui::warning(&t!(
+            "install.maintenance.step_failed",
+            step = step_title.as_str()
+          ))
         );
         println!(
           "{}",
-          ui::note(
-            t!(
-              "install.maintenance.step_failed_detail",
-              error = error_text.as_str()
-            )
-            .to_string()
-          )
+          ui::note(&t!(
+            "install.maintenance.step_failed_detail",
+            error = error_text.as_str()
+          ))
         );
         Err(error)
       }
@@ -377,13 +359,10 @@ impl<'a> InstallFlow<'a> {
     println!();
     println!(
       "{}",
-      ui::section(
-        t!(
-          "install.maintenance.step_removing",
-          step = step_title.as_str()
-        )
-        .to_string()
-      )
+      ui::section(&t!(
+        "install.maintenance.step_removing",
+        step = step_title.as_str()
+      ))
     );
 
     let result = {
@@ -406,13 +385,10 @@ impl<'a> InstallFlow<'a> {
         )?;
         println!(
           "{}",
-          ui::success(
-            t!(
-              "install.maintenance.step_removed",
-              step = step_title.as_str()
-            )
-            .to_string()
-          )
+          ui::success(&t!(
+            "install.maintenance.step_removed",
+            step = step_title.as_str()
+          ))
         );
         Ok(())
       }
@@ -424,23 +400,17 @@ impl<'a> InstallFlow<'a> {
         let _ = self.record_failure(InstallFailureStage::Maintenance, Some(step_id), &error);
         println!(
           "{}",
-          ui::warning(
-            t!(
-              "install.maintenance.step_remove_failed",
-              step = step_title.as_str()
-            )
-            .to_string()
-          )
+          ui::warning(&t!(
+            "install.maintenance.step_remove_failed",
+            step = step_title.as_str()
+          ))
         );
         println!(
           "{}",
-          ui::note(
-            t!(
-              "install.maintenance.step_failed_detail",
-              error = error_text.as_str()
-            )
-            .to_string()
-          )
+          ui::note(&t!(
+            "install.maintenance.step_failed_detail",
+            error = error_text.as_str()
+          ))
         );
         Err(error)
       }
@@ -451,17 +421,11 @@ impl<'a> InstallFlow<'a> {
     println!();
 
     if !report.has_changes() {
-      println!(
-        "{}",
-        ui::note(t!("install.maintenance.sync_in_sync").to_string())
-      );
+      println!("{}", ui::note(&t!("install.maintenance.sync_in_sync")));
       return;
     }
 
-    println!(
-      "{}",
-      ui::success(t!("install.maintenance.sync_done").to_string())
-    );
+    println!("{}", ui::success(&t!("install.maintenance.sync_done")));
 
     let mut details = Vec::new();
     if !report.release_exists {
@@ -493,7 +457,7 @@ impl<'a> InstallFlow<'a> {
     }
 
     for detail in details {
-      println!("{}", ui::note(detail.to_string()));
+      println!("{}", ui::note(&detail));
     }
   }
 

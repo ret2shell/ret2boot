@@ -36,7 +36,7 @@ fn main() -> ExitCode {
       if let Some(config_path) = config_path {
         eprintln!(
           "{}",
-          ui::note(t!("install.state_kept_at", path = config_path.as_str()).to_string())
+          ui::note(&t!("install.state_kept_at", path = config_path.as_str()))
         );
       }
 
