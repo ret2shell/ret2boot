@@ -891,7 +891,7 @@ fn ensure_nginx_site_include(ctx: &StepExecutionContext<'_>) -> Result<()> {
     &contents[..http_index],
     "http {",
     NGINX_SITE_INCLUDE_MARKER,
-    &contents[http_index..]
+    contents[http_index..]
       .strip_prefix("http {")
       .expect("http block exists")
   );

@@ -64,9 +64,10 @@ const BACKEND_DATABASE_DIR: &str = "/srv/ret2shell/backend/deployments/3-databas
 const BACKEND_QUEUE_DIR: &str = "/srv/ret2shell/backend/deployments/4-queue";
 const BACKEND_REGISTRY_DIR: &str = "/srv/ret2shell/backend/deployments/5-registry";
 const BACKEND_LOGS_DIR: &str = "/srv/ret2shell/backend/deployments/6-logs";
-const BACKEND_CONFIG_TOML_DEST: &str = "/srv/ret2shell/backend/config/config.toml";
-const BACKEND_BLOCKED_DEST: &str = "/srv/ret2shell/backend/config/blocked.txt";
-const BACKEND_LICENSE_DEST: &str = "/srv/ret2shell/backend/config/license";
+const PLATFORM_CONFIG_SECRET_NAME: &str = "ret2shell-config";
+const PLATFORM_BLOCKED_CONFIGMAP_NAME: &str = "ret2shell-blocked";
+const PLATFORM_CONFIG_TOML_KEY: &str = "config.toml";
+const PLATFORM_LICENSE_KEY: &str = "license";
 const K3S_REGISTRIES_DEST: &str = "/etc/rancher/k3s/registries.yaml";
 const RKE2_REGISTRIES_DEST: &str = "/etc/rancher/rke2/registries.yaml";
 pub(crate) const PLATFORM_NODE_PORT: u16 = 30307;
@@ -117,18 +118,30 @@ const PATCHED_PLATFORM_VOLUME_MOUNTS: &str = r#"          volumeMounts:
               mountPath: /var/lib/ret2shell
             - name: frontend
               mountPath: /var/www/html
-            - name: backend-config
-              mountPath: /etc/ret2shell
+            - name: config
+              mountPath: /etc/ret2shell/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: blocked
+              mountPath: /etc/ret2shell/blocked.txt
+              subPath: blocked.txt
+              readOnly: true
+            - name: license
+              mountPath: /etc/ret2shell/license
+              subPath: license
+              readOnly: true
 "#;
 const PATCHED_PLATFORM_VOLUMES: &str = r#"      volumes:
         - name: frontend
           hostPath:
             path: /srv/ret2shell/frontend
             type: DirectoryOrCreate
-        - name: backend-config
-          hostPath:
-            path: /srv/ret2shell/backend/config
-            type: DirectoryOrCreate
+        - name: config
+          secret:
+            secretName: {{ include "ret2shell.platformConfigSecretName" . }}
+        - name: blocked
+          configMap:
+            name: {{ include "ret2shell.platformBlockedConfigMapName" . }}
         {{- if .Values.platform.persistence.existingClaim }}
         - name: data
           persistentVolumeClaim:
@@ -389,7 +402,8 @@ impl AtomicInstallStep for PlatformDeploymentStep {
 
   fn describe(&self, ctx: &StepPlanContext<'_>) -> Result<InstallStepPlan> {
     let summary = platform_plan_summary(ctx)?;
-    let _ = render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default())?;
+    let _ =
+      render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default(), true, true)?;
     let _ = render_platform_storage_manifest(&summary, None);
     let mut details = vec![
       t!(
@@ -471,6 +485,23 @@ impl AtomicInstallStep for PlatformDeploymentStep {
 
     uninstall_platform_release(ctx, &helm_envs)?;
 
+    // The chart renders neither the config secret nor the blocked configmap
+    // when existingSecret/existingConfigMap values point at ret2boot-managed
+    // objects, so they must be removed explicitly.
+    cluster_access.run(
+      ctx,
+      &[
+        "-n".to_string(),
+        PLATFORM_NAMESPACE.to_string(),
+        "delete".to_string(),
+        "secret".to_string(),
+        PLATFORM_CONFIG_SECRET_NAME.to_string(),
+        "configmap".to_string(),
+        PLATFORM_BLOCKED_CONFIGMAP_NAME.to_string(),
+        "--ignore-not-found".to_string(),
+      ],
+    )?;
+
     if Path::new(BACKEND_INIT_MANIFEST_DEST).is_file() {
       cluster_access.delete_manifest(ctx, BACKEND_INIT_MANIFEST_DEST)?;
     }
@@ -487,6 +518,11 @@ impl AtomicInstallStep for PlatformDeploymentStep {
         BACKEND_VOLUMES_MANIFEST_DEST.to_string(),
         PLATFORM_VALUES_DEST.to_string(),
         PLATFORM_STORAGE_DEST.to_string(),
+        // Legacy host-side config files from versions that mounted them via
+        // hostPath; the platform no longer reads them.
+        "/srv/ret2shell/backend/config/config.toml".to_string(),
+        "/srv/ret2shell/backend/config/blocked.txt".to_string(),
+        "/srv/ret2shell/backend/config/license".to_string(),
       ],
       &[],
     )?;
@@ -1898,7 +1934,7 @@ fn sync_platform_release(
 
   info!("rendering and syncing platform values and storage manifests");
   let mut runtime_overrides = PlatformRuntimeOverrides::default();
-  let mut desired_values = render_platform_values_yaml(&summary, &runtime_overrides)?;
+  let mut desired_values = render_platform_values_yaml(&summary, &runtime_overrides, true, true)?;
   let mut values_changed =
     sync_managed_text_file(ctx, PLATFORM_VALUES_DEST, &desired_values, "600")?;
   let storage_manifest = render_platform_storage_manifest(&summary, Some(&node_hostname));
@@ -1913,17 +1949,17 @@ fn sync_platform_release(
     rendered_artifacts.valkey_image.as_deref(),
   )? {
     runtime_overrides.valkey_image = Some(valkey_image);
-    desired_values = render_platform_values_yaml(&summary, &runtime_overrides)?;
+    desired_values = render_platform_values_yaml(&summary, &runtime_overrides, true, true)?;
     values_changed =
       sync_managed_text_file(ctx, PLATFORM_VALUES_DEST, &desired_values, "600")? || values_changed;
     rendered_artifacts = render_chart_artifacts(ctx, &chart, &helm_envs)?;
   }
   let reference_files = load_reference_config_files()?;
-  let desired_host_config_toml = merge_runtime_config_with_reference(
+  let desired_config_toml = merge_runtime_config_with_reference(
     &rendered_artifacts.config_toml,
     reference_files.config_toml.as_deref(),
   )?;
-  let desired_host_blocked = reference_files
+  let desired_blocked = reference_files
     .blocked_content
     .clone()
     .unwrap_or_else(|| rendered_artifacts.blocked_content.clone());
@@ -1934,20 +1970,15 @@ fn sync_platform_release(
     chart.version.as_str(),
     privileged_regular_file_exists(ctx, FRONTEND_INDEX_PATH),
   );
-  let host_config_changed = sync_managed_text_file(
+  info!("syncing platform config secret and blocked configmap");
+  let config_secret_changed = sync_platform_config_secret(
     ctx,
-    BACKEND_CONFIG_TOML_DEST,
-    &desired_host_config_toml,
-    "600",
-  )?;
-  let host_blocked_changed =
-    sync_managed_text_file(ctx, BACKEND_BLOCKED_DEST, &desired_host_blocked, "600")?;
-  let host_license_changed = sync_optional_managed_text_file(
-    ctx,
-    BACKEND_LICENSE_DEST,
+    &cluster_access,
+    &desired_config_toml,
     reference_files.license_content.as_deref(),
-    "644",
   )?;
+  let blocked_configmap_changed =
+    sync_platform_blocked_configmap(ctx, &cluster_access, &desired_blocked)?;
   sync_deployment_exports(ctx, &desired_values, storage_manifest.as_deref())?;
   info!("applying platform bootstrap manifest");
   cluster_access.apply_manifest(ctx, BACKEND_INIT_MANIFEST_DEST)?;
@@ -1960,14 +1991,14 @@ fn sync_platform_release(
     chart_changed: cluster_state.chart_version.as_deref() != Some(chart.version.as_str()),
     workload_changed: cluster_state.platform_mount_layout.as_ref()
       != Some(&rendered_artifacts.platform_mount_layout)
-      || host_license_changed,
+      || config_secret_changed
+      || blocked_configmap_changed,
     values_changed: values_changed
       || cluster_state.values != Some(parse_yaml_value(&desired_values)?),
-    config_changed: host_config_changed
-      || cluster_state.config_toml.as_deref() != Some(rendered_artifacts.config_toml.as_str()),
-    blocked_changed: host_blocked_changed
-      || cluster_state.blocked_content.as_deref()
-        != Some(rendered_artifacts.blocked_content.as_str()),
+    config_changed: config_secret_changed
+      || cluster_state.config_toml.as_deref() != Some(desired_config_toml.as_str()),
+    blocked_changed: blocked_configmap_changed
+      || cluster_state.blocked_content.as_deref() != Some(desired_blocked.as_str()),
     storage_changed,
     frontend_changed,
   };
@@ -2042,6 +2073,123 @@ fn sync_platform_release(
   }
 
   Ok(report)
+}
+
+fn sync_platform_config_secret(
+  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess, config_toml: &str,
+  license_content: Option<&str>,
+) -> Result<bool> {
+  let current = read_platform_config_secret(ctx, cluster_access)?;
+  if current.as_ref()
+    == Some(&(
+      config_toml.to_string(),
+      license_content.unwrap_or("").to_string(),
+    ))
+  {
+    return Ok(false);
+  }
+
+  apply_platform_config_secret(ctx, cluster_access, config_toml, license_content)?;
+
+  Ok(true)
+}
+
+fn read_platform_config_secret(
+  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess,
+) -> Result<Option<(String, String)>> {
+  let config_toml = cluster_access.capture_namespaced_object_template(
+    ctx,
+    PLATFORM_NAMESPACE,
+    "secret",
+    PLATFORM_CONFIG_SECRET_NAME,
+    "{{index .data \"config.toml\" | base64decode}}",
+  )?;
+  let license = cluster_access.capture_namespaced_object_template(
+    ctx,
+    PLATFORM_NAMESPACE,
+    "secret",
+    PLATFORM_CONFIG_SECRET_NAME,
+    "{{index .data \"license\" | base64decode}}",
+  )?;
+
+  let Some(config_toml) = config_toml else {
+    return Ok(None);
+  };
+  if config_toml.trim().is_empty() {
+    return Ok(None);
+  }
+
+  Ok(Some((config_toml, license.unwrap_or_default())))
+}
+
+fn apply_platform_config_secret(
+  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess, config_toml: &str,
+  license_content: Option<&str>,
+) -> Result<()> {
+  let manifest = render_platform_config_secret_manifest(config_toml, license_content);
+  let staged = stage_text_file("ret2shell-config", "yaml", manifest)?;
+  let apply_result = cluster_access.apply_manifest(ctx, &staged.display().to_string());
+  let _ = fs::remove_file(&staged);
+  apply_result
+}
+
+fn render_platform_config_secret_manifest(
+  config_toml: &str, license_content: Option<&str>,
+) -> String {
+  let mut string_data = format!("stringData:\n  {}:\n", yaml_quote(PLATFORM_CONFIG_TOML_KEY));
+  for line in config_toml.trim_end_matches('\n').split('\n') {
+    string_data.push_str("    ");
+    string_data.push_str(line);
+    string_data.push('\n');
+  }
+  if let Some(license_content) = license_content {
+    string_data.push_str(
+      format!(
+        "  {}: {}\n",
+        yaml_quote(PLATFORM_LICENSE_KEY),
+        yaml_quote(license_content)
+      )
+      .as_str(),
+    );
+  }
+
+  format!(
+    "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {}\n  namespace: {}\ntype: Opaque\n{}",
+    PLATFORM_CONFIG_SECRET_NAME, PLATFORM_NAMESPACE, string_data
+  )
+}
+
+fn sync_platform_blocked_configmap(
+  ctx: &StepExecutionContext<'_>, cluster_access: &ClusterAccess, blocked_content: &str,
+) -> Result<bool> {
+  let current = cluster_access.capture_namespaced_object_template(
+    ctx,
+    PLATFORM_NAMESPACE,
+    "configmap",
+    PLATFORM_BLOCKED_CONFIGMAP_NAME,
+    "{{index .data \"blocked.txt\"}}",
+  )?;
+  if current.as_deref() == Some(blocked_content) {
+    return Ok(false);
+  }
+
+  let manifest = format!(
+    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {}\n  namespace: {}\ndata:\n  blocked.txt: |\n",
+    PLATFORM_BLOCKED_CONFIGMAP_NAME, PLATFORM_NAMESPACE
+  );
+  let mut manifest = manifest;
+  for line in blocked_content.trim_end_matches('\n').split('\n') {
+    manifest.push_str("    ");
+    manifest.push_str(line);
+    manifest.push('\n');
+  }
+
+  let staged = stage_text_file("ret2shell-blocked", "yaml", manifest)?;
+  let apply_result = cluster_access.apply_manifest(ctx, &staged.display().to_string());
+  let _ = fs::remove_file(&staged);
+  apply_result?;
+
+  Ok(true)
 }
 
 fn ensure_platform_tls_secret(
@@ -2580,22 +2728,6 @@ fn sync_managed_text_file(
   install_result?;
 
   Ok(true)
-}
-
-fn sync_optional_managed_text_file(
-  ctx: &StepExecutionContext<'_>, dest: &str, contents: Option<&str>, mode: &str,
-) -> Result<bool> {
-  match contents {
-    Some(contents) => sync_managed_text_file(ctx, dest, contents, mode),
-    None => {
-      if Path::new(dest).is_file() {
-        ctx.run_privileged_command("rm", &["-f".to_string(), dest.to_string()], &[])?;
-        Ok(true)
-      } else {
-        Ok(false)
-      }
-    }
-  }
 }
 
 fn sync_runtime_registry_config(
@@ -3646,6 +3778,7 @@ fn parse_release_chart_version(chart: &str) -> Option<String> {
 
 fn render_platform_values_yaml(
   summary: &PlatformPlanSummary, runtime_overrides: &PlatformRuntimeOverrides,
+  use_existing_config_secret: bool, use_existing_blocked_configmap: bool,
 ) -> Result<String> {
   let platform = planned_service(summary, PlatformServiceId::Platform)?;
   let database = planned_service(summary, PlatformServiceId::Database)?;
@@ -3712,6 +3845,14 @@ fn render_platform_values_yaml(
     }
   }
   lines.push("  config:".to_string());
+  lines.push(format!(
+    "    existingSecret: {}",
+    yaml_quote(if use_existing_config_secret {
+      PLATFORM_CONFIG_SECRET_NAME
+    } else {
+      ""
+    })
+  ));
   lines.push("    auth:".to_string());
   lines.push(format!(
     "      signingKey: {}",
@@ -3728,6 +3869,14 @@ fn render_platform_values_yaml(
     yaml_quote(&external_origin)
   ));
   lines.push("  blocked:".to_string());
+  lines.push(format!(
+    "    existingConfigMap: {}",
+    yaml_quote(if use_existing_blocked_configmap {
+      PLATFORM_BLOCKED_CONFIGMAP_NAME
+    } else {
+      ""
+    })
+  ));
   push_yaml_string_field(&mut lines, "    ", "content", &summary.blocked_content);
   append_local_persistence(&mut lines, "  ", platform)?;
 
@@ -4532,8 +4681,9 @@ mod tests {
   #[test]
   fn render_platform_values_yaml_maps_chart_settings() {
     let summary = sample_summary();
-    let rendered = render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default())
-      .expect("values render");
+    let rendered =
+      render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default(), false, false)
+        .expect("values render");
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
@@ -4626,7 +4776,8 @@ mod tests {
         tag: "9.0.3-alpine".to_string(),
       }),
     };
-    let rendered = render_platform_values_yaml(&summary, &overrides).expect("values render");
+    let rendered =
+      render_platform_values_yaml(&summary, &overrides, false, false).expect("values render");
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
@@ -4647,8 +4798,9 @@ mod tests {
     summary.public_host = "192.168.23.132".to_string();
     summary.ingress_host = "ret2shell-192-168-23-132.ret2boot.invalid".to_string();
     summary.internal_registry_host = "localhost:30310".to_string();
-    let rendered = render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default())
-      .expect("values render");
+    let rendered =
+      render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default(), false, false)
+        .expect("values render");
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
@@ -4676,8 +4828,9 @@ mod tests {
   #[test]
   fn render_platform_values_yaml_maps_ingress_profile_to_https_origin() {
     let summary = sample_summary();
-    let rendered = render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default())
-      .expect("values render");
+    let rendered =
+      render_platform_values_yaml(&summary, &PlatformRuntimeOverrides::default(), false, false)
+        .expect("values render");
     let parsed: Value = serde_yaml::from_str(&rendered).expect("values parse as yaml");
 
     assert_eq!(
@@ -4830,7 +4983,14 @@ spec:\n\
     assert!(patched.contains("- name: platform"));
     assert!(patched.contains("mountPath: /var/www/html"));
     assert!(patched.contains("path: /srv/ret2shell/frontend"));
-    assert!(patched.contains("mountPath: /etc/ret2shell"));
+    assert!(patched.contains("mountPath: /var/www/html"));
+    assert!(patched.contains("path: /srv/ret2shell/frontend"));
+    assert!(patched.contains("mountPath: /etc/ret2shell/config.toml"));
+    assert!(patched.contains("secretName: {{ include \"ret2shell.platformConfigSecretName\" . }}"));
+    assert!(patched.contains("name: {{ include \"ret2shell.platformBlockedConfigMapName\" . }}"));
+    assert!(patched.contains("mountPath: /etc/ret2shell/license"));
+    assert!(!patched.contains("backend-config"));
+    assert!(!patched.contains("/srv/ret2shell/backend/config"));
     assert!(patched.contains("desired_version=\"{{ .Chart.Version }}\""));
     assert!(patched.contains(".ret2shell-chart-version"));
     assert!(patched.contains("find /host-frontend -mindepth 1 -maxdepth 1 -exec rm -rf {} +"));
