@@ -475,6 +475,14 @@ impl<'a> InstallFlow<'a> {
     }
   }
 
+  fn step_title_by_id(&self, step_id: InstallStepId) -> String {
+    steps::registry()
+      .iter()
+      .find(|step| step.id() == step_id)
+      .map(|step| self.step_title(step.as_ref()))
+      .unwrap_or_else(|| step_id.as_config_value().to_string())
+  }
+
   fn step_title(&self, step: &dyn AtomicInstallStep) -> String {
     let plan_context = StepPlanContext::new(self.config, self.runtime, &self.config_path);
     step
@@ -925,10 +933,13 @@ impl<'a> InstallFlow<'a> {
         continue;
       };
 
-      let step_title = plan_step_title(step_id);
+      let step_title = self.step_title_by_id(step_id);
       println!(
         "{}",
-        ui::note(t!("install.execution.rollback_step", step = step_title))
+        ui::note(t!(
+          "install.execution.rollback_step",
+          step = step_title.as_str()
+        ))
       );
 
       let rollback_result = {
@@ -969,7 +980,7 @@ impl<'a> InstallFlow<'a> {
     if let Some(error_text) = failed_step_rollback_error {
       return Err(anyhow!(
         "rollback failed for `{}` after installation error: {}",
-        plan_step_title(failed_step_id),
+        self.step_title_by_id(failed_step_id),
         error_text
       ));
     }
@@ -1107,8 +1118,4 @@ fn step_status_tag(status: InstallStepStatus) -> String {
   };
 
   ui::status_tag(step_status_label(status), tone)
-}
-
-fn plan_step_title(step_id: crate::config::InstallStepId) -> String {
-  step_id.as_config_value().to_string()
 }
