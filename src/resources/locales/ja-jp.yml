@@ -235,3 +235,5 @@ install.steps.platform_plan.unallocated_disk: "未使用のディスク予算: %
 install.steps.worker_probe.title: 主ノードのプラットフォーム状態を確認する
 install.steps.worker_probe.detail: この worker がクラスタへ参加した後、主ノード上のプラットフォーム配置状態を確認して処理を終了します。
 install.errors.empty_value: 値を空にできません
+install.maintenance.uninstall.confirm_prompt: "ret2boot がインストールした Kubernetes クラスタ、ゲートウェイ、プラットフォームを削除します。クラスタ内のデータ（データベース、アップロード済みファイル、問題ボリューム）は失われます。続行するには確認を選んでください。"
+install.maintenance.uninstall.cancelled: "アンインストールを取り消しました。プラットフォームは変更されていません。"

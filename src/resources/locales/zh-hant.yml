@@ -235,3 +235,5 @@ install.steps.platform_plan.unallocated_disk: "未使用的磁碟預算：%{rema
 install.steps.worker_probe.title: 檢查主節點平台狀態
 install.steps.worker_probe.detail: 目前工作節點加入叢集後，會檢查主節點上的平台部署狀態，然後結束目前流程。
 install.errors.empty_value: 不能為空
+install.maintenance.uninstall.confirm_prompt: "即將移除由 ret2boot 安裝的 Kubernetes 叢集、閘道與平台。叢集內的資料（資料庫、上傳檔案、題目卷）都會遺失。請確認下方提示以繼續。"
+install.maintenance.uninstall.cancelled: "已取消解除安裝。平台保持原樣。"

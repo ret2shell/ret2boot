@@ -284,3 +284,5 @@ install.steps.gateway.nodeport_guard: "会通过 iptables raw 规则阻止公网
 install.steps.gateway.nodeport_tls_termination: "主机上的 nginx 入口会直接终止 TLS，并使用托管证书材料。"
 install.steps.platform_plan.tls_ingress_secret: "平台入口已启用 TLS，并会使用 Kubernetes Secret `%{secret}`。"
 install.steps.platform_plan.tls_external_gateway: "平台入口已启用 TLS，并由主机 nginx 直接终止 HTTPS。"
+install.maintenance.uninstall.confirm_prompt: "即将卸载由 ret2boot 安装的 Kubernetes 集群、网关和平台。集群内的数据（数据库、上传文件、题目卷）都会丢失。请确认下方提示以继续。"
+install.maintenance.uninstall.cancelled: "已取消卸载。平台保持原样。"

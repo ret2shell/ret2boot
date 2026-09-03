@@ -284,3 +284,5 @@ install.steps.gateway.nodeport_guard: "iptables raw rules will block direct acce
 install.steps.gateway.nodeport_tls_termination: "The host nginx gateway will terminate TLS with the managed certificate assets."
 install.steps.platform_plan.tls_ingress_secret: "TLS is enabled for the ingress entry, using Kubernetes Secret `%{secret}`."
 install.steps.platform_plan.tls_external_gateway: "TLS is enabled at the host nginx entry point."
+install.maintenance.uninstall.confirm_prompt: "This will remove the Kubernetes cluster, gateway, and platform installed by ret2boot. Data inside the cluster (databases, uploads, challenge volumes) will be lost. Type the confirmation below to continue."
+install.maintenance.uninstall.cancelled: "Uninstall cancelled. The platform was left untouched."

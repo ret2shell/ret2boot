@@ -148,6 +148,16 @@ pub fn uninstall_existing(
     })
     .collect();
 
+  let confirmed =
+    ConfirmCollector::new(t!("install.maintenance.uninstall.confirm_prompt"), false).collect()?;
+  if !confirmed {
+    println!(
+      "{}",
+      ui::warning(t!("install.maintenance.uninstall.cancelled"))
+    );
+    return Ok(());
+  }
+
   for step in steps_to_remove.into_iter().rev() {
     flow.run_maintenance_uninstall_step(step.as_ref())?;
   }
@@ -231,12 +241,32 @@ impl<'a> InstallFlow<'a> {
   }
 
   fn require_configured_installation(&self, command: &str) -> Result<InstallTargetRole> {
-    self
+    let node_role = self
       .config
       .install
       .questionnaire
       .node_role
-      .ok_or_else(|| anyhow!("`ret2boot {command}` requires an existing installation config"))
+      .ok_or_else(|| anyhow!("`ret2boot {command}` requires an existing installation config"))?;
+
+    // A config that was never confirmed by plan review (or lacks any recorded
+    // install) is just leftover questionnaire state; refusing it prevents
+    // destructive maintenance actions on machines with no real installation.
+    let has_install_record = self.config.install.review.confirmed
+      || !self.config.install.ownership.is_empty()
+      || self
+        .config
+        .install
+        .execution
+        .steps
+        .iter()
+        .any(|step| step.status == InstallStepStatus::Completed);
+    if !has_install_record {
+      return Err(anyhow!(
+        "the installer state contains no confirmed installation; run `ret2boot install` first"
+      ));
+    }
+
+    Ok(node_role)
   }
 
   fn require_control_plane_command(&self, command: &str) -> Result<()> {
