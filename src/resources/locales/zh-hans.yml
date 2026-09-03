@@ -36,7 +36,7 @@ install.preflight.checks.package_manager: 系统包管理器
 install.preflight.checks.public_network: 网络位置
 install.preflight.checks.github: GitHub 连通性
 install.preflight.checks.k3s_sources: k3s 安装源连通性
-install.preflight.checks.rke2_sources: RKE2 安装源连通性
+install.preflight.checks.rke2_sources: rke2 安装源连通性
 install.preflight.checks.disk: 磁盘容量
 install.preflight.checks.memory: 内存容量
 install.preflight.checks.ports: 端口可用性
@@ -74,7 +74,6 @@ install.preflight.details.sysctl_warning: "当前值：%{values}"
 install.preflight.details.cgroup_memory_ready: 已启用内存 cgroup 支持
 install.preflight.details.cgroup_memory_missing: 未启用内存 cgroup 支持，无法继续安装
 install.preflight.details.kernel_ready: 当前内核已提供该功能
-install.preflight.details.kernel_loadable: 当前尚未启用，但可以通过加载内核模块启用
 install.preflight.details.kernel_missing: 当前内核不支持该功能
 install.preflight.status.ok: 通过
 install.preflight.status.running: 检查中
@@ -92,10 +91,6 @@ install.platform.storage_notice: 使用本机磁盘的服务都需要配置存�
 install.platform.detected_remaining_disk: "检测到可用磁盘空间：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望为回归终端预留多少磁盘空间？（GiB）
 install.platform.public_host.prompt: 请输入用户访问回归终端时使用的公网地址。
-install.platform.public_host.prompt.local_lab: 请输入本地内网调试时用户访问回归终端所使用的地址。可以填写本地域名，也可以填写裸 IPv4 地址。
-install.platform.public_host.prompt.campus_internal: 请输入校园网或私有网络内用户访问回归终端所使用的内网 DNS 域名。
-install.platform.public_host.prompt.public_domain: 请输入公网用户访问回归终端所使用的已绑定域名。
-install.platform.public_host.derived_note: "已根据 IPv4 %{input} 自动派生公网访问域名：%{host}。后续请通过这个域名访问回归终端。"
 install.platform.public_host.bare_ip_note: "已保留 %{input} 作为用户访问地址，并使用内部 ingress host %{host} 完成集群路由。"
 install.platform.services_intro: 配置各项回归终端服务
 install.platform.service_heading: "配置服务：%{service}"
@@ -151,19 +146,8 @@ install.worker_probe.done: 主节点平台状态检查完成。
 install.worker_probe.failed: 主节点平台状态检查失败。
 install.worker_probe.failed_detail: "错误详情：%{error}"
 install.worker_probe.cli_missing: 当前工作节点缺少所需的集群 CLI，无法继续自动检查平台状态。
-install.exposure.prompt: 集群准备使用哪种对外访问方式？
-install.deployment_profile.prompt: 当前安装更符合哪种部署场景？
-install.deployment_profile.options.local_lab: 本地内网调试部署
-install.deployment_profile.options.campus_internal: 校园网内正式部署
-install.deployment_profile.options.public_domain: 绑定域名的公网部署
-install.deployment_profile.notice.local_lab: 本地内网调试模式适合实验室、课堂或可信小范围网络。允许裸 IPv4 访问，并推荐使用 NodePort + 外置 nginx。
-install.deployment_profile.notice.campus_internal: 校园网内部署模式适合稳定的内网服务。建议使用内网 DNS 域名，并优先选择 NodePort + 外置 nginx 配合内网 DNS 或 hosts 管理。
-install.deployment_profile.notice.public_domain: 公网域名模式适合对外正式部署。请使用已绑定的公网域名，并为最终入口准备 TLS。
-install.exposure.options.ingress: Kubernetes ingress
-install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx
 install.exposure.ingress_notice: 已记录 ingress 模式，安装时会按此暴露服务。
-install.exposure.nodeport_notice: 已记录 NodePort + 外置 nginx 模式。安装时会把 Kubernetes 网关端口调整到 10080 和 10443，把 80 和 443 留给系统 nginx。
-install.exposure.profile_locked: "当前部署场景固定使用 %{exposure} 作为对外访问方式，因此这里不会再提供其他选项。"
+install.exposure.nodeport_notice: 已记录 NodePort + 外置 nginx 模式。安装时会把 Kubernetes 网关端口调整到 10080 和 10443，把 80 和 443 留给外置 nginx。
 install.exposure.package_manager_notice: "如果主机还没有 nginx，会通过 %{package_manager} 自动安装。"
 install.exposure.nginx_reuse_notice: "检测到现有 nginx 二进制：%{path}，会尽量直接复用。"
 install.exposure.nginx_service_reuse_notice: 检测到现有 nginx 服务，这一步会尽量直接复用。
@@ -221,7 +205,7 @@ install.steps.cluster.pod_cidr: "集群 Pod CIDR：%{cidr}"
 install.steps.cluster.node_cidr_mask: "单节点 Pod CIDR 掩码：/%{mask}"
 install.steps.cluster.max_pods: "单节点最大 Pod 数：%{max_pods}"
 install.steps.cluster.application_exposure: "对外访问方式：%{exposure}"
-install.steps.cluster.gateway_ports_shifted: 集群网关默认使用的 80 和 443 会迁移到高位空闲端口，交给系统 nginx 使用。
+install.steps.cluster.gateway_ports_shifted: 集群网关默认使用的 80 和 443 会迁移到高位空闲端口，交给外置 nginx 使用。
 install.steps.cluster.worker_server: "主节点 URL：%{server}"
 install.steps.cluster.worker_token_saved: 集群加入令牌已保存到安装器配置中。
 install.steps.helm.title: 安装 Helm CLI
@@ -229,20 +213,16 @@ install.steps.helm.detail: 安装 Helm，供后续回归终端部署使用。
 install.steps.helm.reuse: "复用当前主机上已存在的 helm 二进制：%{path}。"
 install.steps.helm.install_path: "将 helm 安装到 %{path}。"
 install.steps.gateway.title: 配置对外访问
-install.steps.gateway.selected_profile: "已选择的部署场景：%{profile}"
 install.steps.gateway.selected_mode: "已选择的对外访问方式：%{exposure}"
 install.steps.gateway.ingress_detail: 记录 ingress 需求，后续安装时会按此开启。
-install.steps.gateway.nodeport_detail: 安装或复用系统 nginx，让它接管当前主机的 80 和 443 端口。
+install.steps.gateway.nodeport_detail: 安装或复用外置 nginx，让它接管当前主机的 80 和 443 端口。
 install.steps.gateway.port_reservation: 安装前会先把集群网关从 80 和 443 挪开，再交给系统 nginx。
 install.steps.gateway.nginx_reuse: "复用当前主机上已存在的 nginx 二进制：%{path}。"
 install.steps.gateway.nginx_service_reuse: 复用当前主机上已经存在的 nginx 服务。
 install.steps.gateway.nginx_install: 通过当前检测到的系统包管理器安装 nginx。
 install.steps.platform_plan.title: 通过 Helm 部署回归终端平台
 install.steps.platform_plan.namespaces: "将准备平台使用的命名空间：%{platform}、%{challenge}"
-install.steps.platform_plan.profile: "部署场景：%{profile}"
 install.steps.platform_plan.public_host: "公网访问地址：%{host}"
-install.steps.platform_plan.service_account: "将准备平台运行所需的服务账号：%{namespace} 中的 %{name}"
-install.steps.platform_plan.rbac: "将准备平台运行所需的权限配置：%{role}、%{binding}"
 install.steps.platform_plan.disk_budget: "磁盘预算：已分配 %{allocated} GiB / 计划 %{requested} GiB（当前可用 %{remaining} GiB）"
 install.steps.platform_plan.unallocated_disk: "未使用的磁盘预算：%{remaining} GiB"
 install.steps.worker_probe.title: 检查主节点平台状态
@@ -252,19 +232,8 @@ install.exposure.entry_prompt: "请选择平台入口方案"
 install.exposure.entry_options.ingress: "方案 B/C：Ingress"
 install.exposure.entry_options.nodeport_external_nginx: "方案 A：NodePort + nginx 反向代理"
 install.platform.tls.enable_prompt: "是否为平台入口启用 TLS？"
-install.platform.tls.mode.prompt: "请选择 TLS 证书准备方式"
-install.platform.tls.mode.disabled: "禁用 TLS"
-install.platform.tls.mode.acme_dns: "自动申请 ACME DNS 证书（推荐）"
-install.platform.tls.mode.provided_files: "使用现有证书和私钥文件"
-install.platform.tls.mode.auto_selected: "当前入口地址仅支持“%{mode}”，因此已自动选中。"
 install.platform.tls.mode.prepared_files_only: "安装程序不会自动申请证书。请先自行使用 acme.sh 或其他工具准备好证书文件，然后填写本地 fullchain 和私钥路径。"
 install.platform.tls.secret_name.prompt: "供 Ingress 使用的 Kubernetes TLS Secret 名称"
-install.platform.tls.domains.prompt: "TLS 证书覆盖域名（多个域名用逗号分隔）"
-install.platform.tls.domains.required: "启用 TLS 时至少需要填写一个证书域名。"
-install.platform.tls.acme_dns.public_host_error: "自动申请 ACME DNS 证书要求使用你可控的 DNS 域名，不能直接使用裸 IPv4 地址，也不能使用派生出来的通配 DNS 域名。"
-install.platform.tls.acme_email.prompt: "ACME 账户邮箱"
-install.platform.tls.acme_dns_provider.prompt: "acme.sh DNS 提供商代号（例如：dns_dp、dns_cf、dns_ali）"
-install.platform.tls.acme_dns_credentials.prompt: "DNS 提供商凭证，按 shell 变量赋值填写（例如：DP_Id=1234;DP_Key=abcd）"
 install.platform.tls.certificate_path.prompt: "TLS fullchain 证书路径"
 install.platform.tls.key_path.prompt: "TLS 私钥路径"
 install.platform.tls.certificate_path.missing: "目标主机上不存在该证书文件，或该路径不是普通文件。请输入有效的 fullchain 路径，例如 /etc/letsencrypt/live/<domain>/fullchain.pem"

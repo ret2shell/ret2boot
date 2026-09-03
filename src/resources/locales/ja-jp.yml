@@ -74,7 +74,6 @@ install.preflight.details.sysctl_warning: "現在の値: %{values}"
 install.preflight.details.cgroup_memory_ready: memory cgroup サポートを利用できます
 install.preflight.details.cgroup_memory_missing: このホストでは memory cgroup サポートを利用できません
 install.preflight.details.kernel_ready: 現在のカーネルで利用できます
-install.preflight.details.kernel_loadable: まだ有効ではありませんが、カーネルモジュールを読み込めば利用できます
 install.preflight.details.kernel_missing: 現在のカーネルでは利用できません
 install.preflight.status.ok: 正常
 install.preflight.status.running: 確認中
@@ -92,8 +91,7 @@ install.platform.storage_notice: ローカルディスクを使うサービス�
 install.platform.detected_remaining_disk: "検出した空きディスク容量: %{remaining} GiB"
 install.platform.requested_disk.prompt: Ret2Shell 用にどれだけのディスク容量を確保しますか？（GiB）
 install.platform.public_host.prompt: Ret2Shell にアクセスする際に使う公開ドメイン名を入力してください。裸の IPv4 アドレスしかない場合は、ingress モードでは nip.io ホスト名を自動生成し、NodePort と外部 nginx モードでは裸 IP をそのまま利用します。
-install.platform.public_host.derived_note: "IPv4 %{input} から公開ホスト名 %{host} を自動生成しました。以後はこのホスト名で Ret2Shell にアクセスしてください。"
-install.platform.public_host.bare_ip_note: "利用者向けアドレスとして %{input} を維持し、クラスタ内部では ingress host %{host} でルーティングします。"
+install.platform.public_host.bare_ip_note: "利用者向けアドレスとして %{input} を維持し、クラスター内部では ingress host %{host} でルーティングします。"
 install.platform.services_intro: Ret2Shell サービスを設定する
 install.platform.service_heading: "サービス設定: %{service}"
 install.platform.service_platform_fixed: コア platform サービスは常にローカル配置され、ストレージも既定値が自動で使われます。
@@ -143,14 +141,11 @@ install.platform.external.registry.username: レジストリユーザー名
 install.platform.external.registry.password: レジストリパスワード
 install.platform.external.logs.endpoint: 外部ログエンドポイント
 install.worker_probe.title: 主ノードのプラットフォーム状態を確認する
-install.worker_probe.intro: この worker ノードはクラスタ参加だけを担当します。続いて主ノード上のプラットフォーム配置状態を確認し、このフローを終了します。
+install.worker_probe.intro: この worker ノードはクラスター参加だけを担当します。続いて主ノード上のプラットフォーム配置状態を確認し、このフローを終了します。
 install.worker_probe.done: 主ノードのプラットフォーム状態の確認が完了しました。
 install.worker_probe.failed: 主ノードのプラットフォーム状態の確認に失敗しました。
 install.worker_probe.failed_detail: "エラー詳細: %{error}"
-install.worker_probe.cli_missing: この worker には必要なクラスタ CLI がないため、プラットフォーム状態の確認を自動で続行できません。
-install.exposure.prompt: このクラスタではどの外部公開方式を使いますか？
-install.exposure.options.ingress: Kubernetes ingress
-install.exposure.options.nodeport_external_nginx: NodePort と外部 nginx
+install.worker_probe.cli_missing: この worker には必要なクラスター CLI がないため、プラットフォーム状態の確認を自動で続行できません。
 install.exposure.ingress_notice: ingress モードを記録しました。インストール時にこの設定で公開します。
 install.exposure.nodeport_notice: NodePort と外部 nginx モードを記録しました。インストール時に Kubernetes gateway を 10080 / 10443 へ移し、80 / 443 は system nginx 用に空けます。
 install.exposure.package_manager_notice: "nginx がなければ %{package_manager} で自動インストールします。"
@@ -201,9 +196,9 @@ install.progress.status.failed: 失敗
 install.steps.preflight: 対象ホストとインストール前提条件を確認する
 install.steps.preflight_detail: 実際に変更を加える前に、OS、権限、ネットワーク、実行条件を確認します。
 install.steps.cluster.control_plane: Kubernetes コントロールプレーンを構築する
-install.steps.cluster.control_plane_detail: 主クラスタサービスを初期化し、コントロールプレーンの基盤を構築します。
+install.steps.cluster.control_plane_detail: 主クラスターサービスを初期化し、コントロールプレーンの基盤を構築します。
 install.steps.cluster.worker: このノードを Kubernetes クラスターへ参加させる
-install.steps.cluster.worker_detail: 保存済みの参加パラメーターを使って、このノードを既存クラスタへ参加させます。
+install.steps.cluster.worker_detail: 保存済みの参加パラメーターを使って、このノードを既存クラスターへ参加させます。
 install.steps.cluster.selected_distribution: "Kubernetes ディストリビューション: %{distribution}"
 install.steps.cluster.selected_source: "インストールソース: %{source}"
 install.steps.cluster.pod_cidr: "クラスター Pod CIDR: %{cidr}"
@@ -228,14 +223,12 @@ install.steps.gateway.nginx_install: 検出したシステムパッケージマ�
 install.steps.platform_plan.title: Helm で Ret2Shell プラットフォームをデプロイする
 install.steps.platform_plan.namespaces: "準備する Namespace: %{platform}、%{challenge}"
 install.steps.platform_plan.public_host: "公開ホスト: %{host}"
-install.steps.platform_plan.service_account: "準備する ServiceAccount: %{namespace} の %{name}"
-install.steps.platform_plan.rbac: "準備する権限設定: %{role}、%{binding}"
 install.steps.platform_plan.disk_budget: "ディスク予算: %{allocated} GiB 割り当て済み / %{requested} GiB 予定（現在空き %{remaining} GiB）"
 install.steps.platform_plan.unallocated_disk: "未使用のディスク予算: %{remaining} GiB"
 install.steps.worker_probe.title: 主ノードのプラットフォーム状態を確認する
-install.steps.worker_probe.detail: この worker がクラスタへ参加した後、主ノード上のプラットフォーム配置状態を確認して処理を終了します。
+install.steps.worker_probe.detail: この worker がクラスターへ参加した後、主ノード上のプラットフォーム配置状態を確認して処理を終了します。
 install.errors.empty_value: 値を空にできません
-install.maintenance.uninstall.confirm_prompt: "ret2boot がインストールした Kubernetes クラスタ、ゲートウェイ、プラットフォームを削除します。クラスタ内のデータ（データベース、アップロード済みファイル、問題ボリューム）は失われます。続行するには確認を選んでください。"
+install.maintenance.uninstall.confirm_prompt: "ret2boot がインストールした Kubernetes クラスター、ゲートウェイ、プラットフォームを削除します。クラスター内のデータ（データベース、アップロード済みファイル、問題ボリューム）は失われます。続行するには確認を選んでください。"
 install.maintenance.uninstall.cancelled: "アンインストールを取り消しました。プラットフォームは変更されていません。"
 install.maintenance.sync_title: "インストール済みプラットフォームを同期する"
 install.maintenance.update_title: "インストール済みプラットフォームを更新する"
@@ -262,3 +255,28 @@ install.maintenance.sync.config_changed: "プラットフォーム設定のド�
 install.maintenance.sync.blocked_changed: "ブロックワード設定のドリフトを修正しました"
 install.maintenance.sync.storage_changed: "ストレージクラスの状態が変わりました"
 install.state_kept_at: "インストーラの状態は %{path} に保持されています"
+install.exposure.entry_options.ingress: "スキーム B/C: Ingress"
+install.exposure.entry_options.nodeport_external_nginx: "スキーム A: NodePort + nginx リバースプロキシ"
+install.exposure.entry_prompt: "プラットフォームの入口方式を選択してください"
+install.platform.nodeport_security.guard_prompt: "iptables raw ルールでクラスター内部アクセス用ポートを保護しますか？"
+install.platform.nodeport_security.interface_detect_failed: "自動検出では cni0 が見つかりませんでした。クラスターブリッジインターフェース名を確認して入力してください。検出されたインターフェース: %{interfaces}"
+install.platform.nodeport_security.interface_invalid: "インターフェース %{interface} はこのホストに存在しません。検出されたインターフェース: %{interfaces}"
+install.platform.nodeport_security.interface_prompt: "iptables の許可ルールに使うクラスターブリッジインターフェース名"
+install.platform.public_host.ingress_requires_hostname: "Ingress 方式ではホスト名が必要です。裸の IPv4 アドレスを使う場合はスキーム A を選択してください。"
+install.platform.public_host.prompt.ingress: "スキーム B/C で利用者に公開するホスト名を入力してください。Ingress モードでは裸の IPv4 アドレスは利用できません。"
+install.platform.public_host.prompt.nodeport: "スキーム A で利用者に公開するアドレスを入力してください。ホスト名または裸の IPv4 アドレスを利用できます。"
+install.platform.tls.certificate_path.missing: "その証明書ファイルが存在しないか、通常のファイルではありません。有効な fullchain パス（例: /etc/letsencrypt/live/<domain>/fullchain.pem）を入力してください"
+install.platform.tls.certificate_path.prompt: "TLS fullchain 証明書のパス"
+install.platform.tls.enable_prompt: "プラットフォームの入口で TLS を有効にしますか？"
+install.platform.tls.key_path.missing: "その秘密鍵ファイルが存在しないか、通常のファイルではありません。有効な秘密鍵のパス（例: /etc/letsencrypt/live/<domain>/privkey.pem）を入力してください"
+install.platform.tls.key_path.prompt: "TLS 秘密鍵のパス"
+install.platform.tls.mode.prepared_files_only: "インストーラは証明書を自動取得しません。acme.sh などで事前に証明書を用意し、ローカルの fullchain と秘密鍵のパスを入力してください。"
+install.platform.tls.secret_name.prompt: "Ingress で使う Kubernetes TLS Secret 名"
+install.steps.cluster.disable_traefik: "k3s コントロールプレーンのインストール時に内蔵 Traefik を無効化します。"
+install.steps.cluster.registry_mirrors: "docker.io、ghcr.io、gcr.io、quay.io、registry.k8s.io のミラーを設定します。"
+install.steps.gateway.ingress_host_network: "ingress-nginx を hostNetwork DaemonSet としてインストールします。"
+install.steps.gateway.ingress_tls_prepare: "Ret2Shell Helm リリースのインストール前に TLS 証明書を準備します。"
+install.steps.gateway.nodeport_guard: "iptables raw ルールで保護対象クラスターポートへの公網からの直接アクセスを遮断します。クラスター管理ポートは RFC1918 プライベートネットワーク、クラスターブリッジ、ループバックからは引き続きアクセスできます。"
+install.steps.gateway.nodeport_tls_termination: "ホストの nginx 入口が管理証明書で TLS を終端します。"
+install.steps.platform_plan.tls_external_gateway: "プラットフォームの入口で TLS が有効になり、ホスト nginx が HTTPS を終端します。"
+install.steps.platform_plan.tls_ingress_secret: "プラットフォームの入口で TLS が有効になり、Kubernetes Secret `%{secret}` を使用します。"

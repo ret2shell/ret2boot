@@ -74,7 +74,6 @@ install.preflight.details.sysctl_warning: "current values: %{values}"
 install.preflight.details.cgroup_memory_ready: memory cgroup support is available
 install.preflight.details.cgroup_memory_missing: memory cgroup support is not available on this host
 install.preflight.details.kernel_ready: available in the current kernel
-install.preflight.details.kernel_loadable: not active yet, but it can be enabled by loading the kernel module
 install.preflight.details.kernel_missing: unavailable in the current kernel
 install.preflight.status.ok: ok
 install.preflight.status.running: checking
@@ -92,10 +91,6 @@ install.platform.storage_notice: Services that use local disk need storage confi
 install.platform.detected_remaining_disk: "Detected available disk space: %{remaining} GiB"
 install.platform.requested_disk.prompt: How much disk space should be reserved for Ret2Shell? (GiB)
 install.platform.public_host.prompt: Enter the public address users will use to reach Ret2Shell.
-install.platform.public_host.prompt.local_lab: Enter the address users will use to reach Ret2Shell in this local lab deployment. You may use a local DNS hostname or a bare IPv4 address.
-install.platform.public_host.prompt.campus_internal: Enter the internal DNS hostname users will use to reach Ret2Shell on the campus or private network.
-install.platform.public_host.prompt.public_domain: Enter the bound public DNS hostname users will use to reach Ret2Shell.
-install.platform.public_host.derived_note: "Using %{host} as the public hostname derived from IPv4 %{input}. Users should access Ret2Shell through this hostname."
 install.platform.public_host.bare_ip_note: "Keeping %{input} as the user-facing address. ret2boot will route cluster ingress through internal host %{host}."
 install.platform.services_intro: Configure Ret2Shell services
 install.platform.service_heading: "Configure service: %{service}"
@@ -151,19 +146,8 @@ install.worker_probe.done: Primary platform status check completed.
 install.worker_probe.failed: Primary platform status check failed.
 install.worker_probe.failed_detail: "Error details: %{error}"
 install.worker_probe.cli_missing: The required cluster CLI is missing on this worker, so the platform status check cannot continue automatically.
-install.exposure.prompt: How should applications be exposed?
-install.deployment_profile.prompt: Which deployment scenario best matches this installation?
-install.deployment_profile.options.local_lab: Local intranet debugging
-install.deployment_profile.options.campus_internal: Campus-network internal use
-install.deployment_profile.options.public_domain: Public deployment with a bound domain
-install.deployment_profile.notice.local_lab: Local intranet debugging mode is intended for trusted lab or classroom networks. Bare IPv4 access is allowed and NodePort plus external nginx is recommended.
-install.deployment_profile.notice.campus_internal: Campus-network internal mode is intended for stable internal use. Use an internal DNS hostname and prefer NodePort plus external nginx with internal DNS or hosts management.
-install.deployment_profile.notice.public_domain: Public-domain mode is intended for internet-facing deployments. Use a bound DNS hostname and prepare TLS for the final entry point.
-install.exposure.options.ingress: Kubernetes ingress
-install.exposure.options.nodeport_external_nginx: NodePort plus external nginx
 install.exposure.ingress_notice: Ingress mode has been recorded and will be applied during installation.
 install.exposure.nodeport_notice: NodePort plus external nginx mode has been recorded. During installation, the Kubernetes gateway will move to ports 10080 and 10443, leaving 80 and 443 for system nginx.
-install.exposure.profile_locked: "This deployment profile uses %{exposure} exposure, so no alternative exposure option is shown."
 install.exposure.package_manager_notice: "nginx will be installed through %{package_manager} if it is not already present."
 install.exposure.nginx_reuse_notice: "Existing nginx binary detected at %{path}; it will be reused if possible."
 install.exposure.nginx_service_reuse_notice: Existing nginx service detected; it will be reused if possible.
@@ -229,7 +213,6 @@ install.steps.helm.detail: Install Helm for later Ret2Shell deployment steps.
 install.steps.helm.reuse: "Reuse the existing helm binary at %{path}."
 install.steps.helm.install_path: "Install helm into %{path}."
 install.steps.gateway.title: Configure application exposure
-install.steps.gateway.selected_profile: "Selected deployment profile: %{profile}"
 install.steps.gateway.selected_mode: "Selected application exposure: %{exposure}"
 install.steps.gateway.ingress_detail: Record the ingress requirement so it can be enabled during installation.
 install.steps.gateway.nodeport_detail: Install or reuse system nginx and let it take over ports 80 and 443 on this host.
@@ -239,10 +222,7 @@ install.steps.gateway.nginx_service_reuse: Reuse the existing nginx service that
 install.steps.gateway.nginx_install: Install nginx through the detected system package manager.
 install.steps.platform_plan.title: Deploy the Ret2Shell platform with Helm
 install.steps.platform_plan.namespaces: "Namespaces to prepare: %{platform}, %{challenge}"
-install.steps.platform_plan.profile: "Deployment profile: %{profile}"
 install.steps.platform_plan.public_host: "Public host: %{host}"
-install.steps.platform_plan.service_account: "Service account to prepare: %{name} in %{namespace}"
-install.steps.platform_plan.rbac: "Permissions to prepare: %{role}, %{binding}"
 install.steps.platform_plan.disk_budget: "Disk budget: %{allocated} GiB allocated / %{requested} GiB planned (%{remaining} GiB currently available)"
 install.steps.platform_plan.unallocated_disk: "Unused disk budget: %{remaining} GiB"
 install.steps.worker_probe.title: Check primary platform status
@@ -252,19 +232,8 @@ install.exposure.entry_prompt: "Select the platform entry scheme"
 install.exposure.entry_options.ingress: "Scheme B/C: Ingress"
 install.exposure.entry_options.nodeport_external_nginx: "Scheme A: NodePort + nginx reverse proxy"
 install.platform.tls.enable_prompt: "Enable TLS for the platform entry?"
-install.platform.tls.mode.prompt: "Select the TLS provisioning mode"
-install.platform.tls.mode.disabled: "Disable TLS"
-install.platform.tls.mode.acme_dns: "Automatic ACME DNS challenge (recommended)"
-install.platform.tls.mode.provided_files: "Use existing certificate and key files"
-install.platform.tls.mode.auto_selected: "Only %{mode} is available for the current entry host, so it was selected automatically."
 install.platform.tls.mode.prepared_files_only: "The installer will not request certificates automatically. Prepare the certificate files yourself with acme.sh or another tool, then enter the local fullchain and private key paths."
 install.platform.tls.secret_name.prompt: "Kubernetes TLS Secret name for the ingress"
-install.platform.tls.domains.prompt: "TLS certificate domains (comma-separated)"
-install.platform.tls.domains.required: "At least one TLS certificate domain is required when TLS is enabled."
-install.platform.tls.acme_dns.public_host_error: "Automatic ACME DNS issuance requires a user-controlled DNS hostname and cannot be used with a bare IPv4 address or a derived wildcard DNS hostname."
-install.platform.tls.acme_email.prompt: "ACME account email"
-install.platform.tls.acme_dns_provider.prompt: "acme.sh DNS provider code (for example: dns_dp, dns_cf, dns_ali)"
-install.platform.tls.acme_dns_credentials.prompt: "DNS provider credentials as shell assignments (example: DP_Id=1234;DP_Key=abcd)"
 install.platform.tls.certificate_path.prompt: "TLS fullchain certificate path"
 install.platform.tls.key_path.prompt: "TLS private key path"
 install.platform.tls.certificate_path.missing: "The certificate file does not exist on the target host or is not a regular file. Enter a valid fullchain path, for example /etc/letsencrypt/live/<domain>/fullchain.pem"

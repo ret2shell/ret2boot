@@ -74,7 +74,6 @@ install.preflight.details.sysctl_warning: "目前值：%{values}"
 install.preflight.details.cgroup_memory_ready: 已啟用記憶體 cgroup 支援
 install.preflight.details.cgroup_memory_missing: 未啟用記憶體 cgroup 支援，無法繼續安裝
 install.preflight.details.kernel_ready: 目前核心已提供該功能
-install.preflight.details.kernel_loadable: 目前尚未啟用，但可以透過載入核心模組啟用
 install.preflight.details.kernel_missing: 目前核心不支援該功能
 install.preflight.status.ok: 通過
 install.preflight.status.running: 檢查中
@@ -92,7 +91,6 @@ install.platform.storage_notice: 使用本機磁碟的服務都需要設定儲�
 install.platform.detected_remaining_disk: "偵測到可用磁碟空間：%{remaining} GiB"
 install.platform.requested_disk.prompt: 你希望為回歸終端預留多少磁碟空間？（GiB）
 install.platform.public_host.prompt: 請輸入使用者存取回歸終端時使用的公網網域名稱。如果你目前只有裸 IPv4 位址，ret2boot 會在 ingress 模式下自動派生 nip.io 網域名稱，並在 NodePort + 外置 nginx 模式下保留裸 IP 存取。
-install.platform.public_host.derived_note: "已根據 IPv4 %{input} 自動派生公網存取網域名稱：%{host}。後續請透過這個網域名稱存取回歸終端。"
 install.platform.public_host.bare_ip_note: "已保留 %{input} 作為使用者存取位址，並使用內部 ingress host %{host} 完成叢集路由。"
 install.platform.services_intro: 設定各項回歸終端服務
 install.platform.service_heading: "設定服務：%{service}"
@@ -148,11 +146,8 @@ install.worker_probe.done: 主節點平台狀態檢查完成。
 install.worker_probe.failed: 主節點平台狀態檢查失敗。
 install.worker_probe.failed_detail: "錯誤詳情：%{error}"
 install.worker_probe.cli_missing: 目前工作節點缺少所需的叢集 CLI，無法繼續自動檢查平台狀態。
-install.exposure.prompt: 叢集準備使用哪種對外存取方式？
-install.exposure.options.ingress: Kubernetes ingress
-install.exposure.options.nodeport_external_nginx: NodePort + 外置 nginx
 install.exposure.ingress_notice: 已記錄 ingress 模式，安裝時會依此對外公開服務。
-install.exposure.nodeport_notice: 已記錄 NodePort + 外置 nginx 模式。安裝時會把 Kubernetes 閘道連接埠調整到 10080 和 10443，把 80 和 443 留給系統 nginx。
+install.exposure.nodeport_notice: 已記錄 NodePort + 外置 nginx 模式。安裝時會把 Kubernetes 閘道連接埠調整到 10080 和 10443，把 80 和 443 留給外置 nginx。
 install.exposure.package_manager_notice: "如果主機還沒有 nginx，會透過 %{package_manager} 自動安裝。"
 install.exposure.nginx_reuse_notice: "偵測到現有 nginx 二進位：%{path}，會盡量直接重用。"
 install.exposure.nginx_service_reuse_notice: 偵測到現有 nginx 服務，這一步會盡量直接重用。
@@ -210,7 +205,7 @@ install.steps.cluster.pod_cidr: "叢集 Pod CIDR：%{cidr}"
 install.steps.cluster.node_cidr_mask: "單節點 Pod CIDR 遮罩：/%{mask}"
 install.steps.cluster.max_pods: "單節點最大 Pod 數：%{max_pods}"
 install.steps.cluster.application_exposure: "對外存取方式：%{exposure}"
-install.steps.cluster.gateway_ports_shifted: 叢集閘道預設使用的 80 與 443 會移到高位空閒連接埠，交給系統 nginx 使用。
+install.steps.cluster.gateway_ports_shifted: 叢集閘道預設使用的 80 與 443 會移到高位空閒連接埠，交給外置 nginx 使用。
 install.steps.cluster.worker_server: "主節點 URL：%{server}"
 install.steps.cluster.worker_token_saved: 叢集加入權杖已儲存到安裝器設定中。
 install.steps.helm.title: 安裝 Helm CLI
@@ -220,16 +215,14 @@ install.steps.helm.install_path: "將 helm 安裝到 %{path}。"
 install.steps.gateway.title: 設定對外存取
 install.steps.gateway.selected_mode: "已選擇的對外存取方式：%{exposure}"
 install.steps.gateway.ingress_detail: 記錄 ingress 需求，後續安裝時會依此開啟。
-install.steps.gateway.nodeport_detail: 安裝或重用系統 nginx，讓它接管目前主機的 80 與 443 連接埠。
-install.steps.gateway.port_reservation: 安裝前會先把叢集閘道從 80 與 443 挪開，再交給系統 nginx。
+install.steps.gateway.nodeport_detail: 安裝或重用外置 nginx，讓它接管目前主機的 80 與 443 連接埠。
+install.steps.gateway.port_reservation: 安裝前會先把叢集閘道從 80 與 443 挪開，再交給外置 nginx。
 install.steps.gateway.nginx_reuse: "重用目前主機上已存在的 nginx 二進位：%{path}。"
 install.steps.gateway.nginx_service_reuse: 重用目前主機上已經存在的 nginx 服務。
 install.steps.gateway.nginx_install: 透過目前偵測到的系統套件管理器安裝 nginx。
 install.steps.platform_plan.title: 透過 Helm 部署回歸終端平台
 install.steps.platform_plan.namespaces: "將準備平台使用的命名空間：%{platform}、%{challenge}"
 install.steps.platform_plan.public_host: "公網存取位址：%{host}"
-install.steps.platform_plan.service_account: "將準備平台運行所需的服務帳號：%{namespace} 中的 %{name}"
-install.steps.platform_plan.rbac: "將準備平台運行所需的權限設定：%{role}、%{binding}"
 install.steps.platform_plan.disk_budget: "磁碟預算：已分配 %{allocated} GiB / 計畫 %{requested} GiB（目前可用 %{remaining} GiB）"
 install.steps.platform_plan.unallocated_disk: "未使用的磁碟預算：%{remaining} GiB"
 install.steps.worker_probe.title: 檢查主節點平台狀態
@@ -262,3 +255,28 @@ install.maintenance.sync.config_changed: "平台設定漂移已修正"
 install.maintenance.sync.blocked_changed: "敏感詞設定漂移已修正"
 install.maintenance.sync.storage_changed: "儲存類狀態已變化"
 install.state_kept_at: "安裝器狀態保留在 %{path}"
+install.exposure.entry_options.ingress: "方案 B/C：Ingress"
+install.exposure.entry_options.nodeport_external_nginx: "方案 A：NodePort + nginx 反向代理"
+install.exposure.entry_prompt: "請選擇平台入口方案"
+install.platform.nodeport_security.guard_prompt: "是否使用 iptables raw 規則保護內部叢集存取埠？"
+install.platform.nodeport_security.interface_detect_failed: "自動探測未發現 cni0。請先確認目前叢集網橋介面名稱，再輸入後繼續安裝。目前偵測到的網卡：%{interfaces}"
+install.platform.nodeport_security.interface_invalid: "目標主機上不存在網卡 %{interface}。目前偵測到的網卡：%{interfaces}"
+install.platform.nodeport_security.interface_prompt: "iptables 放行規則使用的叢集網橋介面名稱"
+install.platform.public_host.ingress_requires_hostname: "Ingress 入口模式要求填寫網域名稱；如果需要直接使用裸 IPv4，請改用方案 A。"
+install.platform.public_host.prompt.ingress: "請輸入方案 B/C 對外存取使用的網域。Ingress 模式不支援直接填寫裸 IPv4 位址。"
+install.platform.public_host.prompt.nodeport: "請輸入方案 A 對外存取使用的位址。可以填寫網域，也可以填寫裸 IPv4 位址。"
+install.platform.tls.certificate_path.missing: "目標主機上不存在該憑證檔案，或該路徑不是普通檔案。請輸入有效的 fullchain 路徑，例如 /etc/letsencrypt/live/<domain>/fullchain.pem"
+install.platform.tls.certificate_path.prompt: "TLS fullchain 憑證路徑"
+install.platform.tls.enable_prompt: "是否為平台入口啟用 TLS？"
+install.platform.tls.key_path.missing: "目標主機上不存在該私鑰檔案，或該路徑不是普通檔案。請輸入有效的私鑰路徑，例如 /etc/letsencrypt/live/<domain>/privkey.pem"
+install.platform.tls.key_path.prompt: "TLS 私鑰路徑"
+install.platform.tls.mode.prepared_files_only: "安裝程式不會自動申請憑證。請先自行使用 acme.sh 或其他工具準備好憑證檔案，然後填寫本機 fullchain 與私鑰路徑。"
+install.platform.tls.secret_name.prompt: "供 Ingress 使用的 Kubernetes TLS Secret 名稱"
+install.steps.cluster.disable_traefik: "安裝 k3s 控制面時會關閉內建 Traefik 元件。"
+install.steps.cluster.registry_mirrors: "會為 docker.io、ghcr.io、gcr.io、quay.io 和 registry.k8s.io 設定鏡像加速位址。"
+install.steps.gateway.ingress_host_network: "會安裝以 hostNetwork DaemonSet 方式執行的 ingress-nginx。"
+install.steps.gateway.ingress_tls_prepare: "在安裝 Ret2Shell Helm 發布之前，會先準備好 TLS 憑證材料。"
+install.steps.gateway.nodeport_guard: "會透過 iptables raw 規則阻止公網直接存取受保護的叢集存取埠；叢集管理埠仍可從 RFC1918 私有網路、叢集網橋和回環介面存取。"
+install.steps.gateway.nodeport_tls_termination: "主機上的 nginx 入口會直接終止 TLS，並使用託管憑證材料。"
+install.steps.platform_plan.tls_external_gateway: "平台入口已啟用 TLS，並由主機 nginx 直接終止 HTTPS。"
+install.steps.platform_plan.tls_ingress_secret: "平台入口已啟用 TLS，並會使用 Kubernetes Secret `%{secret}`。"
