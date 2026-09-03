@@ -327,10 +327,7 @@ impl<'a> InstallFlow<'a> {
         self.persist_change(
           "install.execution.step",
           step_id.as_config_value(),
-          |config| {
-            let changed = config.mark_install_step_completed(step_id);
-            config.set_install_phase(InstallExecutionPhase::Completed) || changed
-          },
+          |config| config.mark_install_step_completed(step_id),
         )?;
         println!(
           "{}",
