@@ -5,7 +5,6 @@ mod errors;
 mod install;
 mod l10n;
 mod privilege;
-mod resources;
 mod startup;
 mod telemetry;
 mod terminal;

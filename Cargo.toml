@@ -23,7 +23,6 @@ reqwest = { version = "0.13.3", default-features = false, features = [
   "json",
   "rustls",
 ] }
-rust-embed = "8.11.0"
 rust-i18n = "4.0.0"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
