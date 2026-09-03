@@ -3,6 +3,7 @@ use std::{
   env, fs,
   path::{Path, PathBuf},
   process::Command,
+  thread,
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 #[cfg(unix)]
@@ -10,6 +11,7 @@ use std::{ffi::CString, mem::MaybeUninit};
 
 use anyhow::{Context, Result, anyhow};
 use reqwest::blocking::Client;
+use tracing::warn;
 
 use super::context::StepExecutionContext;
 use crate::config::ApplicationExposureMode;
@@ -17,20 +19,43 @@ use crate::config::ApplicationExposureMode;
 const EXTERNAL_NGINX_TLS_ASSET_NAME: &str = "external-nginx";
 
 pub(crate) fn stage_remote_script(url: &str, prefix: &str) -> Result<PathBuf> {
+  const DOWNLOAD_ATTEMPTS: u32 = 3;
+  const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+  const RETRY_BASE_DELAY: u64 = 2;
+
   let client = Client::builder()
     .https_only(true)
-    .timeout(Duration::from_secs(30))
+    .timeout(DOWNLOAD_TIMEOUT)
     .build()
     .context("failed to build install script HTTP client")?;
 
-  let script = client
-    .get(url)
-    .send()
-    .with_context(|| format!("failed to request install script `{url}`"))?
-    .error_for_status()
-    .with_context(|| format!("install script source `{url}` returned an error status"))?
-    .text()
-    .with_context(|| format!("failed to read install script `{url}`"))?;
+  let mut last_error = None;
+  let script = (1..=DOWNLOAD_ATTEMPTS)
+    .find_map(|attempt| {
+      let download = client
+        .get(url)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.text())
+        .map_err(|error| anyhow!("failed to download install script `{url}`: {error}"));
+
+      match download {
+        Ok(text) => Some(text),
+        Err(error) => {
+          warn!(url, attempt, error = %error, "install script download failed");
+          last_error = Some(error);
+          if attempt < DOWNLOAD_ATTEMPTS {
+            thread::sleep(Duration::from_secs(RETRY_BASE_DELAY * u64::from(attempt)));
+          }
+          None
+        }
+      }
+    })
+    .ok_or_else(|| {
+      last_error
+        .take()
+        .unwrap_or_else(|| anyhow!("failed to download install script `{url}`"))
+    })?;
 
   let path = unique_temp_path(prefix, "sh");
   fs::write(&path, script).with_context(|| format!("failed to write `{}`", path.display()))?;

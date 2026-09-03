@@ -59,6 +59,23 @@ impl ClusterBootstrapStep {
   }
 }
 
+fn cluster_distribution_and_role(
+  ctx: &StepExecutionContext<'_>,
+) -> Result<(KubernetesDistribution, InstallTargetRole)> {
+  // Uninstall/rollback must not depend on the questionnaire being complete;
+  // only the distribution and role recorded earlier are required.
+  let distribution = ctx
+    .as_plan_context()
+    .kubernetes_distribution()
+    .ok_or_else(|| anyhow!("kubernetes distribution is required before uninstalling"))?;
+  let role = ctx
+    .as_plan_context()
+    .node_role()
+    .ok_or_else(|| anyhow!("node role is required before uninstalling"))?;
+
+  Ok((distribution, role))
+}
+
 fn cluster_runtime_service_active(
   ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec,
 ) -> bool {
@@ -354,26 +371,26 @@ impl AtomicInstallStep for ClusterBootstrapStep {
   }
 
   fn uninstall(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
-    let spec = ClusterInstallSpec::from_plan_context(&ctx.as_plan_context())?;
+    let (distribution, role) = cluster_distribution_and_role(ctx)?;
 
     info!(
       step = self.id().as_config_value(),
-      distribution = spec.distribution.as_config_value(),
-      role = spec.role.as_config_value(),
+      distribution = distribution.as_config_value(),
+      role = role.as_config_value(),
       "uninstalling kubernetes distribution"
     );
 
-    match spec.distribution {
-      KubernetesDistribution::K3s => uninstall_k3s(ctx, &spec),
+    match distribution {
+      KubernetesDistribution::K3s => uninstall_k3s(ctx, role),
       KubernetesDistribution::Rke2 => uninstall_rke2(ctx),
     }
   }
 
   fn rollback(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
-    let spec = ClusterInstallSpec::from_plan_context(&ctx.as_plan_context())?;
+    let (distribution, role) = cluster_distribution_and_role(ctx)?;
 
-    match spec.distribution {
-      KubernetesDistribution::K3s => rollback_k3s(ctx, &spec),
+    match distribution {
+      KubernetesDistribution::K3s => rollback_k3s(ctx, role),
       KubernetesDistribution::Rke2 => rollback_rke2(ctx),
     }
   }
@@ -482,10 +499,8 @@ pub(crate) fn install_k3s(
   result
 }
 
-pub(crate) fn uninstall_k3s(
-  ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec,
-) -> Result<()> {
-  let script_name = match spec.role {
+pub(crate) fn uninstall_k3s(ctx: &StepExecutionContext<'_>, role: InstallTargetRole) -> Result<()> {
+  let script_name = match role {
     InstallTargetRole::ControlPlane => "k3s-uninstall.sh",
     InstallTargetRole::Worker => "k3s-agent-uninstall.sh",
   };
@@ -607,10 +622,8 @@ pub(crate) fn uninstall_rke2(ctx: &StepExecutionContext<'_>) -> Result<()> {
   cleanup_rke2_gateway_manifests(ctx)
 }
 
-pub(crate) fn rollback_k3s(
-  ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec,
-) -> Result<()> {
-  if let Some(script_name) = match spec.role {
+pub(crate) fn rollback_k3s(ctx: &StepExecutionContext<'_>, role: InstallTargetRole) -> Result<()> {
+  if let Some(script_name) = match role {
     InstallTargetRole::ControlPlane => find_existing_path(&[
       PathBuf::from("/usr/local/bin/k3s-uninstall.sh"),
       PathBuf::from("/opt/bin/k3s-uninstall.sh"),
