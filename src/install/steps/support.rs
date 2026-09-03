@@ -55,8 +55,9 @@ pub(crate) fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
     .duration_since(UNIX_EPOCH)
     .map(|duration| duration.as_nanos())
     .unwrap_or_default();
+  let process_tag = std::process::id();
 
-  env::temp_dir().join(format!("{prefix}-{stamp}.{}", extension))
+  env::temp_dir().join(format!("{prefix}-{process_tag}-{stamp}.{extension}"))
 }
 
 fn staged_script_invocation(script_path: &Path) -> Result<(String, Vec<String>)> {

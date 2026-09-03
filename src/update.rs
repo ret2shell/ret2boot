@@ -109,7 +109,7 @@ impl UpdateManager {
       cache_dir: cache_dir()?,
       selector: AssetSelector::current(),
       sources: vec![Box::new(GitHubReleaseSource::ret2boot(
-        GitHubAuth::from_gh(GITHUB_HOSTNAME)?,
+        GitHubAuth::cached_from_gh(GITHUB_HOSTNAME)?,
       ))],
     })
   }
@@ -261,7 +261,7 @@ impl Ret2ShellChartManager {
         .build()
         .context("failed to build ret2shell chart HTTP client")?,
       cache_dir: cache_dir()?,
-      source: GitHubReleaseSource::ret2shell(GitHubAuth::from_gh(GITHUB_HOSTNAME)?),
+      source: GitHubReleaseSource::ret2shell(GitHubAuth::cached_from_gh(GITHUB_HOSTNAME)?),
     })
   }
 
@@ -454,7 +454,18 @@ struct GitHubAuth {
 }
 
 impl GitHubAuth {
-  fn from_gh(hostname: &str) -> Result<Option<Self>> {
+  /// Resolves the token once per process so concurrent managers do not spawn
+  /// duplicate `gh auth token` child processes or log the same warning twice.
+  fn cached_from_gh(hostname: &'static str) -> Result<Option<Self>> {
+    static CACHE: std::sync::OnceLock<Option<GitHubAuth>> = std::sync::OnceLock::new();
+    Ok(
+      CACHE
+        .get_or_init(|| GitHubAuth::from_gh_inner(hostname))
+        .clone(),
+    )
+  }
+
+  fn from_gh_inner(hostname: &str) -> Option<Self> {
     let output = match Command::new("gh")
       .args(["auth", "token", "--hostname", hostname])
       .output()
@@ -467,7 +478,7 @@ impl GitHubAuth {
           "{}",
           t!("update.github_auth.missing")
         );
-        return Ok(None);
+        return None;
       }
     };
 
@@ -479,11 +490,11 @@ impl GitHubAuth {
         "{}",
         t!("update.github_auth.missing")
       );
-      return Ok(None);
+      return None;
     }
 
     match parse_gh_auth_token(&output.stdout) {
-      Ok(token) => Ok(Some(Self { token })),
+      Ok(token) => Some(Self { token }),
       Err(error) => {
         warn!(
           hostname,
@@ -491,7 +502,7 @@ impl GitHubAuth {
           "{}",
           t!("update.github_auth.missing")
         );
-        Ok(None)
+        None
       }
     }
   }

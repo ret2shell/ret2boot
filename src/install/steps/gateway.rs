@@ -8,7 +8,7 @@ use tracing::info;
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
   SystemPackageManager,
-  platform::{PLATFORM_NODE_PORT, resolve_public_endpoint},
+  platform::{INTERNAL_REGISTRY_NODE_PORT, PLATFORM_NODE_PORT, resolve_public_endpoint},
   support::{
     command_exists, detect_nginx_binary_path, ensure_symlink, find_existing_path,
     install_directory, install_staged_file, managed_tls_asset_name, managed_tls_certificate_path,
@@ -42,7 +42,6 @@ const RKE2_SUPERVISOR_PORT: u16 = 9345;
 const KUBELET_SECURE_PORT: u16 = 10250;
 const INGRESS_GATEWAY_HTTP_PORT: u16 = 10080;
 const INGRESS_GATEWAY_HTTPS_PORT: u16 = 10443;
-const INTERNAL_REGISTRY_NODE_PORT: u16 = 30310;
 const RFC1918_CIDRS: &[&str] = &["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
 const CLUSTER_READY_WAIT_TIMEOUT: &str = "10s";
 const CLUSTER_READY_WAIT_RETRIES: usize = 120;
@@ -125,7 +124,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     let options = exposure_options
       .iter()
       .copied()
-      .map(application_exposure_label)
+      .map(super::context::application_exposure_label)
       .collect::<Vec<_>>();
     let exposure =
       exposure_options[SingleSelectCollector::new(t!("install.exposure.entry_prompt"), options)
@@ -184,7 +183,7 @@ impl AtomicInstallStep for ApplicationGatewayStep {
     let mut details = vec![
       t!(
         "install.steps.gateway.selected_mode",
-        exposure = application_exposure_label(exposure)
+        exposure = super::context::application_exposure_label(exposure)
       )
       .to_string(),
     ];
@@ -940,15 +939,6 @@ fn read_nginx_main_conf(ctx: &StepExecutionContext<'_>) -> Result<String> {
   ctx
     .run_privileged_command_capture("cat", &[NGINX_MAIN_CONF.to_string()], &[])
     .with_context(|| format!("failed to read `{NGINX_MAIN_CONF}`"))
-}
-
-fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
-  match exposure {
-    ApplicationExposureMode::Ingress => t!("install.exposure.entry_options.ingress").to_string(),
-    ApplicationExposureMode::NodePortExternalNginx => {
-      t!("install.exposure.entry_options.nodeport_external_nginx").to_string()
-    }
-  }
 }
 
 fn wait_for_cluster_network_ready(ctx: &StepExecutionContext<'_>) -> Result<()> {

@@ -6,6 +6,7 @@ use tracing::info;
 
 use super::{
   AtomicInstallStep, InstallStepPlan, StepExecutionContext, StepPlanContext, StepQuestionContext,
+  platform::{K3S_REGISTRIES_DEST, RKE2_REGISTRIES_DEST},
   support::{
     find_existing_path, install_staged_file, render_container_registry_config, run_staged_script,
     stage_remote_script, stage_text_file, unique_temp_path, yaml_quote,
@@ -25,10 +26,8 @@ pub const NODE_CIDR_MASK_SIZE: u8 = 20;
 pub const NODE_MAX_PODS: u16 = 3072;
 const K3S_CONFIG_DEST: &str = "/etc/rancher/k3s/config.yaml";
 const K3S_KUBELET_CONFIG_DEST: &str = "/etc/rancher/k3s/kubelet.config";
-const K3S_REGISTRIES_DEST: &str = "/etc/rancher/k3s/registries.yaml";
 const RKE2_CONFIG_DEST: &str = "/etc/rancher/rke2/config.yaml";
 const RKE2_KUBELET_CONFIG_DEST: &str = "/etc/rancher/rke2/kubelet.conf";
-const RKE2_REGISTRIES_DEST: &str = "/etc/rancher/rke2/registries.yaml";
 const K3S_MANIFEST_DIR: &str = "/var/lib/rancher/k3s/server/manifests";
 const RKE2_MANIFEST_DIR: &str = "/var/lib/rancher/rke2/server/manifests";
 const K3S_TRAEFIK_CONFIG_DEST: &str =
@@ -310,7 +309,7 @@ impl AtomicInstallStep for ClusterBootstrapStep {
       details.push(
         t!(
           "install.steps.cluster.application_exposure",
-          exposure = application_exposure_label(exposure)
+          exposure = super::context::application_exposure_label(exposure)
         )
         .to_string(),
       );
@@ -936,15 +935,6 @@ fn kubernetes_source_label(
     }
     (KubernetesDistribution::Rke2, KubernetesInstallSource::ChinaMirror) => {
       t!("install.kubernetes.source.rke2.china_mirror").to_string()
-    }
-  }
-}
-
-fn application_exposure_label(exposure: ApplicationExposureMode) -> String {
-  match exposure {
-    ApplicationExposureMode::Ingress => t!("install.exposure.entry_options.ingress").to_string(),
-    ApplicationExposureMode::NodePortExternalNginx => {
-      t!("install.exposure.entry_options.nodeport_external_nginx").to_string()
     }
   }
 }

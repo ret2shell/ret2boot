@@ -20,6 +20,7 @@ pub(crate) use self::{
     PlatformDeploymentStep, PlatformSyncMode, PlatformSyncReport, WorkerPlatformProbeStep,
   },
   preflight::PreflightValidationStep,
+  support::unique_temp_path,
 };
 use crate::config::InstallStepId;
 

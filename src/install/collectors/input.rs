@@ -4,13 +4,11 @@ use rust_i18n::t;
 
 use super::Collector;
 
-#[allow(dead_code)]
 pub struct InputCollector {
   prompt: String,
   default: Option<String>,
 }
 
-#[allow(dead_code)]
 impl InputCollector {
   pub fn new(prompt: impl Into<String>) -> Self {
     Self {

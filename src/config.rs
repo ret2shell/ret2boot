@@ -84,10 +84,6 @@ pub struct PlatformQuestionnaire {
 pub struct PlatformTlsConfig {
   pub mode: Option<PlatformTlsMode>,
   pub secret_name: Option<String>,
-  pub domains: Vec<String>,
-  pub acme_email: Option<String>,
-  pub acme_dns_provider: Option<String>,
-  pub acme_dns_credentials: Option<String>,
   pub certificate_path: Option<String>,
   pub key_path: Option<String>,
 }

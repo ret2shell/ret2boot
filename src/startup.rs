@@ -1,8 +1,4 @@
-use std::{
-  env, fs,
-  io::Write,
-  time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs, io::Write};
 
 use anyhow::{Context, Result};
 use rust_i18n::t;
@@ -43,15 +39,10 @@ impl RuntimeState {
   }
 
   pub fn persist_system_config_copy(&self, config: &Ret2BootConfig) -> Result<()> {
-    // Same-directory atomic staging relative to the temp dir; the file is
-    // created user-only because it carries platform credentials before being
-    // installed to the root-owned config path.
-    let temp_dir = env::temp_dir();
-    let stamp = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .map(|duration| duration.as_nanos())
-      .unwrap_or_default();
-    let temp_path = temp_dir.join(format!("ret2boot-system-config-{stamp}.toml"));
+    // Staged relative to the temp dir; the file is created user-only
+    // because it carries platform credentials before being installed to the
+    // root-owned config path.
+    let temp_path = crate::install::steps::unique_temp_path("ret2boot-system-config", "toml");
     let contents = toml::to_string_pretty(config).context("failed to serialize app config")?;
 
     let mut options = fs::OpenOptions::new();

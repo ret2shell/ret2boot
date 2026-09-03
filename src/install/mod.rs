@@ -21,6 +21,7 @@ use crate::{
     InstallTargetRole, ROOT_CONFIG_PATH, Ret2BootConfig,
   },
   errors, l10n,
+  privilege::PrivilegeSession,
   startup::RuntimeState,
   ui::{self, BadgeTone},
 };
@@ -1003,8 +1004,13 @@ impl<'a> InstallFlow<'a> {
     let changed = update(self.config);
 
     if changed {
+      // When running as root the config path already is the system config;
+      // copying it to itself through a privileged temp file would be pure
+      // overhead.
       self.config.save()?;
-      self.runtime.persist_system_config_copy(self.config)?;
+      if !PrivilegeSession::is_root_user() {
+        self.runtime.persist_system_config_copy(self.config)?;
+      }
     }
 
     debug!(

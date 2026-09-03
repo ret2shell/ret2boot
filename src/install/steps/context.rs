@@ -1,6 +1,7 @@
 use std::{thread, time::Duration};
 
 use anyhow::Result;
+use rust_i18n::t;
 use serde::Deserialize;
 use tracing::debug;
 
@@ -733,5 +734,18 @@ mod tests {
     );
 
     assert!(!apt_lock_error(&error));
+  }
+}
+
+pub(crate) fn application_exposure_label(
+  exposure: crate::config::ApplicationExposureMode,
+) -> String {
+  use crate::config::ApplicationExposureMode;
+
+  match exposure {
+    ApplicationExposureMode::Ingress => t!("install.exposure.entry_options.ingress").to_string(),
+    ApplicationExposureMode::NodePortExternalNginx => {
+      t!("install.exposure.entry_options.nodeport_external_nginx").to_string()
+    }
   }
 }
