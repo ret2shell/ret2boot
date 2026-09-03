@@ -18,7 +18,10 @@ use semver::Version;
 use serde::Deserialize;
 use tracing::{debug, info, warn};
 
-use crate::checksum::sha256_file_hex;
+use crate::{
+  checksum::{parse_sha256sum_line, sha256_file_hex},
+  privilege::PrivilegeSession,
+};
 
 pub const DEFAULT_RELEASE_SOURCE_NAME: &str = "github";
 pub const DEFAULT_REPOSITORY_URL: &str = "https://github.com/ret2shell/ret2boot";
@@ -403,7 +406,7 @@ impl ReleaseSource for GitHubReleaseSource {
   fn fetch_latest_release(&self, client: &Client) -> Result<Option<RemoteRelease>> {
     let request = client
       .get(&self.latest_release_api)
-      .header(USER_AGENT, user_agent())
+      .header(USER_AGENT, crate::checksum::installer_user_agent())
       .header(ACCEPT, GITHUB_JSON_MEDIA_TYPE);
     let response = match &self.auth {
       Some(auth) => auth.apply(request),
@@ -631,7 +634,7 @@ fn request_remote_asset(
       asset.auth.apply(
         client
           .get(&asset.request_url)
-          .header(USER_AGENT, user_agent()),
+          .header(USER_AGENT, crate::checksum::installer_user_agent()),
       ),
     )
     .send()
@@ -650,41 +653,6 @@ fn parse_gh_auth_token(stdout: &[u8]) -> Result<String> {
   Ok(token.to_string())
 }
 
-fn parse_sha256sum_line(contents: &str, expected_name: &str) -> Result<String> {
-  let line = contents
-    .lines()
-    .find(|line| !line.trim().is_empty())
-    .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is empty"))?;
-  let mut parts = line.splitn(2, char::is_whitespace);
-  let checksum = parts
-    .next()
-    .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is malformed"))?;
-  let file_name = parts
-    .next()
-    .ok_or_else(|| anyhow!("checksum asset for `{expected_name}` is missing the file name"))?
-    .trim()
-    .trim_start_matches('*');
-  let referenced_name = checksum_entry_base_name(file_name);
-
-  if referenced_name != expected_name {
-    return Err(anyhow!(
-      "checksum asset references `{file_name}` instead of `{expected_name}`"
-    ));
-  }
-
-  if checksum.len() != 64 || !checksum.chars().all(|ch| ch.is_ascii_hexdigit()) {
-    return Err(anyhow!(
-      "checksum asset for `{expected_name}` does not contain a valid sha256 digest"
-    ));
-  }
-
-  Ok(checksum.to_ascii_lowercase())
-}
-
-fn checksum_entry_base_name(path: &str) -> &str {
-  path.rsplit(['/', '\\']).next().unwrap_or(path)
-}
-
 fn parse_release_version(raw: &str) -> Result<Version> {
   let normalized = raw
     .trim()
@@ -695,12 +663,8 @@ fn parse_release_version(raw: &str) -> Result<Version> {
     .with_context(|| format!("failed to parse release version from tag `{raw}`"))
 }
 
-fn user_agent() -> String {
-  format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
-}
-
 fn cache_dir() -> Result<PathBuf> {
-  if is_root_user() {
+  if PrivilegeSession::is_root_user() {
     return Ok(PathBuf::from("/var/cache/ret2shell/ret2boot"));
   }
 
@@ -726,18 +690,6 @@ fn xdg_cache_home() -> Option<PathBuf> {
   Some(path)
 }
 
-fn is_root_user() -> bool {
-  #[cfg(unix)]
-  {
-    unsafe { libc::geteuid() == 0 }
-  }
-
-  #[cfg(not(unix))]
-  {
-    false
-  }
-}
-
 fn target_env() -> Option<&'static str> {
   if cfg!(target_env = "gnu") {
     Some("gnu")
@@ -752,7 +704,8 @@ fn target_env() -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-  use super::{checksum_entry_base_name, parse_gh_auth_token, parse_sha256sum_line};
+  use super::parse_gh_auth_token;
+  use crate::checksum::{checksum_entry_base_name, parse_sha256sum_line};
 
   #[test]
   fn parses_gh_auth_token_output() {

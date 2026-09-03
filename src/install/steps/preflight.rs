@@ -615,10 +615,7 @@ fn check_kernel_feature(label: String, state: KernelFeatureState) -> PreflightCh
 fn probe_endpoint(client: &Client, url: &str) -> bool {
   client
     .get(url)
-    .header(
-      "User-Agent",
-      format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
-    )
+    .header("User-Agent", crate::checksum::installer_user_agent())
     .send()
     .and_then(|response| response.error_for_status())
     .is_ok()
@@ -627,10 +624,7 @@ fn probe_endpoint(client: &Client, url: &str) -> bool {
 fn probe_public_network(client: &Client) -> Option<super::context::PublicNetworkIdentity> {
   client
     .get("https://api.ip.sb/geoip")
-    .header(
-      "User-Agent",
-      format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
-    )
+    .header("User-Agent", crate::checksum::installer_user_agent())
     .send()
     .ok()?
     .error_for_status()

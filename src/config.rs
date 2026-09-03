@@ -3,6 +3,8 @@ use std::{collections::BTreeMap, env, fs, io::Write, path::PathBuf};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
+use crate::privilege::PrivilegeSession;
+
 pub const ROOT_CONFIG_PATH: &str = "/etc/ret2shell/ret2boot.toml";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -472,7 +474,7 @@ impl Ret2BootConfig {
   }
 
   pub fn path() -> Result<PathBuf> {
-    if is_root_user() {
+    if PrivilegeSession::is_root_user() {
       return Ok(PathBuf::from(ROOT_CONFIG_PATH));
     }
 
@@ -1250,18 +1252,6 @@ impl Ret2BootConfig {
       .steps
       .last_mut()
       .expect("step exists")
-  }
-}
-
-fn is_root_user() -> bool {
-  #[cfg(unix)]
-  {
-    unsafe { libc::geteuid() == 0 }
-  }
-
-  #[cfg(not(unix))]
-  {
-    false
   }
 }
 

@@ -362,35 +362,7 @@ fn parse_helm_version_manifest(contents: &str) -> Result<String> {
 }
 
 fn parse_helm_archive_checksum(contents: &str, archive_name: &str) -> Result<String> {
-  let line = contents
-    .lines()
-    .map(str::trim)
-    .find(|line| !line.is_empty())
-    .ok_or_else(|| anyhow!("the Helm checksum file for `{archive_name}` is empty"))?;
-
-  if line.len() == 64 && line.chars().all(|ch| ch.is_ascii_hexdigit()) {
-    return Ok(line.to_ascii_lowercase());
-  }
-
-  let mut parts = line.splitn(2, char::is_whitespace);
-  let checksum = parts
-    .next()
-    .ok_or_else(|| anyhow!("the Helm checksum file for `{archive_name}` is malformed"))?;
-  let file_name = parts
-    .next()
-    .ok_or_else(|| anyhow!("the Helm checksum file for `{archive_name}` is missing the file name"))?
-    .trim()
-    .trim_start_matches('*');
-  let referenced_name = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
-
-  if referenced_name != archive_name {
-    bail!("the Helm checksum file references `{file_name}` instead of `{archive_name}`");
-  }
-  if checksum.len() != 64 || !checksum.chars().all(|ch| ch.is_ascii_hexdigit()) {
-    bail!("the Helm checksum file for `{archive_name}` does not contain a valid sha256 digest");
-  }
-
-  Ok(checksum.to_ascii_lowercase())
+  crate::checksum::parse_sha256sum_line(contents, archive_name)
 }
 
 fn helm_target_triplet() -> Result<(&'static str, &'static str)> {
@@ -419,7 +391,7 @@ fn helm_target_triplet_for(os: &str, arch: &str) -> Result<(&'static str, &'stat
 }
 
 fn helm_user_agent() -> String {
-  format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+  crate::checksum::installer_user_agent()
 }
 
 #[cfg(test)]
