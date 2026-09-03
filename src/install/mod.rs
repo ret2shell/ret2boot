@@ -39,12 +39,25 @@ pub fn run(config: &mut Ret2BootConfig, runtime: &RuntimeState, force_upgrade: b
   flow.capture_stage(InstallFailureStage::Preflight, None, |flow| {
     flow.run_preflight()
   })?;
-  flow.capture_stage(InstallFailureStage::Questionnaire, None, |flow| {
-    flow.collect_questionnaire()
-  })?;
-  flow.capture_stage(InstallFailureStage::Review, None, |flow| {
-    flow.enter_review_phase()
-  })?;
+
+  // Resume semantics: once the review was confirmed and installation has
+  // started, the recorded answers are authoritative. Re-prompting the full
+  // questionnaire on resume risks an accidental invalidation of the journal,
+  // so stages already completed in a previous session are skipped.
+  let resuming_installation = flow.config.install.review.confirmed
+    && matches!(
+      flow.config.install.execution.phase,
+      InstallExecutionPhase::Installing
+    );
+
+  if !resuming_installation {
+    flow.capture_stage(InstallFailureStage::Questionnaire, None, |flow| {
+      flow.collect_questionnaire()
+    })?;
+    flow.capture_stage(InstallFailureStage::Review, None, |flow| {
+      flow.enter_review_phase()
+    })?;
+  }
 
   let plan = flow.capture_stage(InstallFailureStage::Planning, None, |flow| {
     flow.build_plan()
