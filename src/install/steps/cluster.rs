@@ -43,14 +43,44 @@ const GATEWAY_HTTPS_PORT_CANDIDATES: [u16; 6] = [10443, 11443, 12443, 13443, 144
 pub struct ClusterBootstrapStep;
 
 impl ClusterBootstrapStep {
-  pub(crate) fn reconcile_existing(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
+  pub(crate) fn upgrade_existing(&self, ctx: &mut StepExecutionContext<'_>) -> Result<()> {
     let spec = ClusterInstallSpec::from_plan_context(&ctx.as_plan_context())?;
 
+    info!(
+      distribution = spec.distribution.as_config_value(),
+      "upgrading kubernetes distribution to the latest release"
+    );
+
+    // Deliberately bypasses the already-active guard: `ret2boot update`
+    // upgrades the runtime to the latest release.
     match spec.distribution {
       KubernetesDistribution::K3s => install_k3s(ctx, &spec),
       KubernetesDistribution::Rke2 => install_rke2(ctx, &spec),
     }
   }
+}
+
+fn cluster_runtime_service_active(
+  ctx: &StepExecutionContext<'_>, spec: &ClusterInstallSpec,
+) -> bool {
+  let service_name = match (spec.distribution, spec.role) {
+    (KubernetesDistribution::K3s, InstallTargetRole::ControlPlane) => "k3s.service",
+    (KubernetesDistribution::K3s, InstallTargetRole::Worker) => "k3s-agent.service",
+    (KubernetesDistribution::Rke2, InstallTargetRole::ControlPlane) => "rke2-server.service",
+    (KubernetesDistribution::Rke2, InstallTargetRole::Worker) => "rke2-agent.service",
+  };
+
+  ctx
+    .run_privileged_command(
+      "systemctl",
+      &[
+        "is-active".to_string(),
+        "--quiet".to_string(),
+        service_name.to_string(),
+      ],
+      &[],
+    )
+    .is_ok()
 }
 
 impl AtomicInstallStep for ClusterBootstrapStep {
@@ -406,6 +436,13 @@ impl ClusterInstallSpec {
 pub(crate) fn install_k3s(
   ctx: &mut StepExecutionContext<'_>, spec: &ClusterInstallSpec,
 ) -> Result<()> {
+  if cluster_runtime_service_active(ctx, spec) {
+    info!(
+      "k3s runtime service already active; skipping install script to avoid an unintended upgrade"
+    );
+    return Ok(());
+  }
+
   info!("syncing k3s registry configuration");
   sync_cluster_registry_config(
     ctx,
@@ -467,6 +504,13 @@ pub(crate) fn uninstall_k3s(
 pub(crate) fn install_rke2(
   ctx: &mut StepExecutionContext<'_>, spec: &ClusterInstallSpec,
 ) -> Result<()> {
+  if cluster_runtime_service_active(ctx, spec) {
+    info!(
+      "rke2 runtime service already active; skipping install script to avoid an unintended upgrade"
+    );
+    return Ok(());
+  }
+
   info!("syncing rke2 registry configuration");
   sync_cluster_registry_config(
     ctx,

@@ -1154,6 +1154,23 @@ impl Ret2BootConfig {
       || ownership_changed
   }
 
+  /// Records a rollback failure against a step without discarding the
+  /// original install error text.
+  pub fn record_step_rollback_error(
+    &mut self, step_id: InstallStepId, rollback_error: impl Into<String>,
+  ) -> bool {
+    let step = self.ensure_install_step(step_id);
+    let rollback_error = rollback_error.into();
+    let previous_error = step.last_error.clone();
+
+    step.last_error = match &previous_error {
+      Some(previous) => Some(format!("{previous}; rollback error: {rollback_error}")),
+      None => Some(format!("rollback error: {rollback_error}")),
+    };
+
+    step.last_error != previous_error
+  }
+
   pub fn set_install_step_metadata(
     &mut self, step_id: InstallStepId, key: impl Into<String>, value: impl Into<String>,
   ) -> bool {

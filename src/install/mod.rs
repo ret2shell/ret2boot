@@ -107,7 +107,7 @@ pub fn update_existing(
   flow.require_control_plane_command("update")?;
 
   let cluster_step = ClusterBootstrapStep;
-  flow.run_maintenance_step(&cluster_step, |ctx| cluster_step.reconcile_existing(ctx))?;
+  flow.run_maintenance_step(&cluster_step, |ctx| cluster_step.upgrade_existing(ctx))?;
 
   let helm_step = HelmCliStep;
   flow.run_maintenance_step(&helm_step, |ctx| helm_step.install(ctx))?;
@@ -448,6 +448,17 @@ impl<'a> InstallFlow<'a> {
     )?;
     self.runtime.run_privileged_command(
       "rm",
+      &[
+        "-rf".to_string(),
+        // Managed TLS material and any remaining ret2boot host-side data
+        // directories must not outlive the uninstall flow.
+        "/etc/ret2shell/tls".to_string(),
+        "/srv/ret2shell".to_string(),
+      ],
+      &[],
+    )?;
+    self.runtime.run_privileged_command(
+      "rm",
       &["-rf".to_string(), cache_dir.display().to_string()],
       &[],
     )?;
@@ -483,6 +494,14 @@ impl<'a> InstallFlow<'a> {
         &[],
       );
     }
+
+    // Clean up the now-empty /etc/ret2shell and /srv directories.
+    let _ = self
+      .runtime
+      .run_privileged_command("rmdir", &["/etc/ret2shell".to_string()], &[]);
+    let _ = self
+      .runtime
+      .run_privileged_command("rmdir", &["/srv/ret2shell".to_string()], &[]);
 
     Ok(())
   }
@@ -821,10 +840,17 @@ impl<'a> InstallFlow<'a> {
       );
       if let Err(error) = step.rollback(&mut execution_context) {
         let error_text = error.to_string();
+        // Record the rollback failure separately, but keep the original
+        // install error on the step and in `last_failure` so it is not
+        // overwritten by the rollback error.
         self.persist_change("install.execution.rollback", &error_text, |config| {
-          config.mark_install_step_failed(failed_step_id, error_text.clone())
+          config.record_step_rollback_error(failed_step_id, error_text.clone())
         })?;
-        let _ = self.record_failure(InstallFailureStage::Rollback, Some(failed_step_id), &error);
+        let _ = self.record_failure_preserving_stage(
+          InstallFailureStage::Rollback,
+          Some(failed_step_id),
+          &error,
+        );
         failed_step_rollback_error = Some(error_text);
       } else {
         self.persist_change(
@@ -966,6 +992,24 @@ impl<'a> InstallFlow<'a> {
     );
 
     Ok(())
+  }
+
+  /// Records a rollback failure while preserving the original install error
+  /// already stored in `last_failure`: the rollback error is appended to the
+  /// causes of the existing record instead of replacing it.
+  fn record_failure_preserving_stage(
+    &mut self, stage: InstallFailureStage, step_id: Option<InstallStepId>, error: &anyhow::Error,
+  ) -> Result<()> {
+    if let Some(mut original) = self.config.install.last_failure.clone() {
+      original
+        .causes
+        .push(format!("{}: {}", stage.as_config_value(), error));
+      self.config.set_install_failure(original);
+      self.runtime.persist_system_config_copy(self.config)?;
+      return Ok(());
+    }
+
+    self.record_failure(stage, step_id, error)
   }
 
   fn clear_recorded_failure(&mut self) -> Result<()> {
