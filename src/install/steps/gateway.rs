@@ -1320,9 +1320,10 @@ fn protected_gateway_ports(
     ApplicationExposureMode::NodePortExternalNginx => {
       vec![PLATFORM_NODE_PORT, INTERNAL_REGISTRY_NODE_PORT]
     }
-    ApplicationExposureMode::Ingress => {
-      vec![INGRESS_GATEWAY_HTTP_PORT, INGRESS_GATEWAY_HTTPS_PORT]
-    }
+    // In ingress mode the gateway ingress-nginx serves the public ports
+    // (80/443) directly on the host network, so there are no additional
+    // cluster ports to protect beyond the management ports.
+    ApplicationExposureMode::Ingress => Vec::new(),
   });
 
   ports
@@ -1366,6 +1367,8 @@ fn legacy_protected_gateway_ports(exposure: ApplicationExposureMode) -> Option<S
       PLATFORM_NODE_PORT,
       INTERNAL_REGISTRY_NODE_PORT,
     ],
+    // Older releases protected the ingress shift ports (10080/10443) in
+    // ingress mode; purge those stale rules too.
     ApplicationExposureMode::Ingress => [
       KUBELET_SECURE_PORT,
       INGRESS_GATEWAY_HTTP_PORT,

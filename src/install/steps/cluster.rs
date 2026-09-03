@@ -285,7 +285,12 @@ impl AtomicInstallStep for ClusterBootstrapStep {
         .to_string(),
       );
 
-      if exposure == ApplicationExposureMode::NodePortExternalNginx {
+      if exposure == ApplicationExposureMode::NodePortExternalNginx
+        && spec.distribution == KubernetesDistribution::Rke2
+      {
+        // Only the RKE2 built-in ingress controller is moved off 80/443 so
+        // the external nginx gateway can bind them. K3s disables Traefik
+        // outright instead.
         details.push(t!("install.steps.cluster.gateway_ports_shifted").to_string());
       }
     }
@@ -793,6 +798,12 @@ fn render_rke2_config(spec: &ClusterInstallSpec) -> String {
     lines.push(format!("cluster-cidr: {CLUSTER_CIDR}"));
     lines.push("kube-controller-manager-arg:".to_string());
     lines.push(format!("  - node-cidr-mask-size={NODE_CIDR_MASK_SIZE}"));
+    if spec.application_exposure == Some(ApplicationExposureMode::Ingress) {
+      // The gateway step installs its own host-network ingress-nginx on
+      // 80/443; the built-in rke2-ingress-nginx addon must not compete for
+      // the same host ports.
+      lines.push("ingress-controller: none".to_string());
+    }
   } else {
     lines.push(format!(
       "server: {}",
